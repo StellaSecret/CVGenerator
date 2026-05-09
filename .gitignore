@@ -1,0 +1,31 @@
+# ── Build outputs ─────────────────────────────────────────────────────────────
+/build/
+app/build/
+**/build/
+
+# ── Gradle ────────────────────────────────────────────────────────────────────
+.gradle/
+# Le wrapper JAR DOIT être commité — ne pas ignorer
+# gradle/wrapper/gradle-wrapper.jar  ← intentionnellement absent de ce .gitignore
+
+# ── Android secrets — NE JAMAIS COMMITER ─────────────────────────────────────
+app/google-services.json
+# Le placeholder est versionné, le vrai est injecté par CI via le secret GOOGLE_SERVICES_JSON
+app/keystore.jks
+key.properties
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.DS_Store
+local.properties
+
+# ── Divers ────────────────────────────────────────────────────────────────────
+*.log
+dist/
+coverage/
+playwright-report/
+test-results/
+*.zip
+google-services.json
+.premium_emails.txt

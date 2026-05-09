@@ -1,0 +1,15 @@
+# Ensure gradlew keeps its executable bit on all platforms
+gradlew        text eol=lf
+gradlew.bat    text eol=crlf
+
+# Treat the wrapper jar as binary
+gradle/wrapper/gradle-wrapper.jar binary
+
+# Normalize line endings for source files
+*.kt           text eol=lf
+*.gradle       text eol=lf
+*.xml          text eol=lf
+*.json         text eol=lf
+*.md           text eol=lf
+*.yml          text eol=lf
+*.properties   text eol=lf

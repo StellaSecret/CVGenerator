@@ -1,0 +1,360 @@
+name: 🎯 CVGenerator — CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+
+  # ── 1. SCAN DE SECRETS ────────────────────────────────────────────────────
+  scan-secrets:
+    name: 🔍 Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TruffleHog — scan secrets vérifiés
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          head: ${{ github.sha }}
+          extra_args: --only-verified
+
+  # ── 2. BOOTSTRAP GRADLE WRAPPER ──────────────────────────────────────────
+  bootstrap-wrapper:
+    name: 🔧 Gradle Wrapper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Lire la version Gradle déclarée
+        id: gradle-ver
+        run: |
+          VERSION=$(grep "distributionUrl" gradle/wrapper/gradle-wrapper.properties \
+            | sed 's|.*gradle-\([0-9.]*\)-.*|\1|')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version détectée : $VERSION"
+
+      - name: Cache du Gradle Wrapper JAR
+        id: cache-wrapper
+        uses: actions/cache@v4
+        with:
+          path: gradle/wrapper/gradle-wrapper.jar
+          key: gradle-wrapper-jar-${{ steps.gradle-ver.outputs.version }}
+
+      - name: Générer le Gradle Wrapper JAR
+        if: steps.cache-wrapper.outputs.cache-hit != 'true'
+        # Retry 3 fois en cas de 502/timeout sur services.gradle.org
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            GRADLE_VERSION="${{ steps.gradle-ver.outputs.version }}"
+            echo "📥 Téléchargement de Gradle $GRADLE_VERSION..."
+            curl -fLo /tmp/gradle.zip \
+              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -q /tmp/gradle.zip -d /tmp/gradle-dist
+            GRADLE_BIN=$(find /tmp/gradle-dist -name "gradle" -not -name "*.bat" -type f | head -1)
+            chmod +x "$GRADLE_BIN"
+            "$GRADLE_BIN" wrapper \
+              --gradle-version "$GRADLE_VERSION" \
+              --distribution-type bin \
+              --no-daemon
+
+      - name: Vérifier que le JAR est valide (> 50 Ko)
+        run: |
+          SIZE=$(wc -c < gradle/wrapper/gradle-wrapper.jar)
+          echo "Taille : $SIZE bytes"
+          [ "$SIZE" -lt 50000 ] && echo "❌ JAR invalide" && exit 1 || echo "✅ JAR valide"
+
+      - name: Corriger les permissions de gradlew
+        run: chmod +x gradlew
+
+      - name: Exposer le JAR + gradlew aux autres jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-wrapper
+          path: |
+            gradle/wrapper/gradle-wrapper.jar
+            gradlew
+          retention-days: 1
+
+  # ── 3. ANALYSE STATIQUE (CODEQL) ─────────────────────────────────────────
+  codeql:
+    name: 🔬 CodeQL Analysis
+    runs-on: ubuntu-latest
+    needs: bootstrap-wrapper
+    # Retry le job entier sur erreur réseau transitoire
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Télécharger le Wrapper
+        uses: actions/download-artifact@v4
+        with:
+          name: gradle-wrapper
+          path: .
+      - run: chmod +x gradlew
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: kotlin
+          queries: security-extended,security-and-quality
+          build-mode: none
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Stub google-services.json
+        run: |
+          cat > app/google-services.json << 'JSON'
+          {
+            "project_info": { "project_number": "000000000000", "project_id": "stub", "storage_bucket": "stub.appspot.com" },
+            "client": [{
+              "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000", "android_client_info": { "package_name": "com.stellasecret.cvgenerator" } },
+              "oauth_client": [{ "client_id": "stub.apps.googleusercontent.com", "client_type": 3 }],
+              "api_key": [{ "current_key": "stub" }],
+              "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+
+      - name: Build pour CodeQL
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: ./gradlew assembleDebug --no-daemon -x lint
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ── 4. ANDROID LINT + UNIT TESTS ─────────────────────────────────────────
+  android-quality:
+    name: 🤖 Android Lint & Tests
+    runs-on: ubuntu-latest
+    needs: [scan-secrets, bootstrap-wrapper]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Télécharger le Wrapper
+        uses: actions/download-artifact@v4
+        with:
+          name: gradle-wrapper
+          path: .
+      - run: chmod +x gradlew
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Vérifier l'absence de secrets hardcodés
+        run: |
+          echo "🔍 Scan des sources..."
+          if grep -rn "sk-ant-" app/src/ 2>/dev/null; then
+            echo "❌ Clé Anthropic dans les sources !" && exit 1
+          fi
+          if grep -rn "AIzaSy" app/src/ 2>/dev/null; then
+            echo "❌ Clé Google dans les sources !" && exit 1
+          fi
+          echo "✅ Aucun secret hardcodé"
+
+      - name: Stub google-services.json
+        run: |
+          cat > app/google-services.json << 'JSON'
+          {
+            "project_info": { "project_number": "000000000000", "project_id": "stub", "storage_bucket": "stub.appspot.com" },
+            "client": [{
+              "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000", "android_client_info": { "package_name": "com.stellasecret.cvgenerator" } },
+              "oauth_client": [{ "client_id": "stub.apps.googleusercontent.com", "client_type": 3 }],
+              "api_key": [{ "current_key": "stub" }],
+              "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+
+      - name: Android Lint
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: ./gradlew lint --no-daemon
+
+      - name: Upload rapport Lint
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-report-${{ github.run_number }}
+          path: app/build/reports/lint-results*.html
+          retention-days: 14
+
+      - name: Unit Tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: ./gradlew testDebugUnitTest --no-daemon --continue
+
+      - name: Upload rapport Tests
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-report-${{ github.run_number }}
+          path: app/build/reports/tests/testDebugUnitTest/
+          retention-days: 14
+
+  # ── 5. BUILD ANDROID (APK + AAB) ─────────────────────────────────────────
+  build-android:
+    name: 📱 Build Android
+    needs: [android-quality, codeql]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      artifact-name: ${{ steps.artifact-name.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Télécharger le Wrapper
+        uses: actions/download-artifact@v4
+        with:
+          name: gradle-wrapper
+          path: .
+      - run: chmod +x gradlew
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Injecter Firebase & Keystore
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          KEYSTORE_BASE64:       ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          echo "$KEYSTORE_BASE64" | base64 --decode > app/keystore.jks
+
+          cat > key.properties << PROPS
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=keystore.jks
+          PROPS
+
+          sed -i "s/versionCode .*/versionCode ${{ github.run_number }}/" app/build.gradle
+          echo "✅ versionCode → ${{ github.run_number }}"
+
+      - name: Build Bundle & APK Release
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            ./gradlew bundleRelease assembleRelease --no-daemon \
+              -PPREMIUM_EMAILS="${{ secrets.PREMIUM_EMAILS }}" \
+              -POAUTH_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}"
+
+      - name: Nommer l'artifact
+        id: artifact-name
+        run: echo "name=artifacts-${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ github.run_id }}
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/apk/release/app-release.apk
+          retention-days: 1
+
+  # ── 6. RELEASE GITHUB ────────────────────────────────────────────────────
+  release:
+    name: 📦 GitHub Release
+    needs: build-android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-android.outputs.artifact-name }}
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "🎯 CVGenerator v1.0.${{ github.run_number }}"
+          generate_release_notes: true
+          files: |
+            dist/**/app-release.aab
+            dist/**/app-release.apk
+          body: |
+            ## 🎯 CVGenerator v1.0.${{ github.run_number }}
+
+            ### 📱 Android
+            - **APK Release** — installation directe (ARM64)
+            - **AAB Release** — format Google Play Store
+
+            ### ✅ Qualité validée
+            - 🔍 Secret scan : TruffleHog
+            - 🔬 Analyse statique : CodeQL (Kotlin)
+            - 🤖 Lint Android + Unit Tests
+
+            ### 📋 Commit
+            ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
