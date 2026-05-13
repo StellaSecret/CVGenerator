@@ -93,21 +93,39 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // ── LinkedIn PDF ──────────────────────────────────────────────────────────
+    // ── Profil (fichier quelconque ou copier-coller) ─────────────────────────
 
-    fun loadLinkedInPdf(uri: Uri) {
+    fun loadProfileFile(uri: Uri, fileName: String) {
         viewModelScope.launch {
             _linkedInLoading.value = true
             _linkedInError.value = null
             documentRepository.extractText(uri)
                 .onSuccess { text ->
-                    _linkedInProfile.value = LinkedInProfile(rawText = text, uri = uri)
+                    _linkedInProfile.value = LinkedInProfile(
+                        rawText = text,
+                        fileName = fileName,
+                        uri = uri
+                    )
                 }
                 .onFailure { e ->
                     _linkedInError.value = e.message
                 }
             _linkedInLoading.value = false
         }
+    }
+
+    fun loadProfileText(text: String) {
+        _linkedInError.value = null
+        _linkedInProfile.value = LinkedInProfile(
+            rawText = text,
+            fileName = "Texte saisi",
+            uri = null
+        )
+    }
+
+    fun clearLinkedInProfile() {
+        _linkedInProfile.value = null
+        _linkedInError.value = null
     }
 
     // ── Job Description ───────────────────────────────────────────────────────
@@ -141,7 +159,7 @@ class MainViewModel @Inject constructor(
     fun generateCV(apiKey: String?) {
         val profile = _linkedInProfile.value
         if (profile == null) {
-            viewModelScope.launch { _snackbarMessage.emit("Veuillez d'abord charger votre profil LinkedIn") }
+            viewModelScope.launch { _snackbarMessage.emit("Veuillez d'abord importer ou saisir votre profil") }
             return
         }
 

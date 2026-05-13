@@ -93,12 +93,22 @@ fun HomeScreen(
         }
     }
 
-    // ── LinkedIn PDF picker ───────────────────────────────────────────────────
-    val linkedInPicker = rememberLauncherForActivityResult(
+    // ── Profil : picker fichier ───────────────────────────────────────────────
+    val profileFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { viewModel.loadLinkedInPdf(it) }
+        uri?.let { picked ->
+            val fileName = context.contentResolver.query(picked, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) cursor.getString(idx) else "fichier"
+                } else "fichier"
+            } ?: "fichier"
+            viewModel.loadProfileFile(picked, fileName)
+        }
     }
+
+    var showProfileTextDialog by remember { mutableStateOf(false) }
 
     // ── Job Description file picker ───────────────────────────────────────────
     val jobDescPicker = rememberLauncherForActivityResult(
@@ -156,20 +166,82 @@ fun HomeScreen(
                     Spacer(Modifier.height(24.dp))
                 }
 
-                // ── LinkedIn PDF ──────────────────────────────────────────────
-                SectionHeader(title = "Profil LinkedIn", badge = "PDF requis")
+                // ── Profil ───────────────────────────────────────────────────
+                SectionHeader(title = "Votre profil", badge = "Requis")
                 Spacer(Modifier.height(10.dp))
-                UploadCard(
-                    title = "Profil LinkedIn",
-                    subtitle = "Exportez votre profil depuis LinkedIn et importez le PDF",
-                    icon = Icons.Outlined.Person,
-                    isLoaded = linkedInProfile != null,
-                    loadedFileName = linkedInProfile?.let { "Profil chargé ✓" },
-                    isLoading = linkedInLoading,
-                    error = linkedInError,
-                    onClick = { linkedInPicker.launch("application/pdf") },
-                    onClear = { /* viewModel.clearLinkedIn() */ }
-                )
+
+                when {
+                    linkedInProfile != null -> {
+                        UploadCard(
+                            title = linkedInProfile!!.fileName,
+                            subtitle = if (linkedInProfile!!.uri != null) "Fichier importé" else "Texte saisi",
+                            icon = Icons.Outlined.Person,
+                            isLoaded = true,
+                            loadedFileName = linkedInProfile!!.fileName,
+                            isLoading = linkedInLoading,
+                            error = linkedInError,
+                            onClick = {},
+                            onClear = { viewModel.clearLinkedInProfile() }
+                        )
+                    }
+                    linkedInLoading -> {
+                        UploadCard(
+                            title = "Chargement…",
+                            subtitle = "",
+                            icon = Icons.Outlined.Person,
+                            isLoaded = false,
+                            isLoading = true,
+                            error = linkedInError,
+                            onClick = {}
+                        )
+                    }
+                    else -> {
+                        // Afficher erreur si présente
+                        if (linkedInError != null) {
+                            Text(
+                                linkedInError!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+                        // Deux boutons : Fichier + Coller
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedButton(
+                                onClick = { profileFilePicker.launch("*/*") },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                ) {
+                                    Icon(Icons.Outlined.AttachFile, null)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("Fichier", style = MaterialTheme.typography.labelMedium)
+                                    Text("PDF, DOCX, TXT…", style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { showProfileTextDialog = true },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                ) {
+                                    Icon(Icons.Outlined.ContentPaste, null)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("Coller", style = MaterialTheme.typography.labelMedium)
+                                    Text("Copier-coller", style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(24.dp))
 
@@ -293,7 +365,7 @@ fun HomeScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = when {
-                            linkedInProfile == null -> "⬆ Importez d'abord votre profil LinkedIn"
+                            linkedInProfile == null -> "⬆ Importez ou collez d'abord votre profil"
                             !hasApiKey && !isPremium -> "⚙ Configurez votre clé API Anthropic pour continuer"
                             else -> ""
                         },
@@ -330,6 +402,16 @@ fun HomeScreen(
                 jobDescTextInput = text
                 viewModel.setJobDescriptionText(text)
                 showJobDescTextDialog = false
+            }
+        )
+    }
+
+    if (showProfileTextDialog) {
+        ProfileTextDialog(
+            onDismiss = { showProfileTextDialog = false },
+            onConfirm = { text ->
+                viewModel.loadProfileText(text)
+                showProfileTextDialog = false
             }
         )
     }
@@ -493,6 +575,45 @@ private fun ApiKeyDialog(
         confirmButton = {
             Button(onClick = { onSave(keyInput.trim()) }, enabled = keyInput.isNotBlank()) {
                 Text("Enregistrer")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annuler") }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileTextDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Outlined.ContentPaste, null) },
+        title = { Text("Coller votre profil") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Copiez-collez le texte de votre CV, profil LinkedIn ou tout autre texte décrivant votre parcours.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Votre profil / CV…") },
+                    modifier = Modifier.fillMaxWidth().height(250.dp),
+                    maxLines = 20
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(text) }, enabled = text.isNotBlank()) {
+                Text("Confirmer")
             }
         },
         dismissButton = {

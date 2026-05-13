@@ -21,7 +21,8 @@ sealed class AuthState {
 
 data class LinkedInProfile(
     val rawText: String,
-    val uri: Uri
+    val fileName: String,
+    val uri: Uri? = null
 )
 
 sealed class JobDescription {
