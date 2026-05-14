@@ -7,10 +7,13 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,8 +23,6 @@ class AuthRepository @Inject constructor(
     private val firebaseAuth: FirebaseAuth
 ) {
     // ── Premium email list ────────────────────────────────────────────────────
-    // Injected at build time via BuildConfig.PREMIUM_EMAILS (CI secret PREMIUM_EMAILS).
-    // Format: comma-separated lowercase emails  e.g. "alice@example.com,bob@example.com"
     private val premiumEmails: Set<String> by lazy {
         BuildConfig.PREMIUM_EMAILS
             .split(",")
@@ -30,16 +31,28 @@ class AuthRepository @Inject constructor(
             .toSet()
     }
 
+    // ── Stored account (set on sign-in, used for Vertex AI token) ─────────────
+    // GoogleSignInAccount contains the android.accounts.Account needed by GoogleAuthUtil
+    @Volatile private var storedAccount: GoogleSignInAccount? = null
+
+    // ── Google Sign-In client ─────────────────────────────────────────────────
     val googleSignInClient: GoogleSignInClient by lazy {
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            // OAUTH_WEB_CLIENT_ID is injected at build time from CI secret GOOGLE_WEB_CLIENT_ID
             .requestIdToken(BuildConfig.OAUTH_WEB_CLIENT_ID)
             .requestEmail()
+            // Request the Vertex AI scope so premium users can call the API
+            .requestScopes(Scope("https://www.googleapis.com/auth/cloud-platform"))
             .build()
         GoogleSignIn.getClient(context, gso)
     }
 
+    // ── Auth state ────────────────────────────────────────────────────────────
+
     fun getCurrentUser(): User? {
+        // Restore stored account from last sign-in if app was restarted
+        if (storedAccount == null) {
+            storedAccount = GoogleSignIn.getLastSignedInAccount(context)
+        }
         val firebaseUser = firebaseAuth.currentUser ?: return null
         val email = firebaseUser.email ?: return null
         return User(
@@ -56,6 +69,9 @@ class AuthRepository @Inject constructor(
 
     suspend fun signInWithGoogle(account: GoogleSignInAccount): Result<User> {
         return try {
+            // Store account immediately — needed for getVertexAiAccessToken()
+            storedAccount = account
+
             val credential = GoogleAuthProvider.getCredential(account.idToken, null)
             val result = firebaseAuth.signInWithCredential(credential).await()
             val firebaseUser = result.user
@@ -74,7 +90,39 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    // ── Vertex AI access token ────────────────────────────────────────────────
+    // Returns a real OAuth2 Bearer token (ya29…) valid for Vertex AI REST API.
+    // Uses the stored GoogleSignInAccount — NOT Firebase getIdToken() which returns
+    // a JWT that Vertex AI rejects with 401 UNAUTHENTICATED.
+    suspend fun getVertexAiAccessToken(): String? = withContext(Dispatchers.IO) {
+        try {
+            // Prefer the in-memory stored account; fall back to last signed-in account
+            val account = storedAccount
+                ?: GoogleSignIn.getLastSignedInAccount(context)
+                ?: return@withContext null
+
+            val androidAccount = account.account
+                ?: return@withContext null
+
+            // GoogleAuthUtil.getToken() exchanges the stored Google credentials for
+            // a short-lived OAuth2 access token for the specified scope.
+            // This call may block briefly if the token needs refreshing.
+            com.google.android.gms.auth.GoogleAuthUtil.getToken(
+                context,
+                androidAccount,
+                "oauth2:https://www.googleapis.com/auth/cloud-platform"
+            )
+        } catch (e: com.google.android.gms.auth.UserRecoverableAuthException) {
+            // Scope was not granted — user needs to re-authenticate
+            // The calling code will show "Reconnectez-vous" message
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun signOut() {
+        storedAccount = null
         firebaseAuth.signOut()
         googleSignInClient.signOut()
     }

@@ -2,6 +2,159 @@ package com.stellasecret.cvgenerator.data.model
 
 import android.net.Uri
 
+// ─── AI Providers & Models ────────────────────────────────────────────────────
+
+enum class AiProvider(
+    val displayName: String,
+    val apiBaseUrl: String,
+    val keyLabel: String,       // label affiché dans l'UI
+    val keyHint: String,        // hint dans le champ texte
+    val keyUrl: String          // lien pour obtenir la clé
+) {
+    ANTHROPIC(
+        displayName  = "Anthropic (Claude)",
+        apiBaseUrl   = "https://api.anthropic.com/v1/messages",
+        keyLabel     = "Clé API Anthropic",
+        keyHint      = "sk-ant‑…",
+        keyUrl       = "https://console.anthropic.com"
+    ),
+    OPENAI(
+        displayName  = "OpenAI (GPT)",
+        apiBaseUrl   = "https://api.openai.com/v1/chat/completions",
+        keyLabel     = "Clé API OpenAI",
+        keyHint      = "sk-…",
+        keyUrl       = "https://platform.openai.com/api-keys"
+    ),
+    GEMINI(
+        displayName  = "Google Gemini",
+        apiBaseUrl   = "https://generativelanguage.googleapis.com/v1beta/models",
+        keyLabel     = "Clé API Google AI Studio",
+        keyHint      = "AIza…",
+        keyUrl       = "https://aistudio.google.com/app/apikey"
+    ),
+    VERTEX_AI(
+        displayName  = "Vertex AI (Premium)",
+        // URL built dynamically in AiRepository using project + location
+        apiBaseUrl   = "https://us-central1-aiplatform.googleapis.com/v1",
+        keyLabel     = "Accès premium requis",
+        keyHint      = "Connectez-vous avec Google",
+        keyUrl       = "https://console.cloud.google.com/vertex-ai"
+    );
+
+    val requiresPremium: Boolean get() = this == VERTEX_AI
+
+    companion object {
+        val DEFAULT = ANTHROPIC
+        fun fromName(name: String): AiProvider =
+            entries.firstOrNull { it.name == name } ?: DEFAULT
+    }
+}
+
+data class AiModel(
+    val id: String,
+    val displayName: String,
+    val description: String,
+    val provider: AiProvider
+)
+
+object AiModels {
+    // ── Anthropic ─────────────────────────────────────────────────────────────
+    val CLAUDE_OPUS_4 = AiModel(
+        id          = "claude-opus-4-20250514",
+        displayName = "Claude Opus 4",
+        description = "Meilleur résultat — plus lent, plus coûteux",
+        provider    = AiProvider.ANTHROPIC
+    )
+    val CLAUDE_SONNET_4 = AiModel(
+        id          = "claude-sonnet-4-20250514",
+        displayName = "Claude Sonnet 4",
+        description = "Équilibre qualité / vitesse — recommandé",
+        provider    = AiProvider.ANTHROPIC
+    )
+    val CLAUDE_HAIKU_3_5 = AiModel(
+        id          = "claude-haiku-3-5-20241022",
+        displayName = "Claude Haiku 3.5",
+        description = "Le plus rapide — idéal pour tester",
+        provider    = AiProvider.ANTHROPIC
+    )
+
+    // ── OpenAI ────────────────────────────────────────────────────────────────
+    val GPT_4O = AiModel(
+        id          = "gpt-4o",
+        displayName = "GPT-4o",
+        description = "Modèle phare d'OpenAI — vision + texte",
+        provider    = AiProvider.OPENAI
+    )
+    val GPT_4O_MINI = AiModel(
+        id          = "gpt-4o-mini",
+        displayName = "GPT-4o mini",
+        description = "Rapide et économique",
+        provider    = AiProvider.OPENAI
+    )
+    val GPT_4_1 = AiModel(
+        id          = "gpt-4.1",
+        displayName = "GPT-4.1",
+        description = "Dernière génération OpenAI",
+        provider    = AiProvider.OPENAI
+    )
+
+    // ── Gemini ────────────────────────────────────────────────────────────────
+    val GEMINI_2_5_PRO = AiModel(
+        id          = "gemini-2.5-pro-preview-05-06",
+        displayName = "Gemini 2.5 Pro",
+        description = "Modèle de raisonnement avancé de Google",
+        provider    = AiProvider.GEMINI
+    )
+    val GEMINI_2_0_FLASH = AiModel(
+        id          = "gemini-2.0-flash",
+        displayName = "Gemini 2.0 Flash",
+        description = "Rapide et multimodal",
+        provider    = AiProvider.GEMINI
+    )
+    val GEMINI_1_5_FLASH = AiModel(
+        id          = "gemini-1.5-flash",
+        displayName = "Gemini 1.5 Flash",
+        description = "Économique, bon contexte long",
+        provider    = AiProvider.GEMINI
+    )
+
+    // ── Vertex AI (premium — auth via Google OAuth) ───────────────────────────
+    val VERTEX_GEMINI_2_5_PRO = AiModel(
+        id          = "gemini-2.5-pro-preview-05-06",
+        displayName = "Gemini 2.5 Pro",
+        description = "⭑ Premium — Vertex AI, facturation Google Cloud",
+        provider    = AiProvider.VERTEX_AI
+    )
+    val VERTEX_GEMINI_2_0_FLASH = AiModel(
+        id          = "gemini-2.0-flash-001",
+        displayName = "Gemini 2.0 Flash",
+        description = "⭑ Premium — Rapide, Vertex AI",
+        provider    = AiProvider.VERTEX_AI
+    )
+    val VERTEX_GEMINI_1_5_PRO = AiModel(
+        id          = "gemini-1.5-pro-002",
+        displayName = "Gemini 1.5 Pro",
+        description = "⭑ Premium — Long contexte, Vertex AI",
+        provider    = AiProvider.VERTEX_AI
+    )
+
+    // ── Index ─────────────────────────────────────────────────────────────────
+    val all: List<AiModel> = listOf(
+        CLAUDE_OPUS_4, CLAUDE_SONNET_4, CLAUDE_HAIKU_3_5,
+        GPT_4O, GPT_4O_MINI, GPT_4_1,
+        GEMINI_2_5_PRO, GEMINI_2_0_FLASH, GEMINI_1_5_FLASH,
+        VERTEX_GEMINI_2_5_PRO, VERTEX_GEMINI_2_0_FLASH, VERTEX_GEMINI_1_5_PRO
+    )
+
+    val DEFAULT = CLAUDE_SONNET_4
+
+    fun forProvider(provider: AiProvider): List<AiModel> =
+        all.filter { it.provider == provider }
+
+    fun fromId(id: String): AiModel =
+        all.firstOrNull { it.id == id } ?: DEFAULT
+}
+
 // ─── User & Auth ─────────────────────────────────────────────────────────────
 
 data class User(
@@ -21,8 +174,8 @@ sealed class AuthState {
 
 data class LinkedInProfile(
     val rawText: String,
-    val fileName: String,
-    val uri: Uri? = null
+    val fileName: String,          // nom affiché dans l'UI
+    val uri: Uri? = null           // null si saisi via copier-coller
 )
 
 sealed class JobDescription {

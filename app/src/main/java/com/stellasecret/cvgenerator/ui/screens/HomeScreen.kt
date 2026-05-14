@@ -14,7 +14,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -26,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.stellasecret.cvgenerator.data.model.*
+import kotlinx.coroutines.flow.StateFlow
 import com.stellasecret.cvgenerator.ui.MainViewModel
 import com.stellasecret.cvgenerator.ui.components.*
 import com.stellasecret.cvgenerator.ui.theme.*
@@ -52,9 +58,8 @@ fun HomeScreen(
     val jobDescLoading by viewModel.jobDescLoading.collectAsState()
     val jobDescError by viewModel.jobDescError.collectAsState()
     val generationState by viewModel.generationState.collectAsState()
-    val savedApiKey by viewModel.savedApiKey.collectAsState()
 
-    var showApiKeyDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
     var showJobDescTextDialog by remember { mutableStateOf(false) }
     var jobDescTextInput by remember { mutableStateOf("") }
 
@@ -126,9 +131,8 @@ fun HomeScreen(
     }
 
     // ── Derive API key availability ───────────────────────────────────────────
-    val isPremium = (authState as? AuthState.Authenticated)?.user?.isPremium == true
-    val hasApiKey = !savedApiKey.isNullOrBlank()
-    val canGenerate = linkedInProfile != null && (isPremium || hasApiKey)
+    val selectedModel by viewModel.selectedModel.collectAsState()
+    val canGenerate = linkedInProfile != null
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -158,13 +162,11 @@ fun HomeScreen(
                 Spacer(Modifier.height(24.dp))
 
                 // ── API Key (if not premium) ───────────────────────────────────
-                if (!isPremium) {
-                    ApiKeySection(
-                        hasApiKey = hasApiKey,
-                        onConfigureClick = { showApiKeyDialog = true }
-                    )
-                    Spacer(Modifier.height(24.dp))
-                }
+                ModelPickerSection(
+                    selectedModel = selectedModel,
+                    onConfigureClick = { showSettingsDialog = true }
+                )
+                Spacer(Modifier.height(24.dp))
 
                 // ── Profil ───────────────────────────────────────────────────
                 SectionHeader(title = "Votre profil", badge = "Requis")
@@ -358,7 +360,7 @@ fun HomeScreen(
                 GenerateButton(
                     enabled = canGenerate,
                     isLoading = generationState is GenerationState.Loading,
-                    onClick = { viewModel.generateCV(if (isPremium) null else savedApiKey) }
+                    onClick = { viewModel.generateCV() }
                 )
 
                 if (!canGenerate) {
@@ -366,7 +368,6 @@ fun HomeScreen(
                     Text(
                         text = when {
                             linkedInProfile == null -> "⬆ Importez ou collez d'abord votre profil"
-                            !hasApiKey && !isPremium -> "⚙ Configurez votre clé API Anthropic pour continuer"
                             else -> ""
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -383,14 +384,14 @@ fun HomeScreen(
 
     // ── Dialogs ───────────────────────────────────────────────────────────────
 
-    if (showApiKeyDialog) {
-        ApiKeyDialog(
-            currentKey = savedApiKey ?: "",
-            onDismiss = { showApiKeyDialog = false },
-            onSave = { key ->
-                viewModel.saveApiKey(key)
-                showApiKeyDialog = false
-            }
+    if (showSettingsDialog) {
+        AiSettingsDialog(
+            isPremium = (authState as? AuthState.Authenticated)?.user?.isPremium == true,
+            selectedModel = selectedModel,
+            onModelSelected = { viewModel.selectModel(it) },
+            onSaveKey = { provider, key -> viewModel.saveApiKey(provider, key) },
+            onDismiss = { showSettingsDialog = false },
+            getApiKey = { provider -> viewModel.apiKeyForProvider(provider) }
         )
     }
 
@@ -494,12 +495,14 @@ private fun AuthSection(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ApiKeySection(hasApiKey: Boolean, onConfigureClick: () -> Unit) {
+private fun ModelPickerSection(
+    selectedModel: AiModel,
+    onConfigureClick: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (hasApiKey) Emerald.copy(alpha = 0.08f)
-            else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),
         modifier = Modifier.fillMaxWidth(),
         onClick = onConfigureClick
@@ -509,20 +512,19 @@ private fun ApiKeySection(hasApiKey: Boolean, onConfigureClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(
-                if (hasApiKey) Icons.Filled.Key else Icons.Outlined.Key,
-                null,
-                tint = if (hasApiKey) Emerald else MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(22.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(ElectricBlue.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.AutoAwesome, null, tint = ElectricBlue, modifier = Modifier.size(20.dp))
+            }
             Column(Modifier.weight(1f)) {
+                Text(selectedModel.displayName, style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (hasApiKey) "Clé API configurée" else "Clé API requise",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (hasApiKey) Emerald else MaterialTheme.colorScheme.error
-                )
-                Text(
-                    if (hasApiKey) "Clé Anthropic enregistrée" else "Configurez votre clé API Anthropic",
+                    selectedModel.provider.displayName,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -536,49 +538,220 @@ private fun ApiKeySection(hasApiKey: Boolean, onConfigureClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ApiKeyDialog(
-    currentKey: String,
+private fun AiSettingsDialog(
+    selectedModel: AiModel,
+    isPremium: Boolean,
+    onModelSelected: (AiModel) -> Unit,
+    onSaveKey: (AiProvider, String) -> Unit,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    getApiKey: @Composable (AiProvider) -> StateFlow<String?>
 ) {
-    var keyInput by remember { mutableStateOf(currentKey) }
+    // Onglet actif : provider sélectionné par défaut
+    // If not premium, never start on VERTEX_AI
+    val initialProvider = if (!isPremium && selectedModel.provider == AiProvider.VERTEX_AI)
+        AiProvider.DEFAULT else selectedModel.provider
+    var selectedProvider by remember { mutableStateOf(initialProvider) }
+    val modelsForProvider = AiModels.forProvider(selectedProvider)
+
+    // Clés API par provider (collectées en live)
+    val keyAnthropic by getApiKey(AiProvider.ANTHROPIC).collectAsState()
+    val keyOpenAI    by getApiKey(AiProvider.OPENAI).collectAsState()
+    val keyGemini    by getApiKey(AiProvider.GEMINI).collectAsState()
+    fun keyFor(p: AiProvider) = when (p) {
+        AiProvider.ANTHROPIC -> keyAnthropic
+        AiProvider.OPENAI    -> keyOpenAI
+        AiProvider.GEMINI    -> keyGemini
+        AiProvider.VERTEX_AI -> null  // no stored key — uses Google OAuth token
+    }
+
+    var keyInput by remember(selectedProvider) { mutableStateOf(keyFor(selectedProvider) ?: "") }
     var obscured by remember { mutableStateOf(true) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Filled.Key, null) },
-        title = { Text("Clé API Anthropic") },
+        icon = { Icon(Icons.Filled.AutoAwesome, null) },
+        title = { Text("Modèle IA") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "Obtenez votre clé sur console.anthropic.com",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = keyInput,
-                    onValueChange = { keyInput = it },
-                    label = { Text("Votre clé API Anthropic") },
-                    singleLine = true,
-                    visualTransformation = if (obscured)
-                        androidx.compose.ui.text.input.PasswordVisualTransformation()
-                    else androidx.compose.ui.text.input.VisualTransformation.None,
-                    trailingIcon = {
-                        IconButton(onClick = { obscured = !obscured }) {
-                            Icon(if (obscured) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, null)
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                // ── Sélection du provider ──────────────────────────────────────
+                Text("Fournisseur", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // Row 1 — API providers (clé requise)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(AiProvider.ANTHROPIC, AiProvider.OPENAI, AiProvider.GEMINI)
+                        .forEach { provider ->
+                        val selected = provider == selectedProvider
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                selectedProvider = provider
+                                keyInput = keyFor(provider) ?: ""
+                            },
+                            label = {
+                                Text(
+                                    when (provider) {
+                                        AiProvider.ANTHROPIC -> "Claude"
+                                        AiProvider.OPENAI    -> "OpenAI"
+                                        AiProvider.GEMINI    -> "Gemini"
+                                        else                 -> provider.displayName
+                                    },
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // Row 2 — Vertex AI (premium only)
+                if (isPremium) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                    FilterChip(
+                        selected = selectedProvider == AiProvider.VERTEX_AI,
+                        onClick = {
+                            selectedProvider = AiProvider.VERTEX_AI
+                            keyInput = ""
+                        },
+                        label = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Filled.Star, null, tint = Gold, modifier = Modifier.size(12.dp))
+                                Text("Vertex AI — Premium", style = MaterialTheme.typography.labelSmall)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Gold.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Lock, null, tint = Gold, modifier = Modifier.size(14.dp))
+                            Text(
+                                "Vertex AI disponible avec un compte premium",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Gold
+                            )
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    }
+                }
+
+                // ── Sélection du modèle ────────────────────────────────────────
+                Text("Modèle", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    modelsForProvider.forEach { model ->
+                        val selected = model == selectedModel && model.provider == selectedProvider
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (selected) ElectricBlue.copy(alpha = 0.12f)
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                            border = if (selected) androidx.compose.foundation.BorderStroke(
+                                1.5.dp, ElectricBlue) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onModelSelected(model) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                if (selected) {
+                                    Icon(Icons.Filled.CheckCircle, null,
+                                        tint = ElectricBlue, modifier = Modifier.size(16.dp))
+                                } else {
+                                    Spacer(Modifier.size(16.dp))
+                                }
+                                Column {
+                                    Text(model.displayName, style = MaterialTheme.typography.titleSmall)
+                                    Text(model.description, style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Clé API (masquée pour Vertex AI — auth automatique) ─────────
+                if (selectedProvider == AiProvider.VERTEX_AI) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Emerald.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Emerald.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Filled.CheckCircle, null, tint = Emerald, modifier = Modifier.size(16.dp))
+                            Column {
+                                Text(
+                                    "Authentification automatique",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = Emerald
+                                )
+                                Text(
+                                    "Votre compte Google premium est utilisé. Aucune clé requise.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(selectedProvider.keyLabel, style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    OutlinedTextField(
+                        value = keyInput,
+                        onValueChange = { keyInput = it },
+                        label = { Text(selectedProvider.keyHint) },
+                        singleLine = true,
+                        visualTransformation = if (obscured)
+                            androidx.compose.ui.text.input.PasswordVisualTransformation()
+                        else androidx.compose.ui.text.input.VisualTransformation.None,
+                        trailingIcon = {
+                            IconButton(onClick = { obscured = !obscured }) {
+                                Icon(if (obscured) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, null)
+                            }
+                        },
+                        supportingText = {
+                            Text("Obtenez votre clé sur ${selectedProvider.keyUrl}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(keyInput.trim()) }, enabled = keyInput.isNotBlank()) {
-                Text("Enregistrer")
-            }
+            Button(
+                onClick = {
+                    if (selectedProvider != AiProvider.VERTEX_AI && keyInput.isNotBlank()) {
+                        onSaveKey(selectedProvider, keyInput.trim())
+                    }
+                    onDismiss()
+                }
+            ) { Text("Enregistrer") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Annuler") }
+            TextButton(onClick = onDismiss) { Text("Fermer") }
         }
     )
 }

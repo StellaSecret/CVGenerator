@@ -6,6 +6,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.stellasecret.cvgenerator.data.model.AiModel
+import com.stellasecret.cvgenerator.data.model.AiModels
+import com.stellasecret.cvgenerator.data.model.AiProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -18,21 +21,40 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 class PreferencesRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val API_KEY = stringPreferencesKey("anthropic_api_key")
+    // ── Keys ──────────────────────────────────────────────────────────────────
+    private val SELECTED_MODEL_ID = stringPreferencesKey("selected_model_id")
 
-    val apiKeyFlow: Flow<String?> = context.dataStore.data.map { prefs ->
-        prefs[API_KEY]
+    // Une clé par provider — l'utilisateur peut en avoir plusieurs configurées
+    private val KEY_ANTHROPIC = stringPreferencesKey("api_key_anthropic")
+    private val KEY_OPENAI    = stringPreferencesKey("api_key_openai")
+    private val KEY_GEMINI    = stringPreferencesKey("api_key_gemini")
+
+    // ── Flows ─────────────────────────────────────────────────────────────────
+    val selectedModelFlow: Flow<AiModel> = context.dataStore.data.map { prefs ->
+        AiModels.fromId(prefs[SELECTED_MODEL_ID] ?: AiModels.DEFAULT.id)
     }
 
-    suspend fun saveApiKey(apiKey: String) {
-        context.dataStore.edit { prefs ->
-            prefs[API_KEY] = apiKey
-        }
+    fun apiKeyFlow(provider: AiProvider): Flow<String?> =
+        context.dataStore.data.map { prefs -> prefs[keyFor(provider)] }
+
+    // ── Writes ────────────────────────────────────────────────────────────────
+    suspend fun saveSelectedModel(model: AiModel) {
+        context.dataStore.edit { prefs -> prefs[SELECTED_MODEL_ID] = model.id }
     }
 
-    suspend fun clearApiKey() {
-        context.dataStore.edit { prefs ->
-            prefs.remove(API_KEY)
-        }
+    suspend fun saveApiKey(provider: AiProvider, apiKey: String) {
+        context.dataStore.edit { prefs -> prefs[keyFor(provider)] = apiKey }
+    }
+
+    suspend fun clearApiKey(provider: AiProvider) {
+        context.dataStore.edit { prefs -> prefs.remove(keyFor(provider)) }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private fun keyFor(provider: AiProvider): Preferences.Key<String> = when (provider) {
+        AiProvider.ANTHROPIC -> KEY_ANTHROPIC
+        AiProvider.OPENAI    -> KEY_OPENAI
+        AiProvider.GEMINI    -> KEY_GEMINI
+        AiProvider.VERTEX_AI -> KEY_GEMINI  // Vertex AI uses Google OAuth, no stored key needed
     }
 }

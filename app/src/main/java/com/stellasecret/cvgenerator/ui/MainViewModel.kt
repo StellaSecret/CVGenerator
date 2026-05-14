@@ -4,33 +4,41 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stellasecret.cvgenerator.data.model.*
-import com.stellasecret.cvgenerator.data.repository.AnthropicRepository
+import com.stellasecret.cvgenerator.data.repository.AiRepository
 import com.stellasecret.cvgenerator.data.repository.AuthRepository
 import com.stellasecret.cvgenerator.data.repository.DocumentRepository
 import com.stellasecret.cvgenerator.data.repository.PreferencesRepository
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val anthropicRepository: AnthropicRepository,
+    private val aiRepository: AiRepository,
     private val documentRepository: DocumentRepository,
     private val preferencesRepository: PreferencesRepository
 ) : ViewModel() {
 
-    // ── Auth State ────────────────────────────────────────────────────────────
+    // ── Auth ──────────────────────────────────────────────────────────────────
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
-    // ── API Key ───────────────────────────────────────────────────────────────
-    val savedApiKey: StateFlow<String?> = preferencesRepository.apiKeyFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    // ── AI Config ─────────────────────────────────────────────────────────────
+    val selectedModel: StateFlow<AiModel> = preferencesRepository.selectedModelFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AiModels.DEFAULT)
 
-    // ── LinkedIn Profile ──────────────────────────────────────────────────────
+    // Cache des clés par provider (on écoute seulement le provider courant)
+    private val _apiKeyCache = MutableStateFlow<Map<AiProvider, String>>(emptyMap())
+
+    fun apiKeyForProvider(provider: AiProvider): StateFlow<String?> =
+        preferencesRepository.apiKeyFlow(provider)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // ── Profile ───────────────────────────────────────────────────────────────
     private val _linkedInProfile = MutableStateFlow<LinkedInProfile?>(null)
     val linkedInProfile: StateFlow<LinkedInProfile?> = _linkedInProfile.asStateFlow()
 
@@ -58,9 +66,7 @@ class MainViewModel @Inject constructor(
     private val _snackbarMessage = MutableSharedFlow<String>()
     val snackbarMessage: SharedFlow<String> = _snackbarMessage.asSharedFlow()
 
-    init {
-        checkCurrentUser()
-    }
+    init { checkCurrentUser() }
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -86,14 +92,20 @@ class MainViewModel @Inject constructor(
         _authState.value = AuthState.Unauthenticated
     }
 
-    fun saveApiKey(key: String) {
+    // ── AI Config ─────────────────────────────────────────────────────────────
+
+    fun selectModel(model: AiModel) {
+        viewModelScope.launch { preferencesRepository.saveSelectedModel(model) }
+    }
+
+    fun saveApiKey(provider: AiProvider, key: String) {
         viewModelScope.launch {
-            preferencesRepository.saveApiKey(key)
-            _snackbarMessage.emit("Clé API sauvegardée")
+            preferencesRepository.saveApiKey(provider, key)
+            _snackbarMessage.emit("Clé ${provider.displayName} enregistrée")
         }
     }
 
-    // ── Profil (fichier quelconque ou copier-coller) ─────────────────────────
+    // ── Profile ───────────────────────────────────────────────────────────────
 
     fun loadProfileFile(uri: Uri, fileName: String) {
         viewModelScope.launch {
@@ -101,26 +113,16 @@ class MainViewModel @Inject constructor(
             _linkedInError.value = null
             documentRepository.extractText(uri)
                 .onSuccess { text ->
-                    _linkedInProfile.value = LinkedInProfile(
-                        rawText = text,
-                        fileName = fileName,
-                        uri = uri
-                    )
+                    _linkedInProfile.value = LinkedInProfile(rawText = text, fileName = fileName, uri = uri)
                 }
-                .onFailure { e ->
-                    _linkedInError.value = e.message
-                }
+                .onFailure { e -> _linkedInError.value = e.message }
             _linkedInLoading.value = false
         }
     }
 
     fun loadProfileText(text: String) {
         _linkedInError.value = null
-        _linkedInProfile.value = LinkedInProfile(
-            rawText = text,
-            fileName = "Texte saisi",
-            uri = null
-        )
+        _linkedInProfile.value = LinkedInProfile(rawText = text, fileName = "Texte saisi", uri = null)
     }
 
     fun clearLinkedInProfile() {
@@ -135,19 +137,14 @@ class MainViewModel @Inject constructor(
             _jobDescLoading.value = true
             _jobDescError.value = null
             documentRepository.extractText(uri)
-                .onSuccess { text ->
-                    _jobDescription.value = JobDescription.FromFile(uri, text, fileName)
-                }
-                .onFailure { e ->
-                    _jobDescError.value = e.message
-                }
+                .onSuccess { text -> _jobDescription.value = JobDescription.FromFile(uri, text, fileName) }
+                .onFailure { e -> _jobDescError.value = e.message }
             _jobDescLoading.value = false
         }
     }
 
     fun setJobDescriptionText(text: String) {
-        _jobDescription.value = if (text.isBlank()) JobDescription.None
-        else JobDescription.FromText(text)
+        _jobDescription.value = if (text.isBlank()) JobDescription.None else JobDescription.FromText(text)
     }
 
     fun clearJobDescription() {
@@ -156,39 +153,60 @@ class MainViewModel @Inject constructor(
 
     // ── CV Generation ─────────────────────────────────────────────────────────
 
-    fun generateCV(apiKey: String?) {
-        val profile = _linkedInProfile.value
-        if (profile == null) {
+    fun generateCV() {
+        val profile = _linkedInProfile.value ?: run {
             viewModelScope.launch { _snackbarMessage.emit("Veuillez d'abord importer ou saisir votre profil") }
             return
         }
 
-        val key = apiKey ?: savedApiKey.value
-        if (key.isNullOrBlank()) {
-            viewModelScope.launch { _snackbarMessage.emit("Clé API manquante. Veuillez la saisir dans les paramètres.") }
-            return
-        }
+        val model = selectedModel.value
 
         viewModelScope.launch {
+            // Retrieve the credential for the selected provider
+            val apiKey: String? = when (model.provider) {
+                AiProvider.VERTEX_AI -> {
+                    // Vertex AI requires a real OAuth2 access token, not a Firebase JWT.
+                    // GoogleAuthUtil.getToken() fetches it from the stored Google account.
+                    authRepository.getVertexAiAccessToken()
+                }
+                AiProvider.ANTHROPIC,
+                AiProvider.OPENAI,
+                AiProvider.GEMINI -> {
+                    // Standard API providers: read the saved key from DataStore
+                    preferencesRepository.apiKeyFlow(model.provider).firstOrNull()
+                }
+            }
+
+            if (apiKey.isNullOrBlank()) {
+                _snackbarMessage.emit(
+                    when (model.provider) {
+                        AiProvider.VERTEX_AI ->
+                            "Token Vertex AI indisponible. Déconnectez-vous puis reconnectez-vous pour autoriser l'accès."
+                        AiProvider.ANTHROPIC,
+                        AiProvider.OPENAI,
+                        AiProvider.GEMINI ->
+                            "Clé API ${model.provider.displayName} manquante. Configurez-la dans les paramètres."
+                    }
+                )
+                return@launch
+            }
+
             _generationState.value = GenerationState.Loading
 
             val jobText = when (val jd = _jobDescription.value) {
                 is JobDescription.FromFile -> jd.rawText
                 is JobDescription.FromText -> jd.text
-                is JobDescription.None -> null
+                is JobDescription.None     -> null
             }
 
-            anthropicRepository.generateCV(
-                apiKey = key,
-                linkedInText = profile.rawText,
+            aiRepository.generateCV(
+                apiKey             = apiKey,
+                model              = model,
+                profileText        = profile.rawText,
                 jobDescriptionText = jobText
-            ).onSuccess { htmlContent ->
+            ).onSuccess { html ->
                 _generationState.value = GenerationState.Success(
-                    GeneratedCV(
-                        content = htmlContent,
-                        htmlContent = htmlContent,
-                        jobTitle = extractJobTitle(jobText)
-                    )
+                    GeneratedCV(content = html, htmlContent = html, jobTitle = extractJobTitle(jobText))
                 )
             }.onFailure { e ->
                 _generationState.value = GenerationState.Error(e.message ?: "Erreur inconnue")
@@ -200,11 +218,8 @@ class MainViewModel @Inject constructor(
         _generationState.value = GenerationState.Idle
     }
 
-    private fun extractJobTitle(jobText: String?): String? {
-        if (jobText == null) return null
-        val lines = jobText.lines().take(5)
-        return lines.firstOrNull { it.length in 5..80 }?.trim()
-    }
+    private fun extractJobTitle(jobText: String?): String? =
+        jobText?.lines()?.take(5)?.firstOrNull { it.length in 5..80 }?.trim()
 
     fun getGoogleSignInClient() = authRepository.googleSignInClient
 }
