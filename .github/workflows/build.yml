@@ -58,10 +58,11 @@ jobs:
 
       - name: Générer le Gradle Wrapper JAR
         if: steps.cache-wrapper.outputs.cache-hit != 'true'
+        # Retry 3 fois en cas de 502/timeout sur services.gradle.org
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 10
-          max_attempts: 1
+          max_attempts: 3
           retry_wait_seconds: 30
           command: |
             GRADLE_VERSION="${{ steps.gradle-ver.outputs.version }}"
@@ -153,7 +154,7 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 20
-          max_attempts: 1
+          max_attempts: 3
           retry_wait_seconds: 30
           command: ./gradlew assembleDebug --no-daemon -x lint
 
@@ -218,7 +219,7 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 20
-          max_attempts: 1
+          max_attempts: 3
           retry_wait_seconds: 30
           command: ./gradlew lint --no-daemon
 
@@ -234,7 +235,7 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 20
-          max_attempts: 1
+          max_attempts: 3
           retry_wait_seconds: 30
           command: ./gradlew testDebugUnitTest --no-daemon --continue
 
@@ -299,12 +300,13 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
-          max_attempts: 1
+          max_attempts: 3
           retry_wait_seconds: 30
           command: |
             ./gradlew bundleRelease assembleRelease --no-daemon \
               -PPREMIUM_EMAILS="${{ secrets.PREMIUM_EMAILS }}" \
-              -POAUTH_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}"
+              -POAUTH_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}" \
+              -PGEMINI_ENCRYPTION_KEY="${{ secrets.GEMINI_ENCRYPTION_KEY }}"
 
       - name: Nommer l'artifact
         id: artifact-name

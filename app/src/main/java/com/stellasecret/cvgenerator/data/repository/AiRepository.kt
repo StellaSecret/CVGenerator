@@ -51,11 +51,16 @@ class AiRepository @Inject constructor() {
         jobDescriptionText: String?,
         vertexProjectId: String = "cvgenerator-project",
         vertexLocation: String  = "us-central1"
-    ): Result<String> = when (model.provider) {
-        AiProvider.ANTHROPIC -> callAnthropic(apiKey, model, profileText, jobDescriptionText)
-        AiProvider.OPENAI    -> callOpenAI(apiKey, model, profileText, jobDescriptionText)
-        AiProvider.GEMINI    -> callGemini(apiKey, model, profileText, jobDescriptionText)
-        AiProvider.VERTEX_AI -> callVertexAI(
+    ): Result<String> = when {
+        model.provider == AiProvider.ANTHROPIC -> callAnthropic(apiKey, model, profileText, jobDescriptionText)
+        model.provider == AiProvider.OPENAI    -> callOpenAI(apiKey, model, profileText, jobDescriptionText)
+
+        // If provider is GEMINI OR if it's VERTEX_AI but we have an API key (starts with AIza)
+        model.provider == AiProvider.GEMINI ||
+        (model.provider == AiProvider.VERTEX_AI && apiKey.startsWith("AIza")) ->
+            callGemini(apiKey, model, profileText, jobDescriptionText)
+
+        model.provider == AiProvider.VERTEX_AI -> callVertexAI(
             accessToken   = apiKey,
             model         = model,
             profileText   = profileText,
@@ -63,6 +68,8 @@ class AiRepository @Inject constructor() {
             projectId     = vertexProjectId,
             location      = vertexLocation
         )
+
+        else -> Result.failure(Exception("Fournisseur inconnu"))
     }
 
     // ── Prompts communs ───────────────────────────────────────────────────────
@@ -247,7 +254,7 @@ class AiRepository @Inject constructor() {
         jobDescriptionText: String?
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            // Gemini : system instruction + user turn
+            // Gemini v1beta : handles system_instruction field
             val payload = JsonObject().apply {
                 add("system_instruction", gson.toJsonTree(
                     mapOf("parts" to listOf(mapOf("text" to systemPrompt())))
@@ -262,17 +269,22 @@ class AiRepository @Inject constructor() {
                 ))
             }
 
-            val url = "${model.provider.apiBaseUrl}/${model.id}:generateContent?key=$apiKey"
+            val baseUrl = AiProvider.GEMINI.apiBaseUrl
+            val modelId = model.id
+            val url = "$baseUrl/$modelId:generateContent?key=$apiKey"
+
+            android.util.Log.d("GeminiAPI", "Calling URL: ${baseUrl}/$modelId:generateContent?key=${apiKey.take(4)}... (Len: ${apiKey.length})")
+
             val request = Request.Builder()
                 .url(url)
-                .addHeader("Content-Type", "application/json")
                 .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
                 .build()
-
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
+                val errorBody = response.body?.string()
+                android.util.Log.e("GeminiAPI", "Error ${response.code}: $errorBody")
                 return@withContext Result.failure(
-                    Exception("Gemini ${response.code}: ${response.body?.string()}")
+                    Exception("Gemini ${response.code}: $errorBody")
                 )
             }
             val json = gson.fromJson(response.body!!.string(), JsonObject::class.java)

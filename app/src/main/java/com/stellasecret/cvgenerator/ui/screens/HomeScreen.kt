@@ -460,7 +460,7 @@ private fun AuthSection(
             if (authState.user.isPremium) {
                 Spacer(Modifier.height(12.dp))
                 InfoChip(
-                    "Vertex AI activé — accès illimité",
+                    "Gemini Premium activé — clé sécurisée côté serveur",
                     Icons.Filled.CloudDone,
                     Emerald
                 )

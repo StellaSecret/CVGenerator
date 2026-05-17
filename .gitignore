@@ -29,3 +29,7 @@ test-results/
 *.zip
 google-services.json
 .premium_emails.txt
+encrypt_gemini_key.py
+
+# ── File for Gemini to read ───────────────────────────────────────────────────
+Gemini_file.txt

@@ -44,6 +44,8 @@ android {
         // Falls back to empty string for local debug builds
         buildConfigField "String", "OAUTH_WEB_CLIENT_ID",
             "\"${project.findProperty('OAUTH_WEB_CLIENT_ID') ?: ''}\""
+        buildConfigField "String", "GEMINI_ENCRYPTION_KEY",
+            "\"${project.findProperty('GEMINI_ENCRYPTION_KEY') ?: ''}\""
         buildConfigField "String", "PREMIUM_EMAILS",
             "\"${project.findProperty('PREMIUM_EMAILS') ?: ''}\""
     }
@@ -117,6 +119,8 @@ dependencies {
     // Google Auth / Firebase
     implementation platform('com.google.firebase:firebase-bom:32.7.0')
     implementation 'com.google.firebase:firebase-auth-ktx'
+    implementation 'com.google.firebase:firebase-functions-ktx'
+    implementation 'com.google.firebase:firebase-config-ktx'
     implementation 'com.google.android.gms:play-services-auth:20.7.0'
 
     // Networking

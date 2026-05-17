@@ -1,5 +1,6 @@
 package com.stellasecret.cvgenerator.ui
 
+import com.stellasecret.cvgenerator.BuildConfig
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,6 +9,7 @@ import com.stellasecret.cvgenerator.data.repository.AiRepository
 import com.stellasecret.cvgenerator.data.repository.AuthRepository
 import com.stellasecret.cvgenerator.data.repository.DocumentRepository
 import com.stellasecret.cvgenerator.data.repository.PreferencesRepository
+import com.stellasecret.cvgenerator.data.repository.RemoteConfigRepository
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -19,6 +21,7 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val aiRepository: AiRepository,
+    private val remoteConfigRepository: RemoteConfigRepository,
     private val documentRepository: DocumentRepository,
     private val preferencesRepository: PreferencesRepository
 ) : ViewModel() {
@@ -163,31 +166,60 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             // Retrieve the credential for the selected provider
+            val isPremiumUser = (authState.value as? AuthState.Authenticated)?.user?.isPremium == true
+
             val apiKey: String? = when (model.provider) {
                 AiProvider.VERTEX_AI -> {
-                    // Vertex AI requires a real OAuth2 access token, not a Firebase JWT.
-                    // GoogleAuthUtil.getToken() fetches it from the stored Google account.
-                    authRepository.getVertexAiAccessToken()
+                    if (isPremiumUser) {
+                        // For premium users, we use the shared Gemini API key (AI Studio)
+                        // instead of direct Vertex AI OAuth to avoid 403/permission issues.
+                        remoteConfigRepository.getGeminiApiKey()
+                    } else {
+                        authRepository.getVertexAiAccessToken()
+                    }
+                }
+                AiProvider.GEMINI -> {
+                    if (isPremiumUser) {
+                        // Premium: decrypt Gemini key from Firebase Remote Config
+                        // Key is AES-256-GCM encrypted — plaintext never in APK or source
+                        remoteConfigRepository.getGeminiApiKey()?.trim()
+                    } else {
+                        // Non-premium: use user's own key from DataStore
+                        preferencesRepository.apiKeyFlow(model.provider).firstOrNull()?.trim()
+                    }
                 }
                 AiProvider.ANTHROPIC,
-                AiProvider.OPENAI,
-                AiProvider.GEMINI -> {
-                    // Standard API providers: read the saved key from DataStore
-                    preferencesRepository.apiKeyFlow(model.provider).firstOrNull()
+                AiProvider.OPENAI -> {
+                    preferencesRepository.apiKeyFlow(model.provider).firstOrNull()?.trim()
                 }
             }
 
+            val isPremiumShared = (model.provider == AiProvider.GEMINI || model.provider == AiProvider.VERTEX_AI) && isPremiumUser
+
             if (apiKey.isNullOrBlank()) {
-                _snackbarMessage.emit(
-                    when (model.provider) {
-                        AiProvider.VERTEX_AI ->
-                            "Token Vertex AI indisponible. Déconnectez-vous puis reconnectez-vous pour autoriser l'accès."
-                        AiProvider.ANTHROPIC,
-                        AiProvider.OPENAI,
-                        AiProvider.GEMINI ->
-                            "Clé API ${model.provider.displayName} manquante. Configurez-la dans les paramètres."
+                val errorMessage = when (model.provider) {
+                    AiProvider.VERTEX_AI -> if (isPremiumUser) {
+                        val encryptionKey = BuildConfig.GEMINI_ENCRYPTION_KEY
+                        when {
+                            encryptionKey.isBlank() -> "Erreur interne : clé de chiffrement manquante dans le build."
+                            else -> "Clé Premium indisponible (Remote Config). Vérifiez votre connexion."
+                        }
+                    } else {
+                        "Token Vertex AI indisponible. Déconnectez-vous puis reconnectez-vous."
                     }
-                )
+                    AiProvider.ANTHROPIC,
+                    AiProvider.OPENAI,
+                    AiProvider.GEMINI -> if (isPremiumShared) {
+                        val encryptionKey = BuildConfig.GEMINI_ENCRYPTION_KEY
+                        when {
+                            encryptionKey.isBlank() -> "Erreur interne : clé de chiffrement manquante dans le build."
+                            else -> "Clé Gemini Premium indisponible. Vérifiez votre connexion."
+                        }
+                    } else {
+                        "Clé API Gemini manquante. Configurez-la dans les paramètres."
+                    }
+                }
+                _snackbarMessage.emit(errorMessage)
                 return@launch
             }
 
@@ -199,12 +231,16 @@ class MainViewModel @Inject constructor(
                 is JobDescription.None     -> null
             }
 
-            aiRepository.generateCV(
+            // All providers use direct API call.
+            // For premium Gemini, apiKey was already resolved from Remote Config above.
+            val result = aiRepository.generateCV(
                 apiKey             = apiKey,
                 model              = model,
                 profileText        = profile.rawText,
                 jobDescriptionText = jobText
-            ).onSuccess { html ->
+            )
+
+            result.onSuccess { html ->
                 _generationState.value = GenerationState.Success(
                     GeneratedCV(content = html, htmlContent = html, jobTitle = extractJobTitle(jobText))
                 )

@@ -99,42 +99,42 @@ object AiModels {
     )
 
     // ── Gemini ────────────────────────────────────────────────────────────────
-    val GEMINI_2_5_PRO = AiModel(
-        id          = "gemini-2.5-pro-preview-05-06",
-        displayName = "Gemini 2.5 Pro",
-        description = "Modèle de raisonnement avancé de Google",
+    val GEMINI_3_5_FLASH = AiModel(
+        id          = "gemini-3.5-flash",
+        displayName = "Gemini 3.5 Flash",
+        description = "Plus rapide, intelligent et multimodal (Mai 2026)",
         provider    = AiProvider.GEMINI
     )
-    val GEMINI_2_0_FLASH = AiModel(
-        id          = "gemini-2.0-flash",
-        displayName = "Gemini 2.0 Flash",
-        description = "Rapide et multimodal",
+    val GEMINI_3_1_PRO = AiModel(
+        id          = "gemini-3.1-pro-preview",
+        displayName = "Gemini 3.1 Pro",
+        description = "Raisonnement avancé (Preview Février 2026)",
         provider    = AiProvider.GEMINI
     )
-    val GEMINI_1_5_FLASH = AiModel(
-        id          = "gemini-1.5-flash",
-        displayName = "Gemini 1.5 Flash",
-        description = "Économique, bon contexte long",
+    val GEMINI_2_5_FLASH = AiModel(
+        id          = "gemini-2.5-flash",
+        displayName = "Gemini 2.5 Flash",
+        description = "Modèle stable et équilibré",
         provider    = AiProvider.GEMINI
     )
 
     // ── Vertex AI (premium — auth via Google OAuth) ───────────────────────────
+    val VERTEX_GEMINI_3_5_FLASH = AiModel(
+        id          = "gemini-3.5-flash",
+        displayName = "Gemini 3.5 Flash",
+        description = "⭑ Premium — Très rapide, Vertex AI",
+        provider    = AiProvider.VERTEX_AI
+    )
+    val VERTEX_GEMINI_3_1_PRO = AiModel(
+        id          = "gemini-3.1-pro-preview",
+        displayName = "Gemini 3.1 Pro",
+        description = "⭑ Premium — Raisonnement avancé, Vertex AI",
+        provider    = AiProvider.VERTEX_AI
+    )
     val VERTEX_GEMINI_2_5_PRO = AiModel(
-        id          = "gemini-2.5-pro-preview-05-06",
+        id          = "gemini-2.5-pro",
         displayName = "Gemini 2.5 Pro",
-        description = "⭑ Premium — Vertex AI, facturation Google Cloud",
-        provider    = AiProvider.VERTEX_AI
-    )
-    val VERTEX_GEMINI_2_0_FLASH = AiModel(
-        id          = "gemini-2.0-flash-001",
-        displayName = "Gemini 2.0 Flash",
-        description = "⭑ Premium — Rapide, Vertex AI",
-        provider    = AiProvider.VERTEX_AI
-    )
-    val VERTEX_GEMINI_1_5_PRO = AiModel(
-        id          = "gemini-1.5-pro-002",
-        displayName = "Gemini 1.5 Pro",
-        description = "⭑ Premium — Long contexte, Vertex AI",
+        description = "⭑ Premium — Long contexte, stable",
         provider    = AiProvider.VERTEX_AI
     )
 
@@ -142,8 +142,8 @@ object AiModels {
     val all: List<AiModel> = listOf(
         CLAUDE_OPUS_4, CLAUDE_SONNET_4, CLAUDE_HAIKU_3_5,
         GPT_4O, GPT_4O_MINI, GPT_4_1,
-        GEMINI_2_5_PRO, GEMINI_2_0_FLASH, GEMINI_1_5_FLASH,
-        VERTEX_GEMINI_2_5_PRO, VERTEX_GEMINI_2_0_FLASH, VERTEX_GEMINI_1_5_PRO
+        GEMINI_3_5_FLASH, GEMINI_3_1_PRO, GEMINI_2_5_FLASH,
+        VERTEX_GEMINI_3_5_FLASH, VERTEX_GEMINI_3_1_PRO, VERTEX_GEMINI_2_5_PRO
     )
 
     val DEFAULT = CLAUDE_SONNET_4
