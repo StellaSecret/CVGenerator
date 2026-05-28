@@ -75,42 +75,40 @@ class AiRepository @Inject constructor() {
     // ── Prompts communs ───────────────────────────────────────────────────────
 
     private fun systemPrompt() = """
-        Tu es un expert en recrutement et rédaction de CV avec 20 ans d'expérience.
-        Tu crées des CV professionnels, percutants et adaptés aux offres d'emploi.
+        Tu es un expert en recrutement et rédaction de CV de renommée mondiale.
+        Ton objectif est de transformer un profil brut en un CV HTML d'élite, exhaustif et parfaitement formaté.
 
-        Règles impératives :
-        - Utilise un format HTML propre et bien structuré pour le CV
-        - Mets en valeur les compétences clés correspondant à l'offre
-        - Utilise des verbes d'action forts (développé, dirigé, optimisé, conçu...)
-        - Quantifie les réalisations quand possible (% d'amélioration, nombre d'utilisateurs, etc.)
-        - Structure : Résumé percutant → Expériences → Compétences → Formation → Langues
-        - Adapte le vocabulaire aux mots-clés de l'offre pour passer les ATS
-        - Longueur : 1-2 pages maximum
-        - Réponds TOUJOURS avec du HTML valide et complet incluant les styles CSS inline
-        - Le HTML doit être prêt à être converti en PDF
+        Règles de rédaction (CRUCIALES) :
+        - Inclus l'INTÉGRALITÉ des expériences professionnelles pertinentes du profil. Ne résume pas à l'extrême.
+        - Pour chaque poste : Titre, Entreprise, Dates, et une liste détaillée des réalisations et responsabilités.
+        - Utilise des verbes d'action puissants et chiffre les résultats (ex: "Augmentation de 30% du CA").
+        - Structure : En-tête (Contact) → Résumé Professionnel → Expériences (la section la plus longue) → Compétences Techniques/Soft Skills → Formation → Langues.
+
+        Règles Techniques (HTML/CSS) :
+        - Génère un document HTML5 complet avec styles CSS inline dans une balise <style>.
+        - Le design doit être moderne, épuré, utilisant des polices sans-serif (Arial, Helvetica).
+        - Utilise une mise en page structurée (ex: colonne latérale pour les infos de contact/compétences et colonne principale pour les expériences).
+        - Assure-toi que le contenu ne soit PAS tronqué. Si le profil est long, le CV peut faire plusieurs pages.
+        - Réponds UNIQUEMENT avec le code HTML, sans texte de présentation avant ou après.
     """.trimIndent()
 
     private fun userMessage(profileText: String, jobDescriptionText: String?) =
         if (jobDescriptionText != null) """
-            PROFIL :
+            Voici le PROFIL complet de l'utilisateur :
             $profileText
 
-            ---
-
-            FICHE DE POSTE :
+            Voici la FICHE DE POSTE cible :
             $jobDescriptionText
 
-            ---
-
-            Génère un CV HTML complet et professionnel, parfaitement adapté à cette fiche de poste.
+            CONSIGNE :
+            Génère un CV HTML complet et ultra-professionnel. Adapte le contenu pour qu'il résonne avec la fiche de poste (mots-clés, compétences mises en avant), mais conserve TOUTE la chronologie des expériences.
         """.trimIndent()
         else """
-            PROFIL :
+            Voici le PROFIL complet de l'utilisateur :
             $profileText
 
-            ---
-
-            Génère un CV HTML complet et professionnel à partir de ce profil.
+            CONSIGNE :
+            Génère un CV HTML exhaustif et élégant à partir de ce profil. Inclus toutes les expériences, formations et compétences sans exception.
         """.trimIndent()
 
     // ── Anthropic ─────────────────────────────────────────────────────────────
