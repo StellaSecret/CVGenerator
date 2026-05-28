@@ -32,16 +32,16 @@ enum class AiProvider(
         keyHint      = "AIza…",
         keyUrl       = "https://aistudio.google.com/app/apikey"
     ),
-    VERTEX_AI(
-        displayName  = "Vertex AI (Premium)",
+    GEMINI_PREMIUM(
+        displayName  = "Gemini Premium",
         // URL built dynamically in AiRepository using project + location
         apiBaseUrl   = "https://us-central1-aiplatform.googleapis.com/v1",
-        keyLabel     = "Accès premium requis",
-        keyHint      = "Connectez-vous avec Google",
+        keyLabel     = "Accès premium activé",
+        keyHint      = "Authentification automatique",
         keyUrl       = "https://console.cloud.google.com/vertex-ai"
     );
 
-    val requiresPremium: Boolean get() = this == VERTEX_AI
+    val requiresPremium: Boolean get() = this == GEMINI_PREMIUM
 
     companion object {
         val DEFAULT = ANTHROPIC
@@ -124,24 +124,24 @@ object AiModels {
         provider    = AiProvider.GEMINI
     )
 
-    // ── Vertex AI (premium — auth via Google OAuth) ───────────────────────────
+    // ── Gemini Premium (premium — auth via Google OAuth) ─────────────────────
     val VERTEX_GEMINI_3_5_FLASH = AiModel(
         id          = "gemini-3.5-flash",
         displayName = "Gemini 3.5 Flash",
-        description = "⭑ Premium — Très intelligent, Vertex AI",
-        provider    = AiProvider.VERTEX_AI
+        description = "⭑ Premium — Très intelligent, ultra-rapide",
+        provider    = AiProvider.GEMINI_PREMIUM
     )
     val VERTEX_GEMINI_3_1_PRO = AiModel(
         id          = "gemini-3.1-pro",
         displayName = "Gemini 3.1 Pro",
-        description = "⭑ Premium — Raisonnement de pointe, Vertex AI",
-        provider    = AiProvider.VERTEX_AI
+        description = "⭑ Premium — Raisonnement de pointe",
+        provider    = AiProvider.GEMINI_PREMIUM
     )
     val VERTEX_GEMINI_2_5_PRO = AiModel(
         id          = "gemini-2.5-pro",
         displayName = "Gemini 2.5 Pro",
         description = "⭑ Premium — Long contexte, stable",
-        provider    = AiProvider.VERTEX_AI
+        provider    = AiProvider.GEMINI_PREMIUM
     )
 
     // ── Index ─────────────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ sealed class GenerationState {
 
 data class AnthropicRequest(
     val model: String = "claude-opus-4-20250514",
-    val max_tokens: Int = 4096,
+    val max_tokens: Int = 8192,
     val system: String,
     val messages: List<AnthropicMessage>
 )

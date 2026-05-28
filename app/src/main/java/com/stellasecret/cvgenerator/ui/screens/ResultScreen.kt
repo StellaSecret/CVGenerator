@@ -24,17 +24,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.stellasecret.cvgenerator.data.model.GenerationState
+import com.stellasecret.cvgenerator.ui.MainViewModel
 import com.stellasecret.cvgenerator.ui.theme.*
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResultScreen(
-    encodedHtml: String,
+    viewModel: MainViewModel = hiltViewModel(),
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val htmlContent = Uri.decode(encodedHtml)
+    val generationState by viewModel.generationState.collectAsState()
+
+    val htmlContent = (generationState as? GenerationState.Success)?.cv?.htmlContent ?: ""
+
+    androidx.activity.compose.BackHandler {
+        viewModel.resetGeneration()
+        onBack()
+    }
 
     var webView by remember { mutableStateOf<WebView?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
@@ -54,7 +64,10 @@ fun ResultScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        viewModel.resetGeneration()
+                        onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
                     }
                 },

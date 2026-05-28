@@ -55,12 +55,12 @@ class AiRepository @Inject constructor() {
         model.provider == AiProvider.ANTHROPIC -> callAnthropic(apiKey, model, profileText, jobDescriptionText)
         model.provider == AiProvider.OPENAI    -> callOpenAI(apiKey, model, profileText, jobDescriptionText)
 
-        // If provider is GEMINI OR if it's VERTEX_AI but we have an API key (starts with AIza)
+        // If provider is GEMINI OR if it's GEMINI_PREMIUM but we have an API key (starts with AIza)
         model.provider == AiProvider.GEMINI ||
-        (model.provider == AiProvider.VERTEX_AI && apiKey.startsWith("AIza")) ->
+        (model.provider == AiProvider.GEMINI_PREMIUM && apiKey.startsWith("AIza")) ->
             callGemini(apiKey, model, profileText, jobDescriptionText)
 
-        model.provider == AiProvider.VERTEX_AI -> callVertexAI(
+        model.provider == AiProvider.GEMINI_PREMIUM -> callGeminiPremium(
             accessToken   = apiKey,
             model         = model,
             profileText   = profileText,
@@ -161,7 +161,7 @@ class AiRepository @Inject constructor() {
         try {
             val payload = JsonObject().apply {
                 addProperty("model", model.id)
-                addProperty("max_tokens", 4096)
+                addProperty("max_tokens", 8192)
                 add("messages", gson.toJsonTree(listOf(
                     mapOf("role" to "system", "content" to systemPrompt()),
                     mapOf("role" to "user",   "content" to userMessage(profileText, jobDescriptionText))
@@ -191,11 +191,11 @@ class AiRepository @Inject constructor() {
     }
 
 
-    // ── Vertex AI ─────────────────────────────────────────────────────────────
+    // ── Gemini Premium ────────────────────────────────────────────────────────
     // Auth: Google OAuth2 access token passed as Bearer header.
     // The token is retrieved from GoogleSignIn (via getAccessToken) in the ViewModel.
-    // Vertex AI uses the same Gemini model IDs but goes through Google Cloud endpoints.
-    private suspend fun callVertexAI(
+    // Gemini Premium uses the same Gemini model IDs but goes through Google Cloud endpoints.
+    private suspend fun callGeminiPremium(
         accessToken: String,
         model: AiModel,
         profileText: String,
@@ -217,7 +217,7 @@ class AiRepository @Inject constructor() {
                     ))
                 )))
                 add("generationConfig", gson.toJsonTree(
-                    mapOf("maxOutputTokens" to 4096)
+                    mapOf("maxOutputTokens" to 8192)
                 ))
             }
 
@@ -231,7 +231,7 @@ class AiRepository @Inject constructor() {
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
                 return@withContext Result.failure(
-                    Exception("Vertex AI ${response.code}: ${response.body?.string()}")
+                    Exception("Gemini Premium ${response.code}: ${response.body?.string()}")
                 )
             }
             val json = gson.fromJson(response.body!!.string(), JsonObject::class.java)
@@ -263,7 +263,7 @@ class AiRepository @Inject constructor() {
                     ))
                 )))
                 add("generationConfig", gson.toJsonTree(
-                    mapOf("maxOutputTokens" to 4096)
+                    mapOf("maxOutputTokens" to 8192)
                 ))
             }
 
