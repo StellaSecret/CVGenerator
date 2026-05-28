@@ -55,6 +55,6 @@ class PreferencesRepository @Inject constructor(
         AiProvider.ANTHROPIC -> KEY_ANTHROPIC
         AiProvider.OPENAI    -> KEY_OPENAI
         AiProvider.GEMINI    -> KEY_GEMINI
-        AiProvider.VERTEX_AI -> KEY_GEMINI  // Vertex AI uses Google OAuth, no stored key needed
+        AiProvider.GEMINI_PREMIUM -> KEY_GEMINI  // Gemini Premium uses Google OAuth or shared key
     }
 }

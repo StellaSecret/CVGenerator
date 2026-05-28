@@ -44,7 +44,7 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun HomeScreen(
     viewModel: MainViewModel = hiltViewModel(),
-    onNavigateToResult: (String) -> Unit
+    onNavigateToResult: () -> Unit
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -70,11 +70,12 @@ fun HomeScreen(
         }
     }
 
-    // Navigate to result when CV is generated
-    LaunchedEffect(generationState) {
-        if (generationState is GenerationState.Success) {
-            val html = (generationState as GenerationState.Success).cv.htmlContent
-            onNavigateToResult(Uri.encode(html))
+    // Navigate to result when CV is generated (one-time event)
+    LaunchedEffect(Unit) {
+        viewModel.navEvents.collectLatest { event ->
+            if (event is MainViewModel.NavEvent.NavigateToResult) {
+                onNavigateToResult()
+            }
         }
     }
 
@@ -478,7 +479,7 @@ private fun AuthSection(
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "Connectez-vous pour accéder à Vertex AI (comptes premium) ou utilisez votre clé API",
+                "Connectez-vous pour accéder à Gemini Premium ou utilisez votre clé API personnelle",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -547,8 +548,8 @@ private fun AiSettingsDialog(
     getApiKey: @Composable (AiProvider) -> StateFlow<String?>
 ) {
     // Onglet actif : provider sélectionné par défaut
-    // If not premium, never start on VERTEX_AI
-    val initialProvider = if (!isPremium && selectedModel.provider == AiProvider.VERTEX_AI)
+    // If not premium, never start on GEMINI_PREMIUM
+    val initialProvider = if (!isPremium && selectedModel.provider == AiProvider.GEMINI_PREMIUM)
         AiProvider.DEFAULT else selectedModel.provider
     var selectedProvider by remember { mutableStateOf(initialProvider) }
     val modelsForProvider = AiModels.forProvider(selectedProvider)
@@ -561,7 +562,7 @@ private fun AiSettingsDialog(
         AiProvider.ANTHROPIC -> keyAnthropic
         AiProvider.OPENAI    -> keyOpenAI
         AiProvider.GEMINI    -> keyGemini
-        AiProvider.VERTEX_AI -> null  // no stored key — uses Google OAuth token
+        AiProvider.GEMINI_PREMIUM -> null  // no stored key — uses Google OAuth token
     }
 
     var keyInput by remember(selectedProvider) { mutableStateOf(keyFor(selectedProvider) ?: "") }
@@ -605,14 +606,16 @@ private fun AiSettingsDialog(
                     }
                 }
 
-                // Row 2 — Vertex AI (premium only)
+                // Row 2 — Gemini Premium (premium only)
                 if (isPremium) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                     FilterChip(
-                        selected = selectedProvider == AiProvider.VERTEX_AI,
+                        selected = selectedProvider == AiProvider.GEMINI_PREMIUM,
                         onClick = {
-                            selectedProvider = AiProvider.VERTEX_AI
+                            selectedProvider = AiProvider.GEMINI_PREMIUM
                             keyInput = ""
+                            // Auto-select Gemini 2.0 Flash for premium
+                            onModelSelected(AiModels.VERTEX_GEMINI_2_0_FLASH)
                         },
                         label = {
                             Row(
@@ -620,7 +623,7 @@ private fun AiSettingsDialog(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(Icons.Filled.Star, null, tint = Gold, modifier = Modifier.size(12.dp))
-                                Text("Vertex AI — Premium", style = MaterialTheme.typography.labelSmall)
+                                Text("Gemini Premium (Recommandé)", style = MaterialTheme.typography.labelSmall)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -639,7 +642,7 @@ private fun AiSettingsDialog(
                         ) {
                             Icon(Icons.Filled.Lock, null, tint = Gold, modifier = Modifier.size(14.dp))
                             Text(
-                                "Vertex AI disponible avec un compte premium",
+                                "Gemini Premium disponible pour les membres",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Gold
                             )
@@ -685,8 +688,8 @@ private fun AiSettingsDialog(
                     }
                 }
 
-                // ── Clé API (masquée pour Vertex AI — auth automatique) ─────────
-                if (selectedProvider == AiProvider.VERTEX_AI) {
+                // ── Clé API (masquée pour Gemini Premium — auth automatique) ─────────
+                if (selectedProvider == AiProvider.GEMINI_PREMIUM) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = Emerald.copy(alpha = 0.08f),
@@ -743,7 +746,7 @@ private fun AiSettingsDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (selectedProvider != AiProvider.VERTEX_AI && keyInput.isNotBlank()) {
+                    if (selectedProvider != AiProvider.GEMINI_PREMIUM && keyInput.isNotBlank()) {
                         onSaveKey(selectedProvider, keyInput.trim())
                     }
                     onDismiss()

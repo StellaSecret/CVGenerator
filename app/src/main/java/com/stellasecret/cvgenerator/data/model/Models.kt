@@ -32,16 +32,16 @@ enum class AiProvider(
         keyHint      = "AIza…",
         keyUrl       = "https://aistudio.google.com/app/apikey"
     ),
-    VERTEX_AI(
-        displayName  = "Vertex AI (Premium)",
+    GEMINI_PREMIUM(
+        displayName  = "Gemini Premium",
         // URL built dynamically in AiRepository using project + location
         apiBaseUrl   = "https://us-central1-aiplatform.googleapis.com/v1",
-        keyLabel     = "Accès premium requis",
-        keyHint      = "Connectez-vous avec Google",
+        keyLabel     = "Accès premium activé",
+        keyHint      = "Authentification automatique",
         keyUrl       = "https://console.cloud.google.com/vertex-ai"
     );
 
-    val requiresPremium: Boolean get() = this == VERTEX_AI
+    val requiresPremium: Boolean get() = this == GEMINI_PREMIUM
 
     companion object {
         val DEFAULT = ANTHROPIC
@@ -99,22 +99,10 @@ object AiModels {
     )
 
     // ── Gemini ────────────────────────────────────────────────────────────────
-    val GEMINI_3_5_FLASH = AiModel(
-        id          = "gemini-3.5-flash",
-        displayName = "Gemini 3.5 Flash",
-        description = "Le plus intelligent et multimodal (Mai 2026)",
-        provider    = AiProvider.GEMINI
-    )
-    val GEMINI_3_1_PRO = AiModel(
-        id          = "gemini-3.1-pro",
-        displayName = "Gemini 3.1 Pro",
-        description = "Raisonnement de pointe pour experts",
-        provider    = AiProvider.GEMINI
-    )
-    val GEMINI_3_1_FLASH_LITE = AiModel(
-        id          = "gemini-3.1-flash-lite",
-        displayName = "Gemini 3.1 Flash-Lite",
-        description = "Ultra-rapide et économique",
+    val GEMINI_2_0_FLASH = AiModel(
+        id          = "gemini-2.0-flash",
+        displayName = "Gemini 2.0 Flash",
+        description = "Rapide et multimodal",
         provider    = AiProvider.GEMINI
     )
     val GEMINI_2_5_FLASH = AiModel(
@@ -124,32 +112,26 @@ object AiModels {
         provider    = AiProvider.GEMINI
     )
 
-    // ── Vertex AI (premium — auth via Google OAuth) ───────────────────────────
-    val VERTEX_GEMINI_3_5_FLASH = AiModel(
-        id          = "gemini-3.5-flash",
-        displayName = "Gemini 3.5 Flash",
-        description = "⭑ Premium — Très intelligent, Vertex AI",
-        provider    = AiProvider.VERTEX_AI
+    // ── Gemini Premium (premium — auth via Google OAuth) ─────────────────────
+    val VERTEX_GEMINI_2_0_FLASH = AiModel(
+        id          = "gemini-2.0-flash",
+        displayName = "Gemini 2.0 Flash",
+        description = "⭑ Premium — Rapide et multimodal",
+        provider    = AiProvider.GEMINI_PREMIUM
     )
-    val VERTEX_GEMINI_3_1_PRO = AiModel(
-        id          = "gemini-3.1-pro",
-        displayName = "Gemini 3.1 Pro",
-        description = "⭑ Premium — Raisonnement de pointe, Vertex AI",
-        provider    = AiProvider.VERTEX_AI
-    )
-    val VERTEX_GEMINI_2_5_PRO = AiModel(
-        id          = "gemini-2.5-pro",
-        displayName = "Gemini 2.5 Pro",
-        description = "⭑ Premium — Long contexte, stable",
-        provider    = AiProvider.VERTEX_AI
+    val VERTEX_GEMINI_2_5_FLASH = AiModel(
+        id          = "gemini-2.5-flash",
+        displayName = "Gemini 2.5 Flash",
+        description = "⭑ Premium — Stable et fiable",
+        provider    = AiProvider.GEMINI_PREMIUM
     )
 
     // ── Index ─────────────────────────────────────────────────────────────────
     val all: List<AiModel> = listOf(
         CLAUDE_OPUS_4, CLAUDE_SONNET_4, CLAUDE_HAIKU_3_5,
         GPT_4O, GPT_4O_MINI, GPT_4_1,
-        GEMINI_3_5_FLASH, GEMINI_3_1_PRO, GEMINI_3_1_FLASH_LITE, GEMINI_2_5_FLASH,
-        VERTEX_GEMINI_3_5_FLASH, VERTEX_GEMINI_3_1_PRO, VERTEX_GEMINI_2_5_PRO
+        GEMINI_2_0_FLASH, GEMINI_2_5_FLASH,
+        VERTEX_GEMINI_2_0_FLASH, VERTEX_GEMINI_2_5_FLASH
     )
 
     val DEFAULT = CLAUDE_SONNET_4
@@ -217,7 +199,7 @@ sealed class GenerationState {
 
 data class AnthropicRequest(
     val model: String = "claude-opus-4-20250514",
-    val max_tokens: Int = 4096,
+    val max_tokens: Int = 8192,
     val system: String,
     val messages: List<AnthropicMessage>
 )

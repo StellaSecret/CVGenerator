@@ -55,12 +55,12 @@ class AiRepository @Inject constructor() {
         model.provider == AiProvider.ANTHROPIC -> callAnthropic(apiKey, model, profileText, jobDescriptionText)
         model.provider == AiProvider.OPENAI    -> callOpenAI(apiKey, model, profileText, jobDescriptionText)
 
-        // If provider is GEMINI OR if it's VERTEX_AI but we have an API key (starts with AIza)
+        // If provider is GEMINI OR if it's GEMINI_PREMIUM but we have an API key (starts with AIza)
         model.provider == AiProvider.GEMINI ||
-        (model.provider == AiProvider.VERTEX_AI && apiKey.startsWith("AIza")) ->
+        (model.provider == AiProvider.GEMINI_PREMIUM && apiKey.startsWith("AIza")) ->
             callGemini(apiKey, model, profileText, jobDescriptionText)
 
-        model.provider == AiProvider.VERTEX_AI -> callVertexAI(
+        model.provider == AiProvider.GEMINI_PREMIUM -> callGeminiPremium(
             accessToken   = apiKey,
             model         = model,
             profileText   = profileText,
@@ -75,24 +75,65 @@ class AiRepository @Inject constructor() {
     // ── Prompts communs ───────────────────────────────────────────────────────
 
     private fun systemPrompt() = """
-        Tu es un expert en recrutement et rédaction de CV de renommée mondiale.
-        Ton objectif est de transformer un profil brut en un CV HTML d'élite, exhaustif et parfaitement formaté.
+        Tu es un expert mondial en recrutement, ATS optimization et rédaction de CV exécutifs.
 
-        Règles de rédaction (CRUCIALES) :
-        - Inclus l'INTÉGRALITÉ des expériences professionnelles pertinentes du profil. Ne résume pas à l'extrême.
-        - Pour chaque poste : Titre, Entreprise, Dates, et une liste détaillée des réalisations et responsabilités.
-        - Utilise des verbes d'action puissants et chiffre les résultats (ex: "Augmentation de 30% du CA").
-        - Structure : En-tête (Contact) → Résumé Professionnel → Expériences (la section la plus longue) → Compétences Techniques/Soft Skills → Formation → Langues.
+        Ton objectif est de transformer un profil brut et une fiche de poste en un CV HTML professionnel, moderne, ATS-friendly et hautement crédible.
 
-        Règles Techniques (HTML/CSS) :
-        - Génère un document HTML5 complet avec styles CSS inline dans une balise <style>.
-        - Le design doit être moderne, épuré, utilisant des polices sans-serif (Arial, Helvetica).
-        - Utilise une mise en page structurée (ex: colonne latérale pour les infos de contact/compétences et colonne principale pour les expériences).
-        - Assure-toi que le contenu ne soit PAS tronqué. Si le profil est long, le CV peut faire plusieurs pages.
+        OBJECTIFS :
+        - Maximiser l'alignement avec la fiche de poste
+        - Optimiser le matching ATS (mots-clés, compétences, technologies, responsabilités)
+        - Produire un rendu premium apprécié autant par les recruteurs, RH, managers que profils techniques
+        - Mettre en valeur l'impact business et les résultats concrets
+        - Conserver une excellente lisibilité humaine
+
+        RÈGLES DE RÉDACTION :
+        - N'invente jamais d'expériences, technologies, certifications, chiffres ou résultats absents du profil
+        - Inclus toutes les expériences pertinentes, mais hiérarchise l'information selon la pertinence métier
+        - Développe davantage les expériences récentes et stratégiques
+        - Réduis les expériences anciennes ou moins pertinentes
+        - Chaque expérience doit contenir : Intitulé du poste, Entreprise, Dates, Contexte succinct, Réalisations détaillées, Résultats mesurables quand disponibles
+        - Utilise le format CAR (Contexte, Action, Résultat)
+        - Utilise des verbes d'action forts
+        - Priorise les résultats mesurables et impacts business
+        - Chaque bullet point doit être concis et orienté impact
+        - Le style doit être professionnel, crédible, direct et sans jargon inutile
+
+        STRUCTURE :
+        1. En-tête / Contact
+        2. Résumé Professionnel
+        3. Compétences Clés
+        4. Expériences Professionnelles
+        5. Formation
+        6. Certifications
+        7. Langues
+
+        RÈGLES ATS :
+        - Reprends intelligemment les mots-clés de la fiche de poste
+        - Utilise une terminologie métier cohérente
+        - Évite les tableaux complexes
+        - Évite les éléments décoratifs nuisibles au parsing ATS
+        - Utilise un HTML sémantique propre
+
+        RÈGLES HTML/CSS :
+        - Génère un document HTML5 complet
+        - Inclus tout le CSS dans une balise <style>
+        - Inclus des règles CSS de gestion des sauts de page pour éviter qu'une expérience soit coupée en deux pages
+        - Utilise uniquement des polices sans-serif
+        - Design moderne, sobre et professionnel
+        - Mise en page optimisée pour export PDF A4
+        - Compatible impression
+        - Évite les couleurs agressives
+        - Assure-toi qu'aucun contenu ne soit tronqué
+        - Le document peut s'étendre sur plusieurs pages si nécessaire
         - Réponds UNIQUEMENT avec le code HTML, sans texte de présentation avant ou après.
+
+        IMPORTANT :
+        - Réponds UNIQUEMENT avec le code HTML complet
+        - Aucun texte avant ou après le HTML
+        - Le HTML doit être directement exploitable pour génération PDF
     """.trimIndent()
 
-    private fun userMessage(profileText: String, jobDescriptionText: String?) =
+        private fun userMessage(profileText: String, jobDescriptionText: String?) =
         if (jobDescriptionText != null) """
             Voici le PROFIL complet de l'utilisateur :
             $profileText
@@ -161,7 +202,7 @@ class AiRepository @Inject constructor() {
         try {
             val payload = JsonObject().apply {
                 addProperty("model", model.id)
-                addProperty("max_tokens", 4096)
+                addProperty("max_tokens", 8192)
                 add("messages", gson.toJsonTree(listOf(
                     mapOf("role" to "system", "content" to systemPrompt()),
                     mapOf("role" to "user",   "content" to userMessage(profileText, jobDescriptionText))
@@ -191,11 +232,11 @@ class AiRepository @Inject constructor() {
     }
 
 
-    // ── Vertex AI ─────────────────────────────────────────────────────────────
+    // ── Gemini Premium ────────────────────────────────────────────────────────
     // Auth: Google OAuth2 access token passed as Bearer header.
     // The token is retrieved from GoogleSignIn (via getAccessToken) in the ViewModel.
-    // Vertex AI uses the same Gemini model IDs but goes through Google Cloud endpoints.
-    private suspend fun callVertexAI(
+    // Gemini Premium uses the same Gemini model IDs but goes through Google Cloud endpoints.
+    private suspend fun callGeminiPremium(
         accessToken: String,
         model: AiModel,
         profileText: String,
@@ -217,7 +258,7 @@ class AiRepository @Inject constructor() {
                     ))
                 )))
                 add("generationConfig", gson.toJsonTree(
-                    mapOf("maxOutputTokens" to 4096)
+                    mapOf("maxOutputTokens" to 8192)
                 ))
             }
 
@@ -230,13 +271,20 @@ class AiRepository @Inject constructor() {
 
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
-                return@withContext Result.failure(
-                    Exception("Vertex AI ${response.code}: ${response.body?.string()}")
-                )
+                val errorBody = response.body?.string() ?: ""
+                android.util.Log.e("GeminiPremium", "Error ${response.code}: $errorBody")
+
+                val msg = when (response.code) {
+                    429 -> "Limite Premium atteinte. Réessayez plus tard."
+                    403 -> "Accès Premium refusé. Vérifiez votre compte."
+                    else -> "Erreur Premium ${response.code}"
+                }
+                return@withContext Result.failure(Exception(msg))
             }
             val json = gson.fromJson(response.body!!.string(), JsonObject::class.java)
-            val text = json["candidates"].asJsonArray[0].asJsonObject["content"]
-                .asJsonObject["parts"].asJsonArray[0].asJsonObject["text"].asString
+            val parts = json["candidates"].asJsonArray[0].asJsonObject["content"]
+                .asJsonObject["parts"].asJsonArray
+            val text = parts.joinToString("") { it.asJsonObject["text"].asString }
             Result.success(cleanHtmlResponse(text))
         } catch (e: Exception) {
             Result.failure(e)
@@ -263,7 +311,7 @@ class AiRepository @Inject constructor() {
                     ))
                 )))
                 add("generationConfig", gson.toJsonTree(
-                    mapOf("maxOutputTokens" to 4096)
+                    mapOf("maxOutputTokens" to 8192)
                 ))
             }
 
@@ -279,15 +327,20 @@ class AiRepository @Inject constructor() {
                 .build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()
+                val errorBody = response.body?.string() ?: ""
                 android.util.Log.e("GeminiAPI", "Error ${response.code}: $errorBody")
-                return@withContext Result.failure(
-                    Exception("Gemini ${response.code}: $errorBody")
-                )
+
+                val msg = when (response.code) {
+                    429 -> "Limite de requêtes atteinte. Réessayez dans une minute."
+                    404 -> "Modèle IA non trouvé. Contactez le support."
+                    else -> "Erreur Gemini ${response.code}"
+                }
+                return@withContext Result.failure(Exception(msg))
             }
             val json = gson.fromJson(response.body!!.string(), JsonObject::class.java)
-            val text = json["candidates"].asJsonArray[0].asJsonObject["content"]
-                .asJsonObject["parts"].asJsonArray[0].asJsonObject["text"].asString
+            val parts = json["candidates"].asJsonArray[0].asJsonObject["content"]
+                .asJsonObject["parts"].asJsonArray
+            val text = parts.joinToString("") { it.asJsonObject["text"].asString }
             Result.success(cleanHtmlResponse(text))
         } catch (e: Exception) {
             Result.failure(e)
@@ -301,28 +354,40 @@ class AiRepository @Inject constructor() {
     private fun cleanHtmlResponse(rawText: String): String {
         var text = rawText.trim()
 
-        // 1. Strip markdown code blocks if present
-        if (text.contains("```html", ignoreCase = true)) {
-            text = text.substringAfter("```html").substringAfter("```HTML")
-            text = text.substringBeforeLast("```")
+        // 1. Strip markdown code blocks if present (case-insensitive)
+        val lowerText = text.lowercase()
+        if (lowerText.contains("```html")) {
+            val startIdx = lowerText.indexOf("```html") + 7
+            val endIdx = lowerText.lastIndexOf("```")
+            text = if (endIdx > startIdx) {
+                text.substring(startIdx, endIdx)
+            } else {
+                text.substring(startIdx)
+            }
         } else if (text.contains("```")) {
-            // Sometimes it's just ``` without the 'html' tag
-            text = text.substringAfter("```")
-            text = text.substringBeforeLast("```")
+            val startIdx = text.indexOf("```") + 3
+            val endIdx = text.lastIndexOf("```")
+            text = if (endIdx > startIdx) {
+                text.substring(startIdx, endIdx)
+            } else {
+                text.substring(startIdx)
+            }
         }
 
-        // 2. Further refine: ensure we start with <!DOCTYPE or <html and end with </html>
+        text = text.trim()
+
+        // 2. Further refine: ensure we start with <!DOCTYPE or <html
         val htmlStart = text.indexOf("<html", ignoreCase = true)
         val doctypeStart = text.indexOf("<!DOCTYPE", ignoreCase = true)
 
         val start = if (doctypeStart != -1 && (htmlStart == -1 || doctypeStart < htmlStart)) doctypeStart else htmlStart
-        val end = text.lastIndexOf("</html>", ignoreCase = true)
 
-        return if (start != -1 && end != -1 && end > start) {
-            text.substring(start, end + 7)
+        // If we found a clear HTML start, return from there.
+        // We don't strictly require </html> at the end in case of truncation.
+        return if (start != -1) {
+            text.substring(start).trim()
         } else {
             text.trim()
         }
     }
-
 }

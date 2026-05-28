@@ -33,21 +33,14 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("home") {
                             HomeScreen(
-                                onNavigateToResult = { encodedHtml ->
-                                    navController.navigate("result/$encodedHtml")
+                                onNavigateToResult = {
+                                    navController.navigate("result")
                                 }
                             )
                         }
 
-                        composable(
-                            route = "result/{html}",
-                            arguments = listOf(
-                                navArgument("html") { type = NavType.StringType }
-                            )
-                        ) { backStackEntry ->
-                            val encodedHtml = backStackEntry.arguments?.getString("html") ?: ""
+                        composable("result") {
                             ResultScreen(
-                                encodedHtml = encodedHtml,
                                 onBack = { navController.popBackStack() }
                             )
                         }
