@@ -60,13 +60,17 @@ fun ResultScreen(
                 },
                 actions = {
                     // Print / Export PDF
-                    IconButton(onClick = {
-                        webView?.let { printWebView(context, it) }
-                    }) {
+                    IconButton(
+                        onClick = { webView?.let { printWebView(context, it) } },
+                        enabled = isLoaded
+                    ) {
                         Icon(Icons.Filled.Print, "Imprimer / PDF")
                     }
                     // Share
-                    IconButton(onClick = { showShareMenu = true }) {
+                    IconButton(
+                        onClick = { showShareMenu = true },
+                        enabled = isLoaded
+                    ) {
                         Icon(Icons.Filled.Share, "Partager")
                     }
                 },
