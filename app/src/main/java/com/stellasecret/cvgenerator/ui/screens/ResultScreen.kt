@@ -24,17 +24,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.stellasecret.cvgenerator.data.model.GenerationState
+import com.stellasecret.cvgenerator.ui.MainViewModel
 import com.stellasecret.cvgenerator.ui.theme.*
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResultScreen(
-    encodedHtml: String,
+    viewModel: MainViewModel = hiltViewModel(),
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val htmlContent = Uri.decode(encodedHtml)
+    val generationState by viewModel.generationState.collectAsState()
+
+    val htmlContent by remember {
+        derivedStateOf { (generationState as? GenerationState.Success)?.cv?.htmlContent ?: "" }
+    }
+    androidx.activity.compose.BackHandler {
+        android.util.Log.d("ResultScreen", "System back pressed")
+        viewModel.resetGeneration()
+        onBack()
+    }
 
     var webView by remember { mutableStateOf<WebView?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
@@ -54,7 +66,11 @@ fun ResultScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        android.util.Log.d("ResultScreen", "Back button clicked")
+                        viewModel.resetGeneration()
+                        onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
                     }
                 },
@@ -103,8 +119,12 @@ fun ResultScreen(
                             }
                         }
                         setBackgroundColor(android.graphics.Color.WHITE)
-                        loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
                     }.also { webView = it }
+                },
+                update = { view ->
+                    if (htmlContent.isNotBlank()) {
+                        view.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -282,34 +302,61 @@ private fun printWebView(context: Context, webView: WebView) {
 }
 
 private fun saveHtmlFile(context: Context, htmlContent: String) {
+    if (htmlContent.isBlank()) return
     try {
         val fileName = "cv_cvgenerator_${System.currentTimeMillis()}.html"
         val file = File(context.cacheDir, fileName)
         file.writeText(htmlContent)
+
+        // Log file size to debug 0-byte issue
+        android.util.Log.d("ResultScreen", "Saved HTML file: ${file.absolutePath}, size: ${file.length()} bytes")
+
+        if (file.length() == 0L) {
+            android.util.Log.e("ResultScreen", "File is 0 bytes after write!")
+            return
+        }
+
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "text/html")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(Intent.createChooser(intent, "Ouvrir le CV"))
+
+        val chooser = Intent.createChooser(intent, "Ouvrir le CV")
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
     } catch (e: Exception) {
         e.printStackTrace()
     }
 }
 
 private fun shareHtml(context: Context, htmlContent: String) {
+    if (htmlContent.isBlank()) return
     try {
-        val fileName = "cv_cvgenerator.html"
+        val fileName = "cv_cvgenerator_${System.currentTimeMillis()}.html"
         val file = File(context.cacheDir, fileName)
         file.writeText(htmlContent)
+
+        android.util.Log.d("ResultScreen", "Shared HTML file: ${file.absolutePath}, size: ${file.length()} bytes")
+
+        if (file.length() == 0L) {
+            android.util.Log.e("ResultScreen", "File is 0 bytes after write!")
+            return
+        }
+
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/html"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Partager le CV"))
+
+        val chooser = Intent.createChooser(intent, "Partager le CV")
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
     } catch (e: Exception) {
         e.printStackTrace()
     }
 }
+
