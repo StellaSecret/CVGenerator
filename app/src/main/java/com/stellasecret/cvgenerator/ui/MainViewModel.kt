@@ -61,6 +61,14 @@ class MainViewModel @Inject constructor(
     private val _jobDescError = MutableStateFlow<String?>(null)
     val jobDescError: StateFlow<String?> = _jobDescError.asStateFlow()
 
+    // ── Navigation ───────────────────────────────────────────────────────────
+    private val _navEvents = MutableSharedFlow<NavEvent>()
+    val navEvents = _navEvents.asSharedFlow()
+
+    sealed class NavEvent {
+        object NavigateToResult : NavEvent()
+    }
+
     // ── Generation ────────────────────────────────────────────────────────────
     private val _generationState = MutableStateFlow<GenerationState>(GenerationState.Idle)
     val generationState: StateFlow<GenerationState> = _generationState.asStateFlow()
@@ -169,13 +177,13 @@ class MainViewModel @Inject constructor(
             val isPremiumUser = (authState.value as? AuthState.Authenticated)?.user?.isPremium == true
 
             val apiKey: String? = when (model.provider) {
-                AiProvider.VERTEX_AI -> {
+                AiProvider.GEMINI_PREMIUM -> {
                     if (isPremiumUser) {
                         // For premium users, we use the shared Gemini API key (AI Studio)
-                        // instead of direct Vertex AI OAuth to avoid 403/permission issues.
+                        // instead of direct OAuth to avoid 403/permission issues.
                         remoteConfigRepository.getGeminiApiKey()
                     } else {
-                        authRepository.getVertexAiAccessToken()
+                        authRepository.getPremiumAccessToken()
                     }
                 }
                 AiProvider.GEMINI -> {
@@ -194,18 +202,18 @@ class MainViewModel @Inject constructor(
                 }
             }
 
-            val isPremiumShared = (model.provider == AiProvider.GEMINI || model.provider == AiProvider.VERTEX_AI) && isPremiumUser
+            val isPremiumShared = (model.provider == AiProvider.GEMINI || model.provider == AiProvider.GEMINI_PREMIUM) && isPremiumUser
 
             if (apiKey.isNullOrBlank()) {
                 val errorMessage = when (model.provider) {
-                    AiProvider.VERTEX_AI -> if (isPremiumUser) {
+                    AiProvider.GEMINI_PREMIUM -> if (isPremiumUser) {
                         val encryptionKey = BuildConfig.GEMINI_ENCRYPTION_KEY
                         when {
                             encryptionKey.isBlank() -> "Erreur interne : clé de chiffrement manquante dans le build."
                             else -> "Clé Premium indisponible (Remote Config). Vérifiez votre connexion."
                         }
                     } else {
-                        "Token Vertex AI indisponible. Déconnectez-vous puis reconnectez-vous."
+                        "Token Premium indisponible. Déconnectez-vous puis reconnectez-vous."
                     }
                     AiProvider.ANTHROPIC,
                     AiProvider.OPENAI,
@@ -241,9 +249,14 @@ class MainViewModel @Inject constructor(
             )
 
             result.onSuccess { html ->
-                _generationState.value = GenerationState.Success(
-                    GeneratedCV(content = html, htmlContent = html, jobTitle = extractJobTitle(jobText))
-                )
+                if (html.isBlank()) {
+                    _generationState.value = GenerationState.Error("L'IA a généré une réponse vide. Réessayez.")
+                } else {
+                    _generationState.value = GenerationState.Success(
+                        GeneratedCV(content = html, htmlContent = html, jobTitle = extractJobTitle(jobText))
+                    )
+                    _navEvents.emit(NavEvent.NavigateToResult)
+                }
             }.onFailure { e ->
                 _generationState.value = GenerationState.Error(e.message ?: "Erreur inconnue")
             }

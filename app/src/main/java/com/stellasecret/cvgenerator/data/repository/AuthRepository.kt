@@ -90,11 +90,11 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    // ── Vertex AI access token ────────────────────────────────────────────────
-    // Returns a real OAuth2 Bearer token (ya29…) valid for Vertex AI REST API.
+    // ── Premium access token ─────────────────────────────────────────────────
+    // Returns a real OAuth2 Bearer token (ya29…) valid for Google Cloud REST API.
     // Uses the stored GoogleSignInAccount — NOT Firebase getIdToken() which returns
-    // a JWT that Vertex AI rejects with 401 UNAUTHENTICATED.
-    suspend fun getVertexAiAccessToken(): String? = withContext(Dispatchers.IO) {
+    // a JWT that Google Cloud rejects with 401 UNAUTHENTICATED.
+    suspend fun getPremiumAccessToken(): String? = withContext(Dispatchers.IO) {
         try {
             // Prefer the in-memory stored account; fall back to last signed-in account
             val account = storedAccount
