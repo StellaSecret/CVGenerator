@@ -55,12 +55,12 @@ class AiRepository @Inject constructor() {
         model.provider == AiProvider.ANTHROPIC -> callAnthropic(apiKey, model, profileText, jobDescriptionText)
         model.provider == AiProvider.OPENAI    -> callOpenAI(apiKey, model, profileText, jobDescriptionText)
 
-        // If provider is GEMINI OR if it's VERTEX_AI but we have an API key (starts with AIza)
+        // If provider is GEMINI OR if it's GEMINI_PREMIUM but we have an API key (starts with AIza)
         model.provider == AiProvider.GEMINI ||
-        (model.provider == AiProvider.VERTEX_AI && apiKey.startsWith("AIza")) ->
+        (model.provider == AiProvider.GEMINI_PREMIUM && apiKey.startsWith("AIza")) ->
             callGemini(apiKey, model, profileText, jobDescriptionText)
 
-        model.provider == AiProvider.VERTEX_AI -> callVertexAI(
+        model.provider == AiProvider.GEMINI_PREMIUM -> callGeminiPremium(
             accessToken   = apiKey,
             model         = model,
             profileText   = profileText,
@@ -161,7 +161,7 @@ class AiRepository @Inject constructor() {
         try {
             val payload = JsonObject().apply {
                 addProperty("model", model.id)
-                addProperty("max_tokens", 4096)
+                addProperty("max_tokens", 8192)
                 add("messages", gson.toJsonTree(listOf(
                     mapOf("role" to "system", "content" to systemPrompt()),
                     mapOf("role" to "user",   "content" to userMessage(profileText, jobDescriptionText))
@@ -191,11 +191,11 @@ class AiRepository @Inject constructor() {
     }
 
 
-    // ── Vertex AI ─────────────────────────────────────────────────────────────
+    // ── Gemini Premium ────────────────────────────────────────────────────────
     // Auth: Google OAuth2 access token passed as Bearer header.
     // The token is retrieved from GoogleSignIn (via getAccessToken) in the ViewModel.
-    // Vertex AI uses the same Gemini model IDs but goes through Google Cloud endpoints.
-    private suspend fun callVertexAI(
+    // Gemini Premium uses the same Gemini model IDs but goes through Google Cloud endpoints.
+    private suspend fun callGeminiPremium(
         accessToken: String,
         model: AiModel,
         profileText: String,
@@ -217,7 +217,7 @@ class AiRepository @Inject constructor() {
                     ))
                 )))
                 add("generationConfig", gson.toJsonTree(
-                    mapOf("maxOutputTokens" to 4096)
+                    mapOf("maxOutputTokens" to 8192)
                 ))
             }
 
@@ -231,12 +231,13 @@ class AiRepository @Inject constructor() {
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
                 return@withContext Result.failure(
-                    Exception("Vertex AI ${response.code}: ${response.body?.string()}")
+                    Exception("Gemini Premium ${response.code}: ${response.body?.string()}")
                 )
             }
             val json = gson.fromJson(response.body!!.string(), JsonObject::class.java)
-            val text = json["candidates"].asJsonArray[0].asJsonObject["content"]
-                .asJsonObject["parts"].asJsonArray[0].asJsonObject["text"].asString
+            val parts = json["candidates"].asJsonArray[0].asJsonObject["content"]
+                .asJsonObject["parts"].asJsonArray
+            val text = parts.joinToString("") { it.asJsonObject["text"].asString }
             Result.success(cleanHtmlResponse(text))
         } catch (e: Exception) {
             Result.failure(e)
@@ -263,7 +264,7 @@ class AiRepository @Inject constructor() {
                     ))
                 )))
                 add("generationConfig", gson.toJsonTree(
-                    mapOf("maxOutputTokens" to 4096)
+                    mapOf("maxOutputTokens" to 8192)
                 ))
             }
 
@@ -286,8 +287,9 @@ class AiRepository @Inject constructor() {
                 )
             }
             val json = gson.fromJson(response.body!!.string(), JsonObject::class.java)
-            val text = json["candidates"].asJsonArray[0].asJsonObject["content"]
-                .asJsonObject["parts"].asJsonArray[0].asJsonObject["text"].asString
+            val parts = json["candidates"].asJsonArray[0].asJsonObject["content"]
+                .asJsonObject["parts"].asJsonArray
+            val text = parts.joinToString("") { it.asJsonObject["text"].asString }
             Result.success(cleanHtmlResponse(text))
         } catch (e: Exception) {
             Result.failure(e)
@@ -301,28 +303,40 @@ class AiRepository @Inject constructor() {
     private fun cleanHtmlResponse(rawText: String): String {
         var text = rawText.trim()
 
-        // 1. Strip markdown code blocks if present
-        if (text.contains("```html", ignoreCase = true)) {
-            text = text.substringAfter("```html").substringAfter("```HTML")
-            text = text.substringBeforeLast("```")
+        // 1. Strip markdown code blocks if present (case-insensitive)
+        val lowerText = text.lowercase()
+        if (lowerText.contains("```html")) {
+            val startIdx = lowerText.indexOf("```html") + 7
+            val endIdx = lowerText.lastIndexOf("```")
+            text = if (endIdx > startIdx) {
+                text.substring(startIdx, endIdx)
+            } else {
+                text.substring(startIdx)
+            }
         } else if (text.contains("```")) {
-            // Sometimes it's just ``` without the 'html' tag
-            text = text.substringAfter("```")
-            text = text.substringBeforeLast("```")
+            val startIdx = text.indexOf("```") + 3
+            val endIdx = text.lastIndexOf("```")
+            text = if (endIdx > startIdx) {
+                text.substring(startIdx, endIdx)
+            } else {
+                text.substring(startIdx)
+            }
         }
 
-        // 2. Further refine: ensure we start with <!DOCTYPE or <html and end with </html>
+        text = text.trim()
+
+        // 2. Further refine: ensure we start with <!DOCTYPE or <html
         val htmlStart = text.indexOf("<html", ignoreCase = true)
         val doctypeStart = text.indexOf("<!DOCTYPE", ignoreCase = true)
 
         val start = if (doctypeStart != -1 && (htmlStart == -1 || doctypeStart < htmlStart)) doctypeStart else htmlStart
-        val end = text.lastIndexOf("</html>", ignoreCase = true)
 
-        return if (start != -1 && end != -1 && end > start) {
-            text.substring(start, end + 7)
+        // If we found a clear HTML start, return from there. 
+        // We don't strictly require </html> at the end in case of truncation.
+        return if (start != -1) {
+            text.substring(start).trim()
         } else {
             text.trim()
         }
     }
-
 }

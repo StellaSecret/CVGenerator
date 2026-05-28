@@ -24,17 +24,30 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.stellasecret.cvgenerator.data.model.GenerationState
+import com.stellasecret.cvgenerator.ui.MainViewModel
 import com.stellasecret.cvgenerator.ui.theme.*
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResultScreen(
-    encodedHtml: String,
+    viewModel: MainViewModel = hiltViewModel(),
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val htmlContent = Uri.decode(encodedHtml)
+    val generationState by viewModel.generationState.collectAsState()
+
+    // Capture the HTML content once to avoid empty screen during navigation/reset
+    var capturedHtml by remember { mutableStateOf("") }
+    LaunchedEffect(generationState) {
+        if (generationState is GenerationState.Success) {
+            capturedHtml = (generationState as GenerationState.Success).cv.htmlContent
+        }
+    }
+    
+    val htmlContent = capturedHtml
 
     var webView by remember { mutableStateOf<WebView?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
@@ -54,7 +67,11 @@ fun ResultScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        android.util.Log.d("ResultScreen", "Back button clicked")
+                        viewModel.resetGeneration()
+                        onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
                     }
                 },
@@ -291,7 +308,17 @@ private fun saveHtmlFile(context: Context, htmlContent: String) {
             setDataAndType(uri, "text/html")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Ouvrir le CV"))
+        
+        val chooser = Intent.createChooser(intent, "Ouvrir le CV")
+        // Grant permission to all apps that can handle the intent
+        val resInfoList = context.packageManager.queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        for (resolveInfo in resInfoList) {
+            val packageName = resolveInfo.activityInfo.packageName
+            context.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -299,7 +326,7 @@ private fun saveHtmlFile(context: Context, htmlContent: String) {
 
 private fun shareHtml(context: Context, htmlContent: String) {
     try {
-        val fileName = "cv_cvgenerator.html"
+        val fileName = "cv_cvgenerator_${System.currentTimeMillis()}.html"
         val file = File(context.cacheDir, fileName)
         file.writeText(htmlContent)
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -308,7 +335,17 @@ private fun shareHtml(context: Context, htmlContent: String) {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Partager le CV"))
+        
+        val chooser = Intent.createChooser(intent, "Partager le CV")
+        // Grant permission to all apps that can handle the intent
+        val resInfoList = context.packageManager.queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        for (resolveInfo in resInfoList) {
+            val packageName = resolveInfo.activityInfo.packageName
+            context.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
     } catch (e: Exception) {
         e.printStackTrace()
     }
