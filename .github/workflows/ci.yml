@@ -1,0 +1,406 @@
+name: CI/CD cv-generator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  security-events: write
+  actions: read
+  pages: write
+  id-token: write
+
+env:
+  GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── SECURITY SCAN ─────────────────────────────────────
+  scan-secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          head: ${{ github.sha }}
+          extra_args: --only-verified
+
+  # ── RUST CORE ─────────────────────────────────────────
+  rust-core:
+    name: Rust Core (test + WASM check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --lib
+      - name: Check WASM build
+        run: cargo check --target wasm32-unknown-unknown
+
+  # ── WEB (WASM) BUILD ──────────────────────────────────
+  web-build:
+    name: Build WASM
+    needs: [rust-core]
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps
+        run: apt update && apt install -y build-essential
+      - name: Install Dioxus CLI
+        run: |
+          curl -sSLO https://github.com/DioxusLabs/dioxus/releases/download/v0.7.9/dx-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf dx-x86_64-unknown-linux-gnu.tar.gz
+          install -m 755 dx /usr/local/bin/dx
+      - name: Build WASM
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+        run: dx build --release --package cv-generator --debug-symbols false --base-path /CVGenerator
+      - name: Verify WASM build
+        run: |
+          WASM=$(find target/dx -name "*.wasm" | head -1)
+          if [ -z "$WASM" ]; then
+            echo "ERROR: No WASM file found after build"
+            exit 1
+          fi
+          echo "WASM: $WASM ($(stat -c%s "$WASM") bytes)"
+          sha256sum "$WASM"
+      - name: Install npm deps
+        env:
+          HUSKY: 0
+        run: npm ci
+      - name: Upload WASM build
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-public
+          path: target/dx/cv-generator/release/web/public/
+          retention-days: 1
+
+  # ── PLAYWRIGHT E2E TESTS (SHARDED) ────────────────────
+  playwright-tests:
+    name: Playwright Tests (shard ${{ matrix.shard }}/2)
+    needs: [web-build]
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download WASM build
+        uses: actions/download-artifact@v8
+        with:
+          name: wasm-public
+          path: target/dx/cv-generator/release/web/public/
+      - name: Install npm deps
+        env:
+          HUSKY: 0
+        run: npm ci
+      - name: Run e2e tests (shard ${{ matrix.shard }}/2)
+        env:
+          HOME: /root
+          DOCKER_CONFIG: /tmp/.docker
+        run: npx playwright test --reporter=list,html --shard=${{ matrix.shard }}/2
+      - name: Upload report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-${{ matrix.shard }}
+          path: playwright-report/
+          retention-days: 30
+
+  # ── ANDROID BUILD (Dioxus Mobile) ────────────────────
+  build-android:
+    name: Build Android APK + AAB
+    if: github.ref == 'refs/heads/main'
+    needs: [scan-secrets, rust-core]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache Android debug keystore
+        uses: actions/cache@v6
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+      - name: Setup stable debug keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          DEST="$HOME/.android/debug.keystore"
+          mkdir -p "$HOME/.android"
+          SP="${KEYSTORE_PASSWORD:-android}"
+          KP="${KEY_PASSWORD:-android}"
+          ALIAS_RAW="${KEY_ALIAS}"
+          ALIAS="${ALIAS_RAW:-androiddebugkey}"
+          echo "--- Keystore setup: SP=$SP KP=$KP ALIAS=$ALIAS"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding base64 keystore (${#KEYSTORE_BASE64} chars)..."
+            echo "$KEYSTORE_BASE64" | base64 -d > "$DEST.tmp"
+            SZ=$(stat -c%s "$DEST.tmp" 2>/dev/null || echo 0)
+            echo "Decoded file size: $SZ bytes"
+            if keytool -list -v -keystore "$DEST.tmp" -storepass "$SP" -keypass "$KP" 2>/dev/null; then
+              echo "Keystore is readable with SP/KP — copying directly"
+              cp "$DEST.tmp" "$DEST"
+            else
+              echo "Direct read failed — trying JKS conversion"
+              keytool -importkeystore \
+                -srckeystore "$DEST.tmp" \
+                -destkeystore "$DEST" -deststoretype pkcs12 \
+                -srcstorepass "$SP" -deststorepass "$SP" \
+                -srcalias "$ALIAS" -destalias "$ALIAS" \
+                -srckeypass "$KP" -destkeypass "$KP" 2>&1 || \
+              { echo "WARNING: Keystore conversion failed, removing"; rm -f "$DEST"; }
+            fi
+            rm -f "$DEST.tmp"
+          elif [ -f "$DEST" ]; then
+            echo "Keystore restored from cache"
+          else
+            keytool -genkey -v -keystore "$DEST" \
+              -alias "$ALIAS" -storepass "$SP" -keypass "$KP" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "Generated new debug keystore"
+          fi
+          if [ -f "$DEST" ]; then
+            echo "--- Keystore verification ---"
+            keytool -list -v -keystore "$DEST" -storetype pkcs12 -storepass "$SP" -keypass "$KP" \
+              | grep -E "SHA1|Alias name:|Erweiterte|Extended|Eintragsart|Entry type:" || \
+              echo "WARNING: Could not verify keystore fingerprint"
+          fi
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Install Dioxus CLI
+        run: |
+          curl -sSLO https://github.com/DioxusLabs/dioxus/releases/download/v0.7.9/dx-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf dx-x86_64-unknown-linux-gnu.tar.gz
+          install -m 755 dx /usr/local/bin/dx
+      - name: Clean stale artifacts
+        run: cargo clean -p cv-generator
+      - name: Build Android APK (aarch64) — first pass (generates project)
+        run: dx build --release --platform android --package cv-generator --target aarch64-linux-android
+      - name: Remove first-pass APK (no overlays)
+        run: find target/dx -name "*.apk" -delete 2>/dev/null || true
+      - name: Assemble release APK via Gradle
+        run: |
+          GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
+          if [ -n "$GRADLE_DIR" ]; then
+            cd "$GRADLE_DIR" && chmod +x gradlew && ./gradlew assembleRelease
+          else
+            echo "WARNING: gradlew not found"
+          fi
+      - name: Build Android AAB (bundle)
+        run: |
+          GRADLE_DIR=$(find target/dx/cv-generator/release/android -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
+          if [ -n "$GRADLE_DIR" ]; then
+            echo "Running bundleRelease in: $GRADLE_DIR"
+            cd "$GRADLE_DIR"
+            VCODE=$((100 + ${{ github.run_number }}))
+            BG=$(find . -name "build.gradle*" -path "*/app/*" 2>/dev/null | head -1)
+            if [ -n "$BG" ]; then
+              echo "Injecting versionCode=$VCODE into $BG"
+              sed -i "s/versionCode = [0-9]*/versionCode = $VCODE/" "$BG"
+            fi
+            chmod +x gradlew && ./gradlew bundleRelease
+          else
+            echo "WARNING: gradlew not found under target/dx/cv-generator/release/android"
+            find target/dx -name "gradlew" 2>/dev/null || true
+          fi
+      - name: Sign APK (sign unsigned release APK if present)
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          APK=$(find target/dx -name "app-release-unsigned.apk" 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "No unsigned APK found — debug APK already signed by SDK"
+            exit 0
+          fi
+          KEYSTORE="$HOME/.android/debug.keystore"
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "ERROR: debug.keystore not found"
+            exit 1
+          fi
+          SP="${KEYSTORE_PASSWORD:-android}"
+          KP="${KEY_PASSWORD:-android}"
+          ALIAS="${KEY_ALIAS:-androiddebugkey}"
+          SIGNED="${APK%.apk}-signed.apk"
+          ALIGNED="${APK%.apk}-aligned.apk"
+          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* 2>/dev/null | sort -V | tail -1)
+          "${BUILD_TOOLS}/zipalign" -p 4 "$APK" "$ALIGNED"
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks "$KEYSTORE" --ks-pass "pass:$SP" \
+            --key-pass "pass:$KP" --ks-key-alias "$ALIAS" \
+            --out "$SIGNED" "$ALIGNED"
+          echo "Signed: $SIGNED"
+      - name: Sign AAB (required by Google Play)
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          AAB=$(find target/dx -name "*.aab" 2>/dev/null | head -1)
+          if [ -z "$AAB" ]; then
+            echo "No AAB found — skipping"
+            exit 0
+          fi
+          KEYSTORE="$HOME/.android/debug.keystore"
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "ERROR: debug.keystore not found"
+            exit 1
+          fi
+          SP="${KEYSTORE_PASSWORD:-android}"
+          KP="${KEY_PASSWORD:-android}"
+          ALIAS="${KEY_ALIAS:-androiddebugkey}"
+          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* 2>/dev/null | sort -V | tail -1)
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks "$KEYSTORE" --ks-pass "pass:$SP" \
+            --key-pass "pass:$KP" --ks-key-alias "$ALIAS" \
+            --min-sdk-version 21 \
+            "$AAB"
+          echo "Signed AAB: $AAB"
+      - name: Collect APK and AAB
+        run: |
+          mkdir -p dist
+          APK=$(find target/dx -name "*-signed.apk" 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find target/dx -name "*.apk" 2>/dev/null | head -1)
+          fi
+          AAB=$(find target/dx -name "*-signed.aab" 2>/dev/null | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" dist/cv-generator.apk
+            echo "APK copied from: $APK"
+          fi
+          if [ -n "$AAB" ]; then
+            cp "$AAB" dist/cv-generator.aab
+            echo "AAB copied from: $AAB"
+          fi
+          if [ -z "$APK" ] && [ -z "$AAB" ]; then
+            echo "WARNING: No APK or AAB found. Listing target/dx tree..."
+            find target/dx -name "*.apk" -o -name "*.aab" 2>/dev/null || true
+          fi
+      - name: Package native debug symbols
+        run: |
+          mkdir -p dist/symbols/arm64-v8a
+          SO="target/aarch64-linux-android/release/libcv_generator.so"
+          if [ -f "$SO" ]; then
+            cp "$SO" dist/symbols/arm64-v8a/
+            cd dist && zip -r symbols.zip symbols/ && rm -rf symbols/
+            echo "Created symbols.zip ($(stat -c%s symbols.zip) bytes)"
+          else
+            echo "WARNING: $SO not found — skipping debug symbols"
+          fi
+      - name: Upload APK Artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: dist/
+          retention-days: 7
+
+  # ── DEPLOY WEB TO GITHUB PAGES ────────────────────────
+  deploy-web:
+    name: Deploy to GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [playwright-tests]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download WASM build
+        uses: actions/download-artifact@v8
+        with:
+          name: wasm-public
+          path: ./wasm-dist/
+      - name: Merge WASM build with static pages
+        run: |
+          mkdir -p public
+          cp -r wasm-dist/* public/
+          rm -rf wasm-dist
+      - name: Add SPA fallback and cache-control for GitHub Pages
+        run: |
+          if [ -f public/index.html ]; then
+            cp public/index.html public/404.html
+          fi
+          cat > public/_headers << 'EOF'
+          /*.html
+            Cache-Control: no-cache, must-revalidate
+          /CVGenerator/assets/*.js
+            Cache-Control: public, max-age=31536000, immutable
+          /CVGenerator/assets/*.wasm
+            Cache-Control: public, max-age=31536000, immutable
+          EOF
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: public/
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+  # ── RELEASE (Android + Web) ──────────────────────────
+  release:
+    name: Create Release
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [playwright-tests, build-android]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Download Android APK
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: android-apk
+          path: dist/
+      - name: List downloaded files
+        run: ls -la dist/ 2>/dev/null || echo "dist/ empty"
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "cv-generator build #${{ github.run_number }}"
+          body: "Build #${{ github.run_number }} — Dioxus Rust app."
+          files: |
+            dist/*.apk
+            dist/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

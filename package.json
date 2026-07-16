@@ -1,0 +1,19 @@
+{
+  "name": "cv-generator-web",
+  "version": "1.0.0",
+  "description": "CV Generator — Web tests",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report",
+    "build": "echo 'Static site - no build needed'",
+    "build:dioxus": "dx build --release --package cv-generator --base-path CVGenerator",
+    "preview": "serve target/dx/cv-generator/release/web/public -p 4173",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "husky": "^9.1.6",
+    "serve": "^14.2.6"
+  }
+}

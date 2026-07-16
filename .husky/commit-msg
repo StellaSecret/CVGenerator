@@ -1,0 +1,40 @@
+# ── Conventional Commits format check ────────────────────────────
+# Format: <type>(<scope>): <description>
+# Types : feat, fix, docs, style, refactor, test, chore, ci, perf
+
+commit_msg=$(cat "$1")
+
+# Allow merge commits and revert commits
+if echo "$commit_msg" | grep -qE "^(Merge|Revert)"; then
+  exit 0
+fi
+
+pattern="^(feat|fix|docs|style|refactor|test|chore|ci|perf|build)(\(.+\))?: .{1,100}$"
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+  echo ""
+  echo "❌ Message de commit invalide : '$commit_msg'"
+  echo ""
+  echo "   Format attendu : <type>(<scope>): <description>"
+  echo ""
+  echo "   Types valides :"
+  echo "     feat     — nouvelle fonctionnalité"
+  echo "     fix      — correction de bug"
+  echo "     docs     — documentation uniquement"
+  echo "     style    — formatage, pas de changement logique"
+  echo "     refactor — refactoring sans fix ni feat"
+  echo "     test     — ajout ou modification de tests"
+  echo "     chore    — tâches de maintenance"
+  echo "     ci       — changements CI/CD"
+  echo "     perf     — amélioration de performance"
+  echo "     build    — changements de build system"
+  echo ""
+  echo "   Exemples :"
+  echo "     feat(sync): add Google Drive backup"
+  echo "     fix(auth): handle null email after sign-in"
+  echo "     ci: add Playwright e2e tests"
+  echo ""
+  exit 1
+fi
+
+exit 0

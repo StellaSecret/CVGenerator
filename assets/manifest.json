@@ -1,0 +1,8 @@
+{
+  "name": "CV Generator",
+  "short_name": "CV Gen",
+  "start_url": "../",
+  "display": "standalone",
+  "background_color": "#0f1117",
+  "theme_color": "#2563eb"
+}

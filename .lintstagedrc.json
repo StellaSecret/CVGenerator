@@ -1,0 +1,11 @@
+{
+  "**/*.{js,ts}": [
+    "echo 'lint-staged: no JS/TS checks configured'"
+  ],
+  "**/*.rs": [
+    "cargo fmt --"
+  ],
+  "package.json": [
+    "echo 'lint-staged: package.json unchanged'"
+  ]
+}

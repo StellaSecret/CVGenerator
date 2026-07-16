@@ -1,0 +1,64 @@
+set +e
+# ── 1. lint-staged — checks par type de fichier ───────────
+npx lint-staged --quiet
+LINT_EXIT=$?
+
+if [ $LINT_EXIT -ne 0 ]; then
+  echo "❌ lint-staged a échoué. Vérifiez les erreurs ci-dessus."
+  exit $LINT_EXIT
+fi
+
+# ── 2. Rust — formatage + lint ──────────────────────────
+RUST_STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' || true)
+if [ -n "$RUST_STAGED" ]; then
+  if command -v rustup > /dev/null 2>&1; then
+    echo "🔍 cargo fmt --check + clippy..."
+    if cargo fmt --check 2>/dev/null; then
+      echo "  fmt OK"
+    else
+      echo "❌ cargo fmt: formatage incorrect. Lancez 'cargo fmt'."
+      cargo fmt 2>/dev/null
+      echo "   → Auto-format appliqué. Re-stagez les fichiers."
+      exit 1
+    fi
+    cargo clippy --all-targets -- -D warnings
+    CLIPPY_EXIT=$?
+    if [ $CLIPPY_EXIT -ne 0 ]; then
+      echo "❌ cargo clippy a échoué. Corrigez les erreurs ci-dessus."
+      exit $CLIPPY_EXIT
+    fi
+  else
+    echo "ℹ️  rustup non trouvé — vérification Rust ignorée"
+  fi
+fi
+
+# ── 3. Gitleaks — scan de secrets (si installé) ───────────
+if command -v gitleaks > /dev/null 2>&1; then
+  echo "🔍 Gitleaks scan..."
+  gitleaks protect --staged -v
+  GITLEAKS_EXIT=$?
+  if [ $GITLEAKS_EXIT -ne 0 ]; then
+    echo "❌ Gitleaks a détecté un secret — commit bloqué."
+    exit 1
+  fi
+else
+  echo "ℹ️  gitleaks non installé — ignoré (brew install gitleaks pour l'activer)"
+fi
+
+# ── 4. Fichiers volumineux ─────────────────────────────────
+LARGE=$(git diff --cached --name-only | while read f; do
+  [ -f "$f" ] && size=$(wc -c < "$f") && [ "$size" -gt 512000 ] && echo "$f ($((size/1024)) KB)"
+done)
+if [ -n "$LARGE" ]; then
+  echo "❌ Fichier(s) trop volumineux stagé(s) (> 500 KB) :"
+  echo "$LARGE"
+  echo "   Les binaires et WASM ne doivent pas être commités."
+  exit 1
+fi
+
+# ── 5. Reminder ────────────────────────────────────────────
+echo ""
+echo "⚠️  CV Generator — pre-commit checks passed"
+echo ""
+
+exit $LINT_EXIT

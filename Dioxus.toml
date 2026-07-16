@@ -1,0 +1,11 @@
+[application]
+name = "cv-generator"
+
+[web]
+title = "CV Generator"
+base_path = "/CVGenerator"
+pre_compress = true
+wasm_opt = ["z"]
+
+[web.watcher]
+reload_html = true
