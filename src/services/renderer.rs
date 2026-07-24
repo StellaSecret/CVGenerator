@@ -67,6 +67,7 @@ const CV_CSS: &str = r#"
   color: #64748b;
 }
 .cv-doc .contact a { color: #2563eb; text-decoration: none; }
+.cv-doc .contact-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .cv-doc .summary {
   margin-top: 14px;
   color: #334155;
@@ -166,6 +167,7 @@ const CV_CSS: &str = r#"
 
 /* ── Keep items intact across page breaks (print & PDF) ── */
 .cv-doc .header,
+.cv-doc .section-head,
 .cv-doc .exp-item,
 .cv-doc .proj-item,
 .cv-doc .edu-item,
@@ -268,34 +270,63 @@ fn apply_bold(text: &str) -> String {
     result
 }
 
+// Wraps a section title together with its first item/block in a single
+// "section-head" container so the pagination logic (html2pdf's pagebreak.avoid
+// and, for native browser printing, break-inside/break-after CSS) treats them
+// as one atomic unit. This is what stops a heading from being stranded alone
+// at the bottom of a page while its content starts on the next one.
+fn wrap_section(title: &str, mut items: Vec<String>) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let first = items.remove(0);
+    let rest: String = items.join("");
+    format!(
+        r#"<div class="section"><div class="section-head"><div class="section-title">{title}</div>{first}</div>{rest}</div>"#,
+        title = title,
+        first = first,
+        rest = rest,
+    )
+}
+
 fn render_header(p: &crate::models::PersonalInfo) -> String {
     let mut contacts = vec![];
     if !p.email.is_empty() {
         contacts.push(format!(
-            r#"<a href="mailto:{}">{}</a>"#,
+            r#"<span class="contact-item">✉️ <a href="mailto:{}">{}</a></span>"#,
             esc(&p.email),
             esc(&p.email)
         ));
     }
     if !p.phone.is_empty() {
-        contacts.push(esc(&p.phone));
+        contacts.push(format!(
+            r#"<span class="contact-item">📞 {}</span>"#,
+            esc(&p.phone)
+        ));
     }
     if !p.location.is_empty() {
-        contacts.push(esc(&p.location));
+        contacts.push(format!(
+            r#"<span class="contact-item">📍 {}</span>"#,
+            esc(&p.location)
+        ));
     }
     if !p.linkedin.is_empty() {
         contacts.push(format!(
-            r#"<a href="{}">{}</a>"#,
+            r#"<span class="contact-item">🔗 <a href="{}">{}</a></span>"#,
             esc(&p.linkedin),
             "LinkedIn"
         ));
     }
     if !p.github.is_empty() {
-        contacts.push(format!(r#"<a href="{}">{}</a>"#, esc(&p.github), "GitHub"));
+        contacts.push(format!(
+            r#"<span class="contact-item">💻 <a href="{}">{}</a></span>"#,
+            esc(&p.github),
+            "GitHub"
+        ));
     }
     if !p.website.is_empty() {
         contacts.push(format!(
-            r#"<a href="{}">{}</a>"#,
+            r#"<span class="contact-item">🌐 <a href="{}">{}</a></span>"#,
             esc(&p.website),
             esc(&p.website)
         ));
@@ -334,7 +365,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
     if experiences.is_empty() {
         return String::new();
     }
-    let mut items = String::new();
+    let mut items: Vec<String> = Vec::new();
     for exp in experiences {
         let location_html = if exp.location.is_empty() {
             String::new()
@@ -377,7 +408,10 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             let context_html = if proj.context.is_empty() {
                 String::new()
             } else {
-                format!(r#"<div class="exp-project-context">{}</div>"#, esc(&proj.context))
+                format!(
+                    r#"<div class="exp-project-context">{}</div>"#,
+                    esc(&proj.context)
+                )
             };
             projects_html.push_str(&format!(
                 r#"<div class="exp-project">{name}{context}{bullets}{tools}</div>"#,
@@ -387,7 +421,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
                 tools = tools_div,
             ));
         }
-        items.push_str(&format!(
+        items.push(format!(
             r#"<div class="exp-item">
   <div class="exp-header">
     <span class="exp-company">{company}{location}</span>
@@ -404,11 +438,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             projects = projects_html,
         ));
     }
-    format!(
-        r#"<div class="section"><div class="section-title">{}</div>{}</div>"#,
-        i18n_core::tr("rs_experience", lang),
-        items
-    )
+    wrap_section(i18n_core::tr("rs_experience", lang), items)
 }
 
 fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
@@ -418,7 +448,7 @@ fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
 
     // Group by category
     let categories = SkillCategory::all();
-    let mut blocks = String::new();
+    let mut blocks: Vec<String> = Vec::new();
     for cat in &categories {
         let cat_skills: Vec<&crate::models::Skill> =
             skills.iter().filter(|s| &s.category == cat).collect();
@@ -426,7 +456,7 @@ fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
             continue;
         }
         let names: Vec<String> = cat_skills.iter().map(|s| esc(&s.name)).collect();
-        blocks.push_str(&format!(
+        blocks.push(format!(
             r#"<div class="skills-block">
   <span class="skills-category">{cat}: </span>
   <span class="skills-list">{list}</span>
@@ -435,18 +465,14 @@ fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
             list = names.join(", "),
         ));
     }
-    format!(
-        r#"<div class="section"><div class="section-title">{}</div>{}</div>"#,
-        i18n_core::tr("rs_skills", lang),
-        blocks
-    )
+    wrap_section(i18n_core::tr("rs_skills", lang), blocks)
 }
 
 fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
     if projects.is_empty() {
         return String::new();
     }
-    let mut items = String::new();
+    let mut items: Vec<String> = Vec::new();
     for proj in projects {
         let bullets: String = proj
             .bullets
@@ -480,7 +506,7 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
                 esc(&proj.url)
             )
         };
-        items.push_str(&format!(
+        items.push(format!(
             r#"<div class="proj-item">
   <div class="proj-header">
     <span class="proj-name">{name}</span>
@@ -497,18 +523,14 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
             tools = tools_div,
         ));
     }
-    format!(
-        r#"<div class="section"><div class="section-title">{}</div>{}</div>"#,
-        i18n_core::tr("rs_projects", lang),
-        items
-    )
+    wrap_section(i18n_core::tr("rs_projects", lang), items)
 }
 
 fn render_education(education: &[crate::models::Education], lang: Lang) -> String {
     if education.is_empty() {
         return String::new();
     }
-    let mut items = String::new();
+    let mut items: Vec<String> = Vec::new();
     for edu in education {
         let achievements: String = edu
             .achievements
@@ -521,7 +543,7 @@ fn render_education(education: &[crate::models::Education], lang: Lang) -> Strin
         } else {
             format!(r#"<ul class="edu-achievements">{}</ul>"#, achievements)
         };
-        items.push_str(&format!(
+        items.push(format!(
             r#"<div class="edu-item">
   <div class="edu-header">
     <span class="edu-inst">{inst}</span>
@@ -538,11 +560,7 @@ fn render_education(education: &[crate::models::Education], lang: Lang) -> Strin
             achievements = ach_html,
         ));
     }
-    format!(
-        r#"<div class="section"><div class="section-title">{}</div>{}</div>"#,
-        i18n_core::tr("rs_education", lang),
-        items
-    )
+    wrap_section(i18n_core::tr("rs_education", lang), items)
 }
 
 fn render_languages(languages: &[crate::models::Language], lang: Lang) -> String {
@@ -556,10 +574,9 @@ fn render_languages(languages: &[crate::models::Language], lang: Lang) -> String
             level = l.level.label(),
         )
     }).collect();
-    format!(
-        r#"<div class="section"><div class="section-title">{}</div><div class="lang-list">{}</div></div>"#,
+    wrap_section(
         i18n_core::tr("rs_languages", lang),
-        items
+        vec![format!(r#"<div class="lang-list">{}</div>"#, items)],
     )
 }
 
@@ -580,10 +597,9 @@ fn render_certifications(certs: &[crate::models::Certification], lang: Lang) -> 
             date   = esc(&c.date),
         )
     }).collect();
-    format!(
-        r#"<div class="section"><div class="section-title">{}</div><div class="lang-list">{}</div></div>"#,
+    wrap_section(
         i18n_core::tr("rs_certifications", lang),
-        items
+        vec![format!(r#"<div class="lang-list">{}</div>"#, items)],
     )
 }
 

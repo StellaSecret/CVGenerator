@@ -334,21 +334,19 @@ mod tests {
                     role: "Software Engineer".to_string(),
                     start_date: "Jan 2021".to_string(),
                     end_date: "Present".to_string(),
-                    projects: vec![
-                        ExperienceProject {
-                            name: "Distributed Systems".to_string(),
-                            context: "High-throughput microservices architecture".to_string(),
-                            bullets: vec![
-                                "Built distributed systems using Rust and Tokio".to_string(),
-                                "Reduced API latency by 40% through caching".to_string(),
-                            ],
-                            tools: vec![
-                                "Rust".to_string(),
-                                "PostgreSQL".to_string(),
-                                "Kubernetes".to_string(),
-                            ],
-                        },
-                    ],
+                    projects: vec![ExperienceProject {
+                        name: "Distributed Systems".to_string(),
+                        context: "High-throughput microservices architecture".to_string(),
+                        bullets: vec![
+                            "Built distributed systems using Rust and Tokio".to_string(),
+                            "Reduced API latency by 40% through caching".to_string(),
+                        ],
+                        tools: vec![
+                            "Rust".to_string(),
+                            "PostgreSQL".to_string(),
+                            "Kubernetes".to_string(),
+                        ],
+                    }],
                     ..Default::default()
                 },
                 Experience {
@@ -357,16 +355,14 @@ mod tests {
                     role: "Junior Developer".to_string(),
                     start_date: "Jun 2019".to_string(),
                     end_date: "Dec 2020".to_string(),
-                    projects: vec![
-                        ExperienceProject {
-                            name: "Web Applications".to_string(),
-                            context: "Customer-facing portal overhaul".to_string(),
-                            bullets: vec![
-                                "Developed web applications with React and TypeScript".to_string()
-                            ],
-                            tools: vec!["JavaScript".to_string(), "React".to_string()],
-                        },
-                    ],
+                    projects: vec![ExperienceProject {
+                        name: "Web Applications".to_string(),
+                        context: "Customer-facing portal overhaul".to_string(),
+                        bullets: vec![
+                            "Developed web applications with React and TypeScript".to_string()
+                        ],
+                        tools: vec!["JavaScript".to_string(), "React".to_string()],
+                    }],
                     ..Default::default()
                 },
             ],

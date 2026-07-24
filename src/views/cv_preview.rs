@@ -37,7 +37,11 @@ fn download_pdf(iframe_id: &str, filename: &str) {
             filename: '{filename}',
             image: {{ type: 'jpeg', quality: 0.98 }},
             html2canvas: {{ scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' }},
-            jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }}
+            jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
+            pagebreak: {{
+                mode: ['css', 'legacy'],
+                avoid: ['.header', '.section-head', '.exp-item', '.proj-item', '.edu-item', '.skills-block', '.gap-banner', '.gap-section']
+            }}
         }}).from(container).save().then(cleanup).catch(cleanup);
     }})();"#
     );

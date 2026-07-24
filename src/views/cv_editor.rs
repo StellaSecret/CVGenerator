@@ -1024,7 +1024,14 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_start = use_signal(String::new);
     let t_present_s = i18n::tr("ed_present", l);
     let mut new_end = use_signal(|| t_present_s.to_string());
-    let mut new_projects = use_signal(|| vec![ExperienceProject { name: String::new(), context: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
+    let mut new_projects = use_signal(|| {
+        vec![ExperienceProject {
+            name: String::new(),
+            context: String::new(),
+            bullets: vec![String::new()],
+            tools: Vec::new(),
+        }]
+    });
 
     let experiences: Vec<Experience> = cv.read().experiences.clone();
     let adding = *show_form.read();
