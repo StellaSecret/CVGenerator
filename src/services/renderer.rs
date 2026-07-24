@@ -100,6 +100,7 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
 .cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
 .cv-doc .exp-project-name { font-weight: 600; color: #1e293b; font-size: 0.88rem; margin-bottom: 2px; }
+.cv-doc .exp-project-context { font-style: italic; color: #64748b; font-size: 0.82rem; margin-bottom: 4px; }
 
 /* ── Skills ── */
 .cv-doc .skills-block { margin-bottom: 8px; }
@@ -373,9 +374,15 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             } else {
                 format!(r#"<div class="exp-project-name">{}</div>"#, esc(&proj.name))
             };
+            let context_html = if proj.context.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="exp-project-context">{}</div>"#, esc(&proj.context))
+            };
             projects_html.push_str(&format!(
-                r#"<div class="exp-project">{name}{bullets}{tools}</div>"#,
+                r#"<div class="exp-project">{name}{context}{bullets}{tools}</div>"#,
                 name = name_html,
+                context = context_html,
                 bullets = bullets_block,
                 tools = tools_div,
             ));
@@ -716,6 +723,7 @@ mod tests {
             end_date: "Present".to_string(),
             projects: vec![ExperienceProject {
                 name: "API Platform".to_string(),
+                context: "Legacy monolith needed decomposition".to_string(),
                 bullets: vec!["Built distributed systems".to_string()],
                 tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
             }],
@@ -806,6 +814,13 @@ mod tests {
     #[test]
     fn experience_bullets_in_output() {
         assert!(render_lifetime_cv(&full_cv(), Lang::En).contains("Built distributed systems"));
+    }
+
+    #[test]
+    fn experience_context_in_output() {
+        let html = render_lifetime_cv(&full_cv(), Lang::En);
+        assert!(html.contains("Legacy monolith"));
+        assert!(html.contains(r#"class="exp-project-context""#));
     }
 
     #[test]

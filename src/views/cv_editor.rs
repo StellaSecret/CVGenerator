@@ -111,6 +111,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let t_tools = i18n::tr("ed_tools", *lang.read());
     let t_present = i18n::tr("ed_present", *lang.read());
     let t_add_project = i18n::tr("ed_add_project", *lang.read());
+    let t_project_ctx = i18n::tr("ed_project_context", *lang.read());
 
     if *editing.read() {
         rsx! {
@@ -159,6 +160,12 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                     oninput: move |e| { e_projects.write()[pi].name = e.value(); },
                                 }
                             }
+                            Field { label: t_project_ctx.to_string(),
+                                input { r#type: "text", class: "input",
+                                    value: e_projects.read()[pi].context.clone(),
+                                    oninput: move |e| { e_projects.write()[pi].context = e.value(); },
+                                }
+                            }
                             div { class: "field",
                                 label { class: "label", "{t_achieve}" }
                                 for bi in 0..e_projects.read()[pi].bullets.len() {
@@ -204,6 +211,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                         onclick: move |_| {
                             e_projects.write().push(ExperienceProject {
                                 name: String::new(),
+                                context: String::new(),
                                 bullets: vec![String::new()],
                                 tools: Vec::new(),
                             });
@@ -218,6 +226,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             let projects: Vec<ExperienceProject> = e_projects.read().iter().map(|p| {
                                 ExperienceProject {
                                     name: p.name.clone(),
+                                    context: p.context.clone(),
                                     bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
                                     tools: p.tools.clone(),
                                 }
@@ -256,6 +265,9 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 if !proj.name.is_empty() {
                                     div { class: "item-project-name", "{proj.name}" }
                                 }
+                                if !proj.context.is_empty() {
+                                    div { class: "item-project-context", "{proj.context}" }
+                                }
                                 if !proj.bullets.is_empty() {
                                     div { class: "item-tags",
                                         for b in proj.bullets.iter().filter(|b| !b.is_empty()) {
@@ -282,7 +294,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
                             e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { name: String::new(), bullets: vec![String::new()], tools: Vec::new() }]
+                                vec![ExperienceProject { name: String::new(), context: String::new(), bullets: vec![String::new()], tools: Vec::new() }]
                             } else {
                                 item.projects
                             });
@@ -1012,7 +1024,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_start = use_signal(String::new);
     let t_present_s = i18n::tr("ed_present", l);
     let mut new_end = use_signal(|| t_present_s.to_string());
-    let mut new_projects = use_signal(|| vec![ExperienceProject { name: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
+    let mut new_projects = use_signal(|| vec![ExperienceProject { name: String::new(), context: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
 
     let experiences: Vec<Experience> = cv.read().experiences.clone();
     let adding = *show_form.read();
@@ -1034,6 +1046,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_tools = i18n::tr("ed_tools", l);
     let t_add_pos = i18n::tr("ed_add_position", l);
     let t_add_project = i18n::tr("ed_add_project", l);
+    let t_project_ctx = i18n::tr("ed_project_context", l);
     let t_cancel = i18n::tr("ed_cancel", l);
 
     rsx! {
@@ -1100,6 +1113,12 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                         oninput: move |e| { new_projects.write()[pi].name = e.value(); },
                                     }
                                 }
+                                Field { label: t_project_ctx.to_string(),
+                                    input { r#type: "text", class: "input",
+                                        value: new_projects.read()[pi].context.clone(),
+                                        oninput: move |e| { new_projects.write()[pi].context = e.value(); },
+                                    }
+                                }
                                 div { class: "field",
                                     label { class: "label", "{t_achieve}" }
                                     for bi in 0..new_projects.read()[pi].bullets.len() {
@@ -1149,6 +1168,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             onclick: move |_| {
                                 new_projects.write().push(ExperienceProject {
                                     name: String::new(),
+                                    context: String::new(),
                                     bullets: vec![String::new()],
                                     tools: Vec::new(),
                                 });
@@ -1164,6 +1184,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 let projects: Vec<ExperienceProject> = new_projects.read().iter().map(|p| {
                                     ExperienceProject {
                                         name: p.name.clone(),
+                                        context: p.context.clone(),
                                         bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
                                         tools: p.tools.clone(),
                                     }
@@ -1177,7 +1198,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 new_company.set(String::new()); new_role.set(String::new());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { name: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
+                                new_projects.set(vec![ExperienceProject { name: String::new(), context: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
                                 show_form.set(false);
                             },
                             "{t_add_pos}"

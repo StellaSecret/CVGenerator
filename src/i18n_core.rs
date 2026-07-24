@@ -234,6 +234,7 @@ fn en(key: &'static str) -> &'static str {
         // Experience projects
         "ed_projects"       => "Projects",
         "ed_project_name"   => "Project name",
+        "ed_project_context" => "Context (challenge or goal)",
         "ed_new_project"    => "New project",
         "ed_add_project"    => "+ Add project",
         "ed_cancel"         => "Cancel",
@@ -411,6 +412,7 @@ fn fr(key: &'static str) -> &'static str {
         // Experience projects
         "ed_projects"       => "Projets",
         "ed_project_name"   => "Nom du projet",
+        "ed_project_context" => "Contexte (défi ou objectif)",
         "ed_new_project"    => "Nouveau projet",
         "ed_add_project"    => "+ Ajouter un projet",
         // Skills

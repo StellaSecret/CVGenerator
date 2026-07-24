@@ -20,6 +20,7 @@ pub struct PersonalInfo {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ExperienceProject {
     pub name: String,
+    pub context: String,
     pub bullets: Vec<String>,
     pub tools: Vec<String>,
 }
@@ -200,6 +201,7 @@ impl LifetimeCV {
             parts.push(exp.company.clone());
             for proj in &exp.projects {
                 parts.push(proj.name.clone());
+                parts.push(proj.context.clone());
                 parts.extend(proj.bullets.clone());
                 parts.extend(proj.tools.clone());
             }
@@ -273,6 +275,7 @@ mod tests {
                 company: "Acme".to_string(),
                 projects: vec![ExperienceProject {
                     name: "API Platform".to_string(),
+                    context: "Legacy monolith needed decomposition".to_string(),
                     bullets: vec!["Built APIs".to_string()],
                     tools: vec!["Rust".to_string(), "gRPC".to_string()],
                 }],
@@ -284,6 +287,7 @@ mod tests {
         assert!(text.contains("Software Engineer"));
         assert!(text.contains("Acme"));
         assert!(text.contains("API Platform"));
+        assert!(text.contains("Legacy monolith"));
         assert!(text.contains("Built APIs"));
         assert!(text.contains("Rust"));
         assert!(text.contains("gRPC"));

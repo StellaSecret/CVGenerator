@@ -175,6 +175,8 @@ fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
         text.push(' ');
         text.push_str(&proj.name);
         text.push(' ');
+        text.push_str(&proj.context);
+        text.push(' ');
         text.push_str(&proj.bullets.join(" "));
         text.push(' ');
         text.push_str(&proj.tools.join(" "));
@@ -335,6 +337,7 @@ mod tests {
                     projects: vec![
                         ExperienceProject {
                             name: "Distributed Systems".to_string(),
+                            context: "High-throughput microservices architecture".to_string(),
                             bullets: vec![
                                 "Built distributed systems using Rust and Tokio".to_string(),
                                 "Reduced API latency by 40% through caching".to_string(),
@@ -357,6 +360,7 @@ mod tests {
                     projects: vec![
                         ExperienceProject {
                             name: "Web Applications".to_string(),
+                            context: "Customer-facing portal overhaul".to_string(),
                             bullets: vec![
                                 "Developed web applications with React and TypeScript".to_string()
                             ],
