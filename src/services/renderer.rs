@@ -24,8 +24,9 @@ fn tag(href: &str, label: &str) -> String {
 // ── Shared CSS ────────────────────────────────────────────────────────────────
 
 const CV_CSS: &str = r#"
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
+:root { color-scheme: light; }
+.cv-doc, .cv-doc * { margin: 0; padding: 0; box-sizing: border-box; }
+.cv-doc {
   font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
   color: #1a1a2e;
   max-width: 860px;
@@ -35,14 +36,14 @@ body {
   line-height: 1.5;
   background: #fff;
 }
-.toolbar {
+.cv-doc .toolbar {
   display: flex;
   gap: 10px;
   margin-bottom: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid #e8eaf0;
 }
-.btn {
+.cv-doc .btn {
   padding: 8px 18px;
   border-radius: 6px;
   border: none;
@@ -50,14 +51,14 @@ body {
   font-size: 13px;
   font-weight: 600;
 }
-.btn-primary { background: #2563eb; color: #fff; }
-.btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+.cv-doc .btn-primary { background: #2563eb; color: #fff; }
+.cv-doc .btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
 
 /* ── Header ── */
-.header { margin-bottom: 28px; }
-.name { font-size: 2rem; font-weight: 700; color: #0f172a; letter-spacing: -0.5px; }
-.job-title { font-size: 1.05rem; color: #475569; margin-top: 4px; }
-.contact {
+.cv-doc .header { margin-bottom: 28px; }
+.cv-doc .name { font-size: 2rem; font-weight: 700; color: #0f172a; letter-spacing: -0.5px; }
+.cv-doc .job-title { font-size: 1.05rem; color: #475569; margin-top: 4px; }
+.cv-doc .contact {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 20px;
@@ -65,8 +66,8 @@ body {
   font-size: 0.8rem;
   color: #64748b;
 }
-.contact a { color: #2563eb; text-decoration: none; }
-.summary {
+.cv-doc .contact a { color: #2563eb; text-decoration: none; }
+.cv-doc .summary {
   margin-top: 14px;
   color: #334155;
   font-size: 0.9rem;
@@ -75,8 +76,8 @@ body {
 }
 
 /* ── Section ── */
-.section { margin-bottom: 26px; }
-.section-title {
+.cv-doc .section { margin-bottom: 26px; }
+.cv-doc .section-title {
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -88,48 +89,48 @@ body {
 }
 
 /* ── Experience ── */
-.exp-item { margin-bottom: 18px; }
-.exp-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
-.exp-company { font-weight: 700; color: #0f172a; }
-.exp-role { font-style: italic; color: #475569; font-size: 0.9rem; margin-top: 1px; }
-.exp-dates { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; }
-.exp-location { font-size: 0.8rem; color: #94a3b8; }
-.exp-bullets { margin: 8px 0 0 18px; }
-.exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
-.exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
+.cv-doc .exp-item { margin-bottom: 18px; }
+.cv-doc .exp-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
+.cv-doc .exp-company { font-weight: 700; color: #0f172a; }
+.cv-doc .exp-role { font-style: italic; color: #475569; font-size: 0.9rem; margin-top: 1px; }
+.cv-doc .exp-dates { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; }
+.cv-doc .exp-location { font-size: 0.8rem; color: #94a3b8; }
+.cv-doc .exp-bullets { margin: 8px 0 0 18px; }
+.cv-doc .exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
+.cv-doc .exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
 
 /* ── Skills ── */
-.skills-block { margin-bottom: 8px; }
-.skills-category { font-weight: 600; font-size: 0.82rem; color: #475569; display: inline; }
-.skills-list { display: inline; font-size: 0.88rem; color: #334155; }
+.cv-doc .skills-block { margin-bottom: 8px; }
+.cv-doc .skills-category { font-weight: 600; font-size: 0.82rem; color: #475569; display: inline; }
+.cv-doc .skills-list { display: inline; font-size: 0.88rem; color: #334155; }
 
 /* ── Projects ── */
-.proj-item { margin-bottom: 16px; }
-.proj-header { display: flex; justify-content: space-between; align-items: baseline; }
-.proj-name { font-weight: 700; color: #0f172a; }
-.proj-url { font-size: 0.8rem; color: #2563eb; text-decoration: none; }
-.proj-desc { font-size: 0.88rem; color: #475569; margin-top: 3px; }
-.proj-bullets { margin: 6px 0 0 18px; }
-.proj-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
-.proj-tools { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+.cv-doc .proj-item { margin-bottom: 16px; }
+.cv-doc .proj-header { display: flex; justify-content: space-between; align-items: baseline; }
+.cv-doc .proj-name { font-weight: 700; color: #0f172a; }
+.cv-doc .proj-url { font-size: 0.8rem; color: #2563eb; text-decoration: none; }
+.cv-doc .proj-desc { font-size: 0.88rem; color: #475569; margin-top: 3px; }
+.cv-doc .proj-bullets { margin: 6px 0 0 18px; }
+.cv-doc .proj-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
+.cv-doc .proj-tools { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
 
 /* ── Education ── */
-.edu-item { margin-bottom: 12px; }
-.edu-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
-.edu-inst { font-weight: 700; color: #0f172a; }
-.edu-degree { color: #475569; font-size: 0.88rem; margin-top: 2px; }
-.edu-dates { font-size: 0.8rem; color: #94a3b8; }
-.edu-achievements { margin: 6px 0 0 18px; }
-.edu-achievements li { color: #334155; font-size: 0.88rem; margin-bottom: 2px; }
+.cv-doc .edu-item { margin-bottom: 12px; }
+.cv-doc .edu-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
+.cv-doc .edu-inst { font-weight: 700; color: #0f172a; }
+.cv-doc .edu-degree { color: #475569; font-size: 0.88rem; margin-top: 2px; }
+.cv-doc .edu-dates { font-size: 0.8rem; color: #94a3b8; }
+.cv-doc .edu-achievements { margin: 6px 0 0 18px; }
+.cv-doc .edu-achievements li { color: #334155; font-size: 0.88rem; margin-bottom: 2px; }
 
 /* ── Languages & Certs ── */
-.lang-list { display: flex; flex-wrap: wrap; gap: 12px; }
-.lang-item { font-size: 0.88rem; }
-.lang-name { font-weight: 600; color: #0f172a; }
-.lang-level { color: #64748b; font-size: 0.8rem; }
+.cv-doc .lang-list { display: flex; flex-wrap: wrap; gap: 12px; }
+.cv-doc .lang-item { font-size: 0.88rem; }
+.cv-doc .lang-name { font-weight: 600; color: #0f172a; }
+.cv-doc .lang-level { color: #64748b; font-size: 0.8rem; }
 
 /* ── Tags ── */
-.tag {
+.cv-doc .tag {
   background: #eff6ff;
   color: #2563eb;
   padding: 2px 8px;
@@ -140,7 +141,7 @@ body {
 }
 
 /* ── Gap analysis (tailored only) ── */
-.gap-banner {
+.cv-doc .gap-banner {
   background: #fafafa;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -148,16 +149,36 @@ body {
   margin-bottom: 24px;
   font-size: 0.85rem;
 }
-.gap-score { font-weight: 700; font-size: 1.1rem; color: #2563eb; }
-.gap-section { margin-top: 8px; }
-.gap-label { font-weight: 600; color: #475569; margin-bottom: 4px; }
-.kw-matched { color: #16a34a; background: #f0fdf4; }
-.kw-missing { color: #dc2626; background: #fef2f2; }
+.cv-doc .gap-score { font-weight: 700; font-size: 1.1rem; color: #2563eb; }
+.cv-doc .gap-section { margin-top: 8px; }
+.cv-doc .gap-label { font-weight: 600; color: #475569; margin-bottom: 4px; }
+.cv-doc .kw-matched { color: #16a34a; background: #f0fdf4; }
+.cv-doc .kw-missing { color: #dc2626; background: #fef2f2; }
 
 @media print {
-  .toolbar { display: none; }
-  body { padding: 20px; }
+  .cv-doc .toolbar { display: none; }
+  .cv-doc { padding: 20px; }
   @page { margin: 1.5cm; }
+}
+
+/* ── Keep items intact across page breaks (print & PDF) ── */
+.cv-doc .header,
+.cv-doc .exp-item,
+.cv-doc .proj-item,
+.cv-doc .edu-item,
+.cv-doc .skills-block,
+.cv-doc .gap-banner,
+.cv-doc .gap-section {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.cv-doc .section-title {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+.cv-doc .section-title + * {
+  break-before: avoid;
+  page-break-before: avoid;
 }
 "#;
 
@@ -170,11 +191,14 @@ fn html_wrap(title: &str, body: &str) -> String {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="light"/>
   <title>{title}</title>
   <style>{css}</style>
 </head>
 <body>
+<div class="cv-doc">
 {body}
+</div>
 </body>
 </html>"#,
         title = esc(title),

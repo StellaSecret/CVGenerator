@@ -18,14 +18,28 @@ fn download_pdf(iframe_id: &str, filename: &str) {
             if (f && f.contentWindow) f.contentWindow.print();
             return;
         }}
-        var el = f.contentDocument.body.cloneNode(true);
+        var styleTag = f.contentDocument.querySelector('style');
+        var cvDoc = f.contentDocument.querySelector('.cv-doc');
+        if (!cvDoc) {{
+            if (f.contentWindow) f.contentWindow.print();
+            return;
+        }}
+        var sandbox = document.createElement('div');
+        sandbox.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;z-index:-1;';
+        var container = document.createElement('div');
+        container.style.cssText = 'background:#fff;';
+        if (styleTag) {{ container.appendChild(styleTag.cloneNode(true)); }}
+        container.appendChild(cvDoc.cloneNode(true));
+        sandbox.appendChild(container);
+        document.body.appendChild(sandbox);
+        var cleanup = function() {{ if (sandbox.parentNode) sandbox.parentNode.removeChild(sandbox); }};
         html2pdf().set({{
             margin: [10, 10, 10, 10],
             filename: '{filename}',
             image: {{ type: 'jpeg', quality: 0.98 }},
-            html2canvas: {{ scale: 2, useCORS: true, allowTaint: true }},
+            html2canvas: {{ scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' }},
             jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }}
-        }}).from(el).save();
+        }}).from(container).save().then(cleanup).catch(cleanup);
     }})();"#
     );
     let _ = js_sys::eval(&js);
