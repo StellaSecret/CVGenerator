@@ -95,8 +95,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let mut e_location = use_signal(String::new);
     let mut e_start = use_signal(String::new);
     let mut e_end = use_signal(String::new);
-    let mut e_bullets = use_signal(Vec::<String>::new);
-    let mut e_tools = use_signal(String::new);
+    let mut e_projects = use_signal(Vec::<ExperienceProject>::new);
 
     let t_save = i18n::tr("ed_save_changes", *lang.read());
     let t_cancel = i18n::tr("ed_cancel", *lang.read());
@@ -105,10 +104,13 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let t_loc = i18n::tr("ed_location", *lang.read());
     let t_start = i18n::tr("ed_start_date", *lang.read());
     let t_end = i18n::tr("ed_end_date", *lang.read());
+    let t_projects = i18n::tr("ed_projects", *lang.read());
+    let t_project_name = i18n::tr("ed_project_name", *lang.read());
     let t_achieve = i18n::tr("ed_achievements", *lang.read());
+    let t_add_bullet = i18n::tr("ed_add_bullet", *lang.read());
     let t_tools = i18n::tr("ed_tools", *lang.read());
     let t_present = i18n::tr("ed_present", *lang.read());
-    let t_add_bullet = i18n::tr("ed_add_bullet", *lang.read());
+    let t_add_project = i18n::tr("ed_add_project", *lang.read());
 
     if *editing.read() {
         rsx! {
@@ -148,42 +150,78 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                     }
                 }
                 div { class: "field",
-                    label { class: "label", "{t_achieve}" }
-                    for i in 0..e_bullets.read().len() {
-                        div { class: "bullet-row",
-                            span { class: "bullet-dot", "•" }
-                            input {
-                                r#type: "text", class: "input",
-                                value: e_bullets.read()[i].clone(),
-                                oninput: move |e| { e_bullets.write()[i] = e.value(); },
+                    label { class: "label", "{t_projects}" }
+                    for pi in 0..e_projects.read().len() {
+                        div { class: "project-card",
+                            Field { label: t_project_name.to_string(),
+                                input { r#type: "text", class: "input",
+                                    value: e_projects.read()[pi].name.clone(),
+                                    oninput: move |e| { e_projects.write()[pi].name = e.value(); },
+                                }
                             }
-                            if e_bullets.read().len() > 1 {
-                                button { class: "btn-icon",
-                                    onclick: move |_| { e_bullets.write().remove(i); },
-                                    "×"
+                            div { class: "field",
+                                label { class: "label", "{t_achieve}" }
+                                for bi in 0..e_projects.read()[pi].bullets.len() {
+                                    div { class: "bullet-row",
+                                        span { class: "bullet-dot", "•" }
+                                        input {
+                                            r#type: "text", class: "input",
+                                            value: e_projects.read()[pi].bullets[bi].clone(),
+                                            oninput: move |e| { e_projects.write()[pi].bullets[bi] = e.value(); },
+                                        }
+                                        if e_projects.read()[pi].bullets.len() > 1 {
+                                            button { class: "btn-icon",
+                                                onclick: move |_| { e_projects.write()[pi].bullets.remove(bi); },
+                                                "×"
+                                            }
+                                        }
+                                    }
+                                }
+                                button { class: "btn-text",
+                                    onclick: move |_| { e_projects.write()[pi].bullets.push(String::new()); },
+                                    "{t_add_bullet}"
+                                }
+                            }
+                            Field { label: t_tools.to_string(),
+                                input { r#type: "text", class: "input",
+                                    value: e_projects.read()[pi].tools.join(", "),
+                                    oninput: move |e| {
+                                        let tools: Vec<String> = e.value().split(',')
+                                            .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                                        e_projects.write()[pi].tools = tools;
+                                    },
+                                }
+                            }
+                            if e_projects.read().len() > 1 {
+                                button { class: "btn-text btn-danger",
+                                    onclick: move |_| { e_projects.write().remove(pi); },
+                                    "× Remove project"
                                 }
                             }
                         }
                     }
                     button { class: "btn-text",
-                        onclick: move |_| { e_bullets.write().push(String::new()); },
-                        "{t_add_bullet}"
-                    }
-                }
-                Field { label: t_tools.to_string(),
-                    input { r#type: "text", class: "input",
-                        value: e_tools.read().clone(),
-                        oninput: move |e| { e_tools.set(e.value()); },
+                        onclick: move |_| {
+                            e_projects.write().push(ExperienceProject {
+                                name: String::new(),
+                                bullets: vec![String::new()],
+                                tools: Vec::new(),
+                            });
+                        },
+                        "{t_add_project}"
                     }
                 }
                 div { class: "form-actions",
                     button { class: "btn btn-primary",
                         onclick: move |_| {
                             let id = cv.read().experiences[index].id.clone();
-                            let tools: Vec<String> = e_tools.read().split(',')
-                                .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-                            let bullets: Vec<String> = e_bullets.read().iter()
-                                .filter(|b| !b.is_empty()).cloned().collect();
+                            let projects: Vec<ExperienceProject> = e_projects.read().iter().map(|p| {
+                                ExperienceProject {
+                                    name: p.name.clone(),
+                                    bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
+                                    tools: p.tools.clone(),
+                                }
+                            }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
                             cv.write().experiences[index] = Experience {
                                 id,
                                 company: e_company.read().clone(),
@@ -191,7 +229,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 location: e_location.read().clone(),
                                 start_date: e_start.read().clone(),
                                 end_date: e_end.read().clone(),
-                                bullets, tools,
+                                projects,
                             };
                             editing.set(false);
                         },
@@ -207,15 +245,30 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     } else {
         let role = exp.role.clone();
         let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
-        let tools = exp.tools.clone();
         rsx! {
             div { class: "item-card",
                 div { class: "item-card-body",
                     div { class: "item-title", "{role}" }
                     div { class: "item-sub", "{sub}" }
-                    if !tools.is_empty() {
-                        div { class: "item-tags",
-                            for t in tools { span { class: "tag-small", "{t}" } }
+                    for proj in exp.projects.iter() {
+                        if !proj.name.is_empty() || !proj.bullets.is_empty() {
+                            div { class: "item-project",
+                                if !proj.name.is_empty() {
+                                    div { class: "item-project-name", "{proj.name}" }
+                                }
+                                if !proj.bullets.is_empty() {
+                                    div { class: "item-tags",
+                                        for b in proj.bullets.iter().filter(|b| !b.is_empty()) {
+                                            span { class: "tag-small", "• {b}" }
+                                        }
+                                    }
+                                }
+                                if !proj.tools.is_empty() {
+                                    div { class: "item-tags",
+                                        for t in &proj.tools { span { class: "tag-small", "{t}" } }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -228,8 +281,11 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_location.set(item.location);
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
-                            e_bullets.set(if item.bullets.is_empty() { vec![String::new()] } else { item.bullets });
-                            e_tools.set(item.tools.join(", "));
+                            e_projects.set(if item.projects.is_empty() {
+                                vec![ExperienceProject { name: String::new(), bullets: vec![String::new()], tools: Vec::new() }]
+                            } else {
+                                item.projects
+                            });
                             editing.set(true);
                         },
                         "✎"
@@ -956,8 +1012,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_start = use_signal(String::new);
     let t_present_s = i18n::tr("ed_present", l);
     let mut new_end = use_signal(|| t_present_s.to_string());
-    let mut new_bullets = use_signal(|| vec!["".to_string()]);
-    let mut new_tools = use_signal(String::new);
+    let mut new_projects = use_signal(|| vec![ExperienceProject { name: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
 
     let experiences: Vec<Experience> = cv.read().experiences.clone();
     let adding = *show_form.read();
@@ -972,10 +1027,13 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_start = i18n::tr("ed_start_date", l);
     let t_end = i18n::tr("ed_end_date", l);
     let t_present = i18n::tr("ed_present", l);
+    let t_projects = i18n::tr("ed_projects", l);
+    let t_project_name = i18n::tr("ed_project_name", l);
     let t_achieve = i18n::tr("ed_achievements", l);
     let t_add_bullet = i18n::tr("ed_add_bullet", l);
     let t_tools = i18n::tr("ed_tools", l);
     let t_add_pos = i18n::tr("ed_add_position", l);
+    let t_add_project = i18n::tr("ed_add_project", l);
     let t_cancel = i18n::tr("ed_cancel", l);
 
     rsx! {
@@ -1033,35 +1091,69 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                         }
                     }
                     div { class: "field",
-                        label { class: "label", "{t_achieve}" }
-                        for i in 0..new_bullets.read().len() {
-                            div { class: "bullet-row",
-                                span { class: "bullet-dot", "•" }
-                                input {
-                                    r#type: "text", class: "input",
-                                    placeholder: "Reduced API latency by 40% through caching",
-                                    value: new_bullets.read()[i].clone(),
-                                    oninput: move |e| { new_bullets.write()[i] = e.value(); },
+                        label { class: "label", "{t_projects}" }
+                        for pi in 0..new_projects.read().len() {
+                            div { class: "project-card",
+                                Field { label: t_project_name.to_string(),
+                                    input { r#type: "text", class: "input", placeholder: "API Platform",
+                                        value: new_projects.read()[pi].name.clone(),
+                                        oninput: move |e| { new_projects.write()[pi].name = e.value(); },
+                                    }
                                 }
-                                if new_bullets.read().len() > 1 {
+                                div { class: "field",
+                                    label { class: "label", "{t_achieve}" }
+                                    for bi in 0..new_projects.read()[pi].bullets.len() {
+                                        div { class: "bullet-row",
+                                            span { class: "bullet-dot", "•" }
+                                            input {
+                                                r#type: "text", class: "input",
+                                                placeholder: "Reduced API latency by 40%",
+                                                value: new_projects.read()[pi].bullets[bi].clone(),
+                                                oninput: move |e| { new_projects.write()[pi].bullets[bi] = e.value(); },
+                                            }
+                                            if new_projects.read()[pi].bullets.len() > 1 {
+                                                button {
+                                                    class: "btn-icon",
+                                                    onclick: move |_| { new_projects.write()[pi].bullets.remove(bi); },
+                                                    "×"
+                                                }
+                                            }
+                                        }
+                                    }
                                     button {
-                                        class: "btn-icon",
-                                        onclick: move |_| { new_bullets.write().remove(i); },
-                                        "×"
+                                        class: "btn-text",
+                                        onclick: move |_| { new_projects.write()[pi].bullets.push(String::new()); },
+                                        "{t_add_bullet}"
+                                    }
+                                }
+                                Field { label: t_tools.to_string(),
+                                    input { r#type: "text", class: "input", placeholder: "Rust, PostgreSQL, Kubernetes",
+                                        value: new_projects.read()[pi].tools.join(", "),
+                                        oninput: move |e| {
+                                            let tools: Vec<String> = e.value().split(',')
+                                                .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                                            new_projects.write()[pi].tools = tools;
+                                        },
+                                    }
+                                }
+                                if new_projects.read().len() > 1 {
+                                    button { class: "btn-text btn-danger",
+                                        onclick: move |_| { new_projects.write().remove(pi); },
+                                        "× Remove project"
                                     }
                                 }
                             }
                         }
                         button {
                             class: "btn-text",
-                            onclick: move |_| { new_bullets.write().push(String::new()); },
-                            "{t_add_bullet}"
-                        }
-                    }
-                    Field { label: t_tools.to_string(),
-                        input { r#type: "text", class: "input", placeholder: "Rust, PostgreSQL, Kubernetes",
-                            value: new_tools.read().clone(),
-                            oninput: move |e| { new_tools.set(e.value()); },
+                            onclick: move |_| {
+                                new_projects.write().push(ExperienceProject {
+                                    name: String::new(),
+                                    bullets: vec![String::new()],
+                                    tools: Vec::new(),
+                                });
+                            },
+                            "{t_add_project}"
                         }
                     }
                     div { class: "form-actions",
@@ -1069,20 +1161,23 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             class: "btn btn-primary",
                             onclick: move |_| {
                                 if new_company.read().is_empty() || new_role.read().is_empty() { return; }
-                                let tools  = new_tools.read().split(',')
-                                    .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-                                let bullets = new_bullets.read().iter()
-                                    .filter(|b| !b.is_empty()).cloned().collect();
+                                let projects: Vec<ExperienceProject> = new_projects.read().iter().map(|p| {
+                                    ExperienceProject {
+                                        name: p.name.clone(),
+                                        bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
+                                        tools: p.tools.clone(),
+                                    }
+                                }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
                                 cv.write().experiences.push(Experience {
                                     id: new_id(), company: new_company.read().clone(),
                                     role: new_role.read().clone(), location: new_loc.read().clone(),
                                     start_date: new_start.read().clone(), end_date: new_end.read().clone(),
-                                    bullets, tools,
+                                    projects,
                                 });
                                 new_company.set(String::new()); new_role.set(String::new());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_bullets.set(vec!["".to_string()]); new_tools.set(String::new());
+                                new_projects.set(vec![ExperienceProject { name: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
                                 show_form.set(false);
                             },
                             "{t_add_pos}"

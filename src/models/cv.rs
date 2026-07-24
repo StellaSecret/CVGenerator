@@ -18,15 +18,21 @@ pub struct PersonalInfo {
 // ── Experience ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ExperienceProject {
+    pub name: String,
+    pub bullets: Vec<String>,
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Experience {
     pub id: String,
     pub company: String,
     pub role: String,
     pub location: String,
-    pub start_date: String,   // "Jan 2021"
-    pub end_date: String,     // "Present" or "Mar 2024"
-    pub bullets: Vec<String>, // achievement bullets, user's exact words
-    pub tools: Vec<String>,   // ["Rust", "PostgreSQL", "Kubernetes"]
+    pub start_date: String,                // "Jan 2021"
+    pub end_date: String,                  // "Present" or "Mar 2024"
+    pub projects: Vec<ExperienceProject>,  // sub-projects within this role
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
@@ -192,8 +198,11 @@ impl LifetimeCV {
         for exp in &self.experiences {
             parts.push(exp.role.clone());
             parts.push(exp.company.clone());
-            parts.extend(exp.bullets.clone());
-            parts.extend(exp.tools.clone());
+            for proj in &exp.projects {
+                parts.push(proj.name.clone());
+                parts.extend(proj.bullets.clone());
+                parts.extend(proj.tools.clone());
+            }
         }
         for skill in &self.skills {
             parts.push(skill.name.clone());
@@ -262,8 +271,11 @@ mod tests {
                 id: "1".to_string(),
                 role: "Software Engineer".to_string(),
                 company: "Acme".to_string(),
-                bullets: vec!["Built APIs".to_string()],
-                tools: vec!["Rust".to_string(), "gRPC".to_string()],
+                projects: vec![ExperienceProject {
+                    name: "API Platform".to_string(),
+                    bullets: vec!["Built APIs".to_string()],
+                    tools: vec!["Rust".to_string(), "gRPC".to_string()],
+                }],
                 ..Default::default()
             }],
             ..Default::default()
@@ -271,6 +283,7 @@ mod tests {
         let text = cv.all_text();
         assert!(text.contains("Software Engineer"));
         assert!(text.contains("Acme"));
+        assert!(text.contains("API Platform"));
         assert!(text.contains("Built APIs"));
         assert!(text.contains("Rust"));
         assert!(text.contains("gRPC"));
@@ -327,13 +340,19 @@ mod tests {
                 Experience {
                     id: "1".to_string(),
                     company: "AlphaCo".to_string(),
-                    tools: vec!["Python".to_string()],
+                    projects: vec![ExperienceProject {
+                        tools: vec!["Python".to_string()],
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 },
                 Experience {
                     id: "2".to_string(),
                     company: "BetaCo".to_string(),
-                    tools: vec!["Go".to_string()],
+                    projects: vec![ExperienceProject {
+                        tools: vec!["Go".to_string()],
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 },
             ],
@@ -419,7 +438,10 @@ mod tests {
             experiences: vec![Experience {
                 id: "e1".to_string(),
                 company: "Acme".to_string(),
-                tools: vec!["Rust".to_string()],
+                projects: vec![ExperienceProject {
+                    tools: vec!["Rust".to_string()],
+                    ..Default::default()
+                }],
                 ..Default::default()
             }],
             skills: vec![Skill {

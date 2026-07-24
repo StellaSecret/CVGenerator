@@ -98,6 +98,8 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-bullets { margin: 8px 0 0 18px; }
 .cv-doc .exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
 .cv-doc .exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
+.cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
+.cv-doc .exp-project-name { font-weight: 600; color: #1e293b; font-size: 0.88rem; margin-bottom: 2px; }
 
 /* ── Skills ── */
 .cv-doc .skills-block { margin-bottom: 8px; }
@@ -333,29 +335,6 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
     }
     let mut items = String::new();
     for exp in experiences {
-        let bullets: String = exp
-            .bullets
-            .iter()
-            .filter(|b| !b.is_empty())
-            .map(|b| format!("<li>{}</li>", esc(b)))
-            .collect();
-        let bullets_html = if bullets.is_empty() {
-            String::new()
-        } else {
-            format!(r#"<ul class="exp-bullets">{}</ul>"#, bullets)
-        };
-        let tools_html: String = exp
-            .tools
-            .iter()
-            .filter(|t| !t.is_empty())
-            .map(|t| tag("", t))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let tools_div = if tools_html.is_empty() {
-            String::new()
-        } else {
-            format!(r#"<div class="exp-tools">{}</div>"#, tools_html)
-        };
         let location_html = if exp.location.is_empty() {
             String::new()
         } else {
@@ -364,6 +343,43 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
                 esc(&exp.location)
             )
         };
+        let mut projects_html = String::new();
+        for proj in &exp.projects {
+            let bullets: String = proj
+                .bullets
+                .iter()
+                .filter(|b| !b.is_empty())
+                .map(|b| format!("<li>{}</li>", esc(b)))
+                .collect();
+            let bullets_block = if bullets.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<ul class="exp-bullets">{}</ul>"#, bullets)
+            };
+            let tools_html: String = proj
+                .tools
+                .iter()
+                .filter(|t| !t.is_empty())
+                .map(|t| tag("", t))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let tools_div = if tools_html.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="exp-tools">{}</div>"#, tools_html)
+            };
+            let name_html = if proj.name.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="exp-project-name">{}</div>"#, esc(&proj.name))
+            };
+            projects_html.push_str(&format!(
+                r#"<div class="exp-project">{name}{bullets}{tools}</div>"#,
+                name = name_html,
+                bullets = bullets_block,
+                tools = tools_div,
+            ));
+        }
         items.push_str(&format!(
             r#"<div class="exp-item">
   <div class="exp-header">
@@ -371,16 +387,14 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
     <span class="exp-dates">{start} – {end}</span>
   </div>
   <div class="exp-role">{role}</div>
-  {bullets}
-  {tools}
+  {projects}
 </div>"#,
             company = esc(&exp.company),
             location = location_html,
             start = esc(&exp.start_date),
             end = esc(&exp.end_date),
             role = esc(&exp.role),
-            bullets = bullets_html,
-            tools = tools_div,
+            projects = projects_html,
         ));
     }
     format!(
@@ -700,8 +714,11 @@ mod tests {
             role: "Software Engineer".to_string(),
             start_date: "Jan 2021".to_string(),
             end_date: "Present".to_string(),
-            bullets: vec!["Built distributed systems".to_string()],
-            tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
+            projects: vec![ExperienceProject {
+                name: "API Platform".to_string(),
+                bullets: vec!["Built distributed systems".to_string()],
+                tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
+            }],
             ..Default::default()
         });
         cv.skills.push(Skill {

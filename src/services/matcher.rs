@@ -170,13 +170,15 @@ fn score_text(text: &str, keywords: &[(String, usize)]) -> f32 {
 }
 
 fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
-    let text = format!(
-        "{} {} {} {}",
-        exp.role,
-        exp.bullets.join(" "),
-        exp.tools.join(" "),
-        exp.company
-    );
+    let mut text = format!("{} {}", exp.role, exp.company);
+    for proj in &exp.projects {
+        text.push(' ');
+        text.push_str(&proj.name);
+        text.push(' ');
+        text.push_str(&proj.bullets.join(" "));
+        text.push(' ');
+        text.push_str(&proj.tools.join(" "));
+    }
     score_text(&text, keywords)
 }
 
@@ -330,14 +332,19 @@ mod tests {
                     role: "Software Engineer".to_string(),
                     start_date: "Jan 2021".to_string(),
                     end_date: "Present".to_string(),
-                    bullets: vec![
-                        "Built distributed systems using Rust and Tokio".to_string(),
-                        "Reduced API latency by 40% through caching".to_string(),
-                    ],
-                    tools: vec![
-                        "Rust".to_string(),
-                        "PostgreSQL".to_string(),
-                        "Kubernetes".to_string(),
+                    projects: vec![
+                        ExperienceProject {
+                            name: "Distributed Systems".to_string(),
+                            bullets: vec![
+                                "Built distributed systems using Rust and Tokio".to_string(),
+                                "Reduced API latency by 40% through caching".to_string(),
+                            ],
+                            tools: vec![
+                                "Rust".to_string(),
+                                "PostgreSQL".to_string(),
+                                "Kubernetes".to_string(),
+                            ],
+                        },
                     ],
                     ..Default::default()
                 },
@@ -347,10 +354,15 @@ mod tests {
                     role: "Junior Developer".to_string(),
                     start_date: "Jun 2019".to_string(),
                     end_date: "Dec 2020".to_string(),
-                    bullets: vec![
-                        "Developed web applications with React and TypeScript".to_string()
+                    projects: vec![
+                        ExperienceProject {
+                            name: "Web Applications".to_string(),
+                            bullets: vec![
+                                "Developed web applications with React and TypeScript".to_string()
+                            ],
+                            tools: vec!["JavaScript".to_string(), "React".to_string()],
+                        },
                     ],
-                    tools: vec!["JavaScript".to_string(), "React".to_string()],
                     ..Default::default()
                 },
             ],

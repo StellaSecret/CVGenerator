@@ -231,6 +231,11 @@ fn en(key: &'static str) -> &'static str {
         "ed_tools"          => "Tools (comma-separated)",
         "ed_present"        => "Present",
         "ed_add_position"   => "Add position",
+        // Experience projects
+        "ed_projects"       => "Projects",
+        "ed_project_name"   => "Project name",
+        "ed_new_project"    => "New project",
+        "ed_add_project"    => "+ Add project",
         "ed_cancel"         => "Cancel",
         "ed_edit"           => "✎",
         "ed_save_changes"   => "Save",
@@ -403,6 +408,11 @@ fn fr(key: &'static str) -> &'static str {
         "ed_cancel"         => "Annuler",
         "ed_edit"           => "✎",
         "ed_save_changes"   => "Enregistrer",
+        // Experience projects
+        "ed_projects"       => "Projets",
+        "ed_project_name"   => "Nom du projet",
+        "ed_new_project"    => "Nouveau projet",
+        "ed_add_project"    => "+ Ajouter un projet",
         // Skills
         "ed_skills_title"   => "Compétences",
         "ed_skills_hint"    => "Ajoutez chaque compétence — nous mettrons en avant les plus pertinentes pour chaque offre.",
