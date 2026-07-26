@@ -170,14 +170,34 @@ fn score_text(text: &str, keywords: &[(String, usize)]) -> f32 {
 }
 
 fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
-    let mut text = format!("{} {}", exp.role, exp.company);
+    let mut text = format!("{} {} {}", exp.role.en, exp.role.fr, exp.company);
     for proj in &exp.projects {
         text.push(' ');
-        text.push_str(&proj.name);
+        text.push_str(&proj.name.en);
         text.push(' ');
-        text.push_str(&proj.context);
+        text.push_str(&proj.name.fr);
         text.push(' ');
-        text.push_str(&proj.bullets.join(" "));
+        text.push_str(&proj.context.en);
+        text.push(' ');
+        text.push_str(&proj.context.fr);
+        text.push(' ');
+        text.push_str(
+            &proj
+                .bullets
+                .iter()
+                .map(|b| b.en.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        text.push(' ');
+        text.push_str(
+            &proj
+                .bullets
+                .iter()
+                .map(|b| b.fr.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         text.push(' ');
         text.push_str(&proj.tools.join(" "));
     }
@@ -190,11 +210,21 @@ fn score_skill(skill: &Skill, keywords: &[(String, usize)]) -> f32 {
 
 fn score_project(proj: &Project, keywords: &[(String, usize)]) -> f32 {
     let text = format!(
-        "{} {} {} {}",
+        "{} {} {} {} {} {}",
         proj.name,
-        proj.description,
+        proj.description.en,
+        proj.description.fr,
         proj.tools.join(" "),
-        proj.bullets.join(" ")
+        proj.bullets
+            .iter()
+            .map(|b| b.en.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        proj.bullets
+            .iter()
+            .map(|b| b.fr.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
     );
     score_text(&text, keywords)
 }
@@ -323,23 +353,23 @@ mod tests {
         LifetimeCV {
             personal: PersonalInfo {
                 name: "Jane Smith".to_string(),
-                title: "Backend Engineer".to_string(),
-                summary: "Experienced distributed-systems developer".to_string(),
+                title: LocalizedText::same("Backend Engineer"),
+                summary: LocalizedText::same("Experienced distributed-systems developer"),
                 ..Default::default()
             },
             experiences: vec![
                 Experience {
                     id: "exp-1".to_string(),
                     company: "Acme Corp".to_string(),
-                    role: "Software Engineer".to_string(),
+                    role: LocalizedText::same("Software Engineer"),
                     start_date: "Jan 2021".to_string(),
                     end_date: "Present".to_string(),
                     projects: vec![ExperienceProject {
-                        name: "Distributed Systems".to_string(),
-                        context: "High-throughput microservices architecture".to_string(),
+                        name: LocalizedText::same("Distributed Systems"),
+                        context: LocalizedText::same("High-throughput microservices architecture"),
                         bullets: vec![
-                            "Built distributed systems using Rust and Tokio".to_string(),
-                            "Reduced API latency by 40% through caching".to_string(),
+                            LocalizedText::same("Built distributed systems using Rust and Tokio"),
+                            LocalizedText::same("Reduced API latency by 40% through caching"),
                         ],
                         tools: vec![
                             "Rust".to_string(),
@@ -352,15 +382,15 @@ mod tests {
                 Experience {
                     id: "exp-2".to_string(),
                     company: "Beta Ltd".to_string(),
-                    role: "Junior Developer".to_string(),
+                    role: LocalizedText::same("Junior Developer"),
                     start_date: "Jun 2019".to_string(),
                     end_date: "Dec 2020".to_string(),
                     projects: vec![ExperienceProject {
-                        name: "Web Applications".to_string(),
-                        context: "Customer-facing portal overhaul".to_string(),
-                        bullets: vec![
-                            "Developed web applications with React and TypeScript".to_string()
-                        ],
+                        name: LocalizedText::same("Web Applications"),
+                        context: LocalizedText::same("Customer-facing portal overhaul"),
+                        bullets: vec![LocalizedText::same(
+                            "Developed web applications with React and TypeScript",
+                        )],
                         tools: vec!["JavaScript".to_string(), "React".to_string()],
                     }],
                     ..Default::default()
@@ -389,9 +419,9 @@ mod tests {
             projects: vec![Project {
                 id: "p1".to_string(),
                 name: "cv-generator".to_string(),
-                description: "CV generator written in Rust using Dioxus".to_string(),
+                description: LocalizedText::same("CV generator written in Rust using Dioxus"),
                 tools: vec!["Rust".to_string(), "Dioxus".to_string()],
-                bullets: vec!["Keyword matching algorithm".to_string()],
+                bullets: vec![LocalizedText::same("Keyword matching algorithm")],
                 ..Default::default()
             }],
             ..Default::default()
@@ -624,8 +654,8 @@ mod tests {
         cv.education.push(Education {
             id: "edu-1".to_string(),
             institution: "MIT".to_string(),
-            degree: "MSc".to_string(),
-            field: "Computer Science".to_string(),
+            degree: LocalizedText::same("MSc"),
+            field: LocalizedText::same("Computer Science"),
             start_year: "2017".to_string(),
             end_year: "2019".to_string(),
             achievements: vec![],

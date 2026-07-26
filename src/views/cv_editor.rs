@@ -89,9 +89,10 @@ fn StepButton(label: String, index: usize, current_idx: usize, mut step: Signal<
 #[component]
 fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element {
     let lang: Signal<i18n::Lang> = use_context();
+    let l = *lang.read();
     let mut editing = use_signal(|| false);
     let mut e_company = use_signal(String::new);
-    let mut e_role = use_signal(String::new);
+    let mut e_role = use_signal(LocalizedText::default);
     let mut e_location = use_signal(String::new);
     let mut e_start = use_signal(String::new);
     let mut e_end = use_signal(String::new);
@@ -116,6 +117,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     if *editing.read() {
         rsx! {
             div { class: "inline-form inline-form-compact",
+                LangEditBadge { lang }
                 div { class: "form-row",
                     Field { label: t_company.to_string(), required: true,
                         input { r#type: "text", class: "input",
@@ -125,8 +127,9 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                     }
                     Field { label: t_role.to_string(), required: true,
                         input { r#type: "text", class: "input",
-                            value: e_role.read().clone(),
-                            oninput: move |e| { e_role.set(e.value()); },
+                            key: "{l:?}",
+                            value: e_role.read().get(l).to_string(),
+                            oninput: move |e| { e_role.write().set(l, e.value()); },
                         }
                     }
                 }
@@ -156,14 +159,16 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                         div { class: "project-card",
                             Field { label: t_project_name.to_string(),
                                 input { r#type: "text", class: "input",
-                                    value: e_projects.read()[pi].name.clone(),
-                                    oninput: move |e| { e_projects.write()[pi].name = e.value(); },
+                                    key: "{pi}-{l:?}",
+                                    value: e_projects.read()[pi].name.get(l).to_string(),
+                                    oninput: move |e| { e_projects.write()[pi].name.set(l, e.value()); },
                                 }
                             }
                             Field { label: t_project_ctx.to_string(),
                                 input { r#type: "text", class: "input",
-                                    value: e_projects.read()[pi].context.clone(),
-                                    oninput: move |e| { e_projects.write()[pi].context = e.value(); },
+                                    key: "{pi}-{l:?}",
+                                    value: e_projects.read()[pi].context.get(l).to_string(),
+                                    oninput: move |e| { e_projects.write()[pi].context.set(l, e.value()); },
                                 }
                             }
                             div { class: "field",
@@ -173,8 +178,9 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                         span { class: "bullet-dot", "•" }
                                         input {
                                             r#type: "text", class: "input",
-                                            value: e_projects.read()[pi].bullets[bi].clone(),
-                                            oninput: move |e| { e_projects.write()[pi].bullets[bi] = e.value(); },
+                                            key: "{pi}-{bi}-{l:?}",
+                                            value: e_projects.read()[pi].bullets[bi].get(l).to_string(),
+                                            oninput: move |e| { e_projects.write()[pi].bullets[bi].set(l, e.value()); },
                                         }
                                         if e_projects.read()[pi].bullets.len() > 1 {
                                             button { class: "btn-icon",
@@ -185,7 +191,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                     }
                                 }
                                 button { class: "btn-text",
-                                    onclick: move |_| { e_projects.write()[pi].bullets.push(String::new()); },
+                                    onclick: move |_| { e_projects.write()[pi].bullets.push(LocalizedText::default()); },
                                     "{t_add_bullet}"
                                 }
                             }
@@ -210,9 +216,9 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                     button { class: "btn-text",
                         onclick: move |_| {
                             e_projects.write().push(ExperienceProject {
-                                name: String::new(),
-                                context: String::new(),
-                                bullets: vec![String::new()],
+                                name: LocalizedText::default(),
+                                context: LocalizedText::default(),
+                                bullets: vec![LocalizedText::default()],
                                 tools: Vec::new(),
                             });
                         },
@@ -252,7 +258,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
             }
         }
     } else {
-        let role = exp.role.clone();
+        let role = exp.role.get(l).to_string();
         let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
         rsx! {
             div { class: "item-card",
@@ -262,15 +268,15 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                     for proj in exp.projects.iter() {
                         if !proj.name.is_empty() || !proj.bullets.is_empty() {
                             div { class: "item-project",
-                                if !proj.name.is_empty() {
-                                    div { class: "item-project-name", "{proj.name}" }
+                                if !proj.name.get(l).is_empty() {
+                                    div { class: "item-project-name", "{proj.name.get(l)}" }
                                 }
-                                if !proj.context.is_empty() {
-                                    div { class: "item-project-context", "{proj.context}" }
+                                if !proj.context.get(l).is_empty() {
+                                    div { class: "item-project-context", "{proj.context.get(l)}" }
                                 }
                                 if !proj.bullets.is_empty() {
                                     div { class: "item-tags",
-                                        for b in proj.bullets.iter().filter(|b| !b.is_empty()) {
+                                        for b in proj.bullets.iter().map(|b| b.get(l)).filter(|b| !b.is_empty()) {
                                             span { class: "tag-small", "• {b}" }
                                         }
                                     }
@@ -294,7 +300,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
                             e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { name: String::new(), context: String::new(), bullets: vec![String::new()], tools: Vec::new() }]
+                                vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new() }]
                             } else {
                                 item.projects
                             });
@@ -440,8 +446,8 @@ fn EduItem(edu: Education, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
     let lang: Signal<i18n::Lang> = use_context();
     let mut editing = use_signal(|| false);
     let mut e_inst = use_signal(String::new);
-    let mut e_degree = use_signal(String::new);
-    let mut e_field = use_signal(String::new);
+    let mut e_degree = use_signal(LocalizedText::default);
+    let mut e_field = use_signal(LocalizedText::default);
     let mut e_start = use_signal(String::new);
     let mut e_end = use_signal(String::new);
 
@@ -457,6 +463,7 @@ fn EduItem(edu: Education, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
     if *editing.read() {
         rsx! {
             div { class: "inline-form inline-form-compact",
+                LangEditBadge { lang }
                 div { class: "form-row",
                     Field { label: t_inst.to_string(),
                         input { r#type: "text", class: "input",
@@ -466,16 +473,18 @@ fn EduItem(edu: Education, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                     }
                     Field { label: t_degree.to_string(),
                         input { r#type: "text", class: "input",
-                            value: e_degree.read().clone(),
-                            oninput: move |e| { e_degree.set(e.value()); },
+                            key: "{l:?}",
+                            value: e_degree.read().get(l).to_string(),
+                            oninput: move |e| { e_degree.write().set(l, e.value()); },
                         }
                     }
                 }
                 div { class: "form-row",
                     Field { label: t_field.to_string(),
                         input { r#type: "text", class: "input",
-                            value: e_field.read().clone(),
-                            oninput: move |e| { e_field.set(e.value()); },
+                            key: "{l:?}",
+                            value: e_field.read().get(l).to_string(),
+                            oninput: move |e| { e_field.write().set(l, e.value()); },
                         }
                     }
                     Field { label: t_start.to_string(),
@@ -517,7 +526,7 @@ fn EduItem(edu: Education, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
             }
         }
     } else {
-        let title = format!("{} · {}", edu.degree, edu.field);
+        let title = format!("{} · {}", edu.degree.get(l), edu.field.get(l));
         let sub = format!(
             "{} · {} – {}",
             edu.institution, edu.start_year, edu.end_year
@@ -558,7 +567,7 @@ fn ProjItem(proj: Project, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
     let lang: Signal<i18n::Lang> = use_context();
     let mut editing = use_signal(|| false);
     let mut e_name = use_signal(String::new);
-    let mut e_desc = use_signal(String::new);
+    let mut e_desc = use_signal(LocalizedText::default);
     let mut e_url = use_signal(String::new);
     let mut e_tools = use_signal(String::new);
 
@@ -572,6 +581,7 @@ fn ProjItem(proj: Project, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
     if *editing.read() {
         rsx! {
             div { class: "inline-form inline-form-compact",
+                LangEditBadge { lang }
                 div { class: "form-row",
                     Field { label: t_pname.to_string(),
                         input { r#type: "text", class: "input",
@@ -588,8 +598,9 @@ fn ProjItem(proj: Project, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                 }
                 Field { label: t_desc.to_string(),
                     textarea { class: "input textarea", rows: "2",
-                        value: e_desc.read().clone(),
-                        oninput: move |e| { e_desc.set(e.value()); },
+                        key: "{l:?}",
+                        value: e_desc.read().get(l).to_string(),
+                        oninput: move |e| { e_desc.write().set(l, e.value()); },
                     }
                 }
                 Field { label: t_tools.to_string(),
@@ -626,7 +637,7 @@ fn ProjItem(proj: Project, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
         }
     } else {
         let name = proj.name.clone();
-        let desc = proj.description.clone();
+        let desc = proj.description.get(l).to_string();
         rsx! {
             div { class: "item-card",
                 div { class: "item-card-body",
@@ -848,7 +859,7 @@ fn CertItem(cert: Certification, index: usize, mut cv: Signal<LifetimeCV>) -> El
 
 #[component]
 pub fn CvEditor() -> Element {
-    let cv: Signal<LifetimeCV> = use_context();
+    let mut cv: Signal<LifetimeCV> = use_context();
     let lang: Signal<i18n::Lang> = use_context();
     let l = *lang.read();
     let mut step = use_signal(|| Step::Personal);
@@ -863,6 +874,19 @@ pub fn CvEditor() -> Element {
     let t_sub = i18n::tr("ed_subtitle", l);
     let t_save_f = i18n::tr("ed_save_finish", l);
     let t_save_c = i18n::tr("ed_save_cont", l);
+    let (t_seed, seed_from, seed_to) = if l == i18n::Lang::Fr {
+        (
+            i18n::tr("ed_seed_from_en", l),
+            i18n::Lang::En,
+            i18n::Lang::Fr,
+        )
+    } else {
+        (
+            i18n::tr("ed_seed_from_fr", l),
+            i18n::Lang::Fr,
+            i18n::Lang::En,
+        )
+    };
     let step_labels: Vec<String> = (0..6)
         .map(|i| i18n::tr(STEP_KEYS[i], l).to_string())
         .collect();
@@ -875,6 +899,11 @@ pub fn CvEditor() -> Element {
             div { class: "page-header",
                 h1 { "{t_title}" }
                 p { class: "subtitle", "{t_sub}" }
+                button {
+                    class: "btn-text",
+                    onclick: move |_| { cv.write().seed_missing_translations(seed_from, seed_to); },
+                    "{t_seed}"
+                }
             }
 
             div { class: "steps",
@@ -944,7 +973,7 @@ fn StepPersonal(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 
     rsx! {
         div { class: "form-section",
-            h2 { "{t_title}" }
+            h2 { "{t_title}" LangEditBadge { lang } }
             div { class: "form-row",
                 Field { label: t_name.to_string(), required: true,
                     input { r#type: "text", class: "input", placeholder: "Jane Smith",
@@ -954,8 +983,9 @@ fn StepPersonal(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                 }
                 Field { label: t_pro.to_string(),
                     input { r#type: "text", class: "input", placeholder: "Senior Rust Engineer",
-                        value: cv.read().personal.title.clone(),
-                        oninput: move |e| { cv.write().personal.title = e.value(); },
+                        key: "{l:?}",
+                        value: cv.read().personal.title.get(l).to_string(),
+                        oninput: move |e| { cv.write().personal.title.set(l, e.value()); },
                     }
                 }
             }
@@ -1003,9 +1033,10 @@ fn StepPersonal(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
             }
             Field { label: t_summary.to_string(),
                 textarea { class: "input textarea", rows: "4",
+                    key: "{l:?}",
                     placeholder: "{t_hint}",
-                    value: cv.read().personal.summary.clone(),
-                    oninput: move |e| { cv.write().personal.summary = e.value(); },
+                    value: cv.read().personal.summary.get(l).to_string(),
+                    oninput: move |e| { cv.write().personal.summary.set(l, e.value()); },
                 }
             }
         }
@@ -1019,16 +1050,16 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let l = *lang.read();
     let mut show_form = use_signal(|| cv.read().experiences.is_empty());
     let mut new_company = use_signal(String::new);
-    let mut new_role = use_signal(String::new);
+    let mut new_role = use_signal(LocalizedText::default);
     let mut new_loc = use_signal(String::new);
     let mut new_start = use_signal(String::new);
     let t_present_s = i18n::tr("ed_present", l);
     let mut new_end = use_signal(|| t_present_s.to_string());
     let mut new_projects = use_signal(|| {
         vec![ExperienceProject {
-            name: String::new(),
-            context: String::new(),
-            bullets: vec![String::new()],
+            name: LocalizedText::default(),
+            context: LocalizedText::default(),
+            bullets: vec![LocalizedText::default()],
             tools: Vec::new(),
         }]
     });
@@ -1058,7 +1089,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 
     rsx! {
         div { class: "form-section",
-            h2 { "{t_title}" }
+            h2 { "{t_title}" LangEditBadge { lang } }
             p { class: "hint", "{t_hint}" }
 
             div { class: "item-list",
@@ -1085,8 +1116,9 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                         }
                         Field { label: t_role.to_string(), required: true,
                             input { r#type: "text", class: "input", placeholder: "Software Engineer",
-                                value: new_role.read().clone(),
-                                oninput: move |e| { new_role.set(e.value()); },
+                                key: "{l:?}",
+                                value: new_role.read().get(l).to_string(),
+                                oninput: move |e| { new_role.write().set(l, e.value()); },
                             }
                         }
                     }
@@ -1116,14 +1148,16 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             div { class: "project-card",
                                 Field { label: t_project_name.to_string(),
                                     input { r#type: "text", class: "input", placeholder: "API Platform",
-                                        value: new_projects.read()[pi].name.clone(),
-                                        oninput: move |e| { new_projects.write()[pi].name = e.value(); },
+                                        key: "{pi}-{l:?}",
+                                        value: new_projects.read()[pi].name.get(l).to_string(),
+                                        oninput: move |e| { new_projects.write()[pi].name.set(l, e.value()); },
                                     }
                                 }
                                 Field { label: t_project_ctx.to_string(),
                                     input { r#type: "text", class: "input",
-                                        value: new_projects.read()[pi].context.clone(),
-                                        oninput: move |e| { new_projects.write()[pi].context = e.value(); },
+                                        key: "{pi}-{l:?}",
+                                        value: new_projects.read()[pi].context.get(l).to_string(),
+                                        oninput: move |e| { new_projects.write()[pi].context.set(l, e.value()); },
                                     }
                                 }
                                 div { class: "field",
@@ -1133,9 +1167,10 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                             span { class: "bullet-dot", "•" }
                                             input {
                                                 r#type: "text", class: "input",
+                                                key: "{pi}-{bi}-{l:?}",
                                                 placeholder: "Reduced API latency by 40%",
-                                                value: new_projects.read()[pi].bullets[bi].clone(),
-                                                oninput: move |e| { new_projects.write()[pi].bullets[bi] = e.value(); },
+                                                value: new_projects.read()[pi].bullets[bi].get(l).to_string(),
+                                                oninput: move |e| { new_projects.write()[pi].bullets[bi].set(l, e.value()); },
                                             }
                                             if new_projects.read()[pi].bullets.len() > 1 {
                                                 button {
@@ -1148,7 +1183,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     }
                                     button {
                                         class: "btn-text",
-                                        onclick: move |_| { new_projects.write()[pi].bullets.push(String::new()); },
+                                        onclick: move |_| { new_projects.write()[pi].bullets.push(LocalizedText::default()); },
                                         "{t_add_bullet}"
                                     }
                                 }
@@ -1174,9 +1209,9 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             class: "btn-text",
                             onclick: move |_| {
                                 new_projects.write().push(ExperienceProject {
-                                    name: String::new(),
-                                    context: String::new(),
-                                    bullets: vec![String::new()],
+                                    name: LocalizedText::default(),
+                                    context: LocalizedText::default(),
+                                    bullets: vec![LocalizedText::default()],
                                     tools: Vec::new(),
                                 });
                             },
@@ -1202,10 +1237,10 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     start_date: new_start.read().clone(), end_date: new_end.read().clone(),
                                     projects,
                                 });
-                                new_company.set(String::new()); new_role.set(String::new());
+                                new_company.set(String::new()); new_role.set(LocalizedText::default());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { name: String::new(), context: String::new(), bullets: vec![String::new()], tools: Vec::new() }]);
+                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new() }]);
                                 show_form.set(false);
                             },
                             "{t_add_pos}"
@@ -1333,8 +1368,8 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 fn StepEducation(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let l = *lang.read();
     let mut new_inst = use_signal(String::new);
-    let mut new_degree = use_signal(String::new);
-    let mut new_field = use_signal(String::new);
+    let mut new_degree = use_signal(LocalizedText::default);
+    let mut new_field = use_signal(LocalizedText::default);
     let mut new_start = use_signal(String::new);
     let mut new_end = use_signal(String::new);
 
@@ -1350,7 +1385,7 @@ fn StepEducation(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 
     rsx! {
         div { class: "form-section",
-            h2 { "{t_title}" }
+            h2 { "{t_title}" LangEditBadge { lang } }
             div { class: "item-list",
                 for (i, edu) in education.into_iter().enumerate() {
                     EduItem { edu, index: i, cv }
@@ -1366,16 +1401,18 @@ fn StepEducation(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                     }
                     Field { label: t_degree.to_string(),
                         input { r#type: "text", class: "input", placeholder: "MSc / BEng",
-                            value: new_degree.read().clone(),
-                            oninput: move |e| { new_degree.set(e.value()); },
+                            key: "{l:?}",
+                            value: new_degree.read().get(l).to_string(),
+                            oninput: move |e| { new_degree.write().set(l, e.value()); },
                         }
                     }
                 }
                 div { class: "form-row",
                     Field { label: t_field.to_string(),
                         input { r#type: "text", class: "input", placeholder: "Computer Science",
-                            value: new_field.read().clone(),
-                            oninput: move |e| { new_field.set(e.value()); },
+                            key: "{l:?}",
+                            value: new_field.read().get(l).to_string(),
+                            oninput: move |e| { new_field.write().set(l, e.value()); },
                         }
                     }
                     Field { label: t_start.to_string(),
@@ -1401,8 +1438,8 @@ fn StepEducation(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             start_year: new_start.read().clone(), end_year: new_end.read().clone(),
                             achievements: vec![],
                         });
-                        new_inst.set(String::new()); new_degree.set(String::new());
-                        new_field.set(String::new()); new_start.set(String::new());
+                        new_inst.set(String::new()); new_degree.set(LocalizedText::default());
+                        new_field.set(LocalizedText::default()); new_start.set(String::new());
                         new_end.set(String::new());
                     },
                     "{t_add}"
@@ -1418,7 +1455,7 @@ fn StepEducation(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 fn StepProjects(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let l = *lang.read();
     let mut new_name = use_signal(String::new);
-    let mut new_desc = use_signal(String::new);
+    let mut new_desc = use_signal(LocalizedText::default);
     let mut new_url = use_signal(String::new);
     let mut new_tools = use_signal(String::new);
 
@@ -1433,7 +1470,7 @@ fn StepProjects(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 
     rsx! {
         div { class: "form-section",
-            h2 { "{t_title}" }
+            h2 { "{t_title}" LangEditBadge { lang } }
             p { class: "hint", "{t_hint}" }
             div { class: "item-list",
                 for (i, proj) in projects.into_iter().enumerate() {
@@ -1457,9 +1494,10 @@ fn StepProjects(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                 }
                 Field { label: t_desc.to_string(),
                     textarea { class: "input textarea", rows: "2",
+                        key: "{l:?}",
                         placeholder: "One-sentence description of what it does and why you built it.",
-                        value: new_desc.read().clone(),
-                        oninput: move |e| { new_desc.set(e.value()); },
+                        value: new_desc.read().get(l).to_string(),
+                        oninput: move |e| { new_desc.write().set(l, e.value()); },
                     }
                 }
                 Field { label: t_tools.to_string(),
@@ -1479,7 +1517,7 @@ fn StepProjects(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             description: new_desc.read().clone(), url: new_url.read().clone(),
                             tools, bullets: vec![],
                         });
-                        new_name.set(String::new()); new_desc.set(String::new());
+                        new_name.set(String::new()); new_desc.set(LocalizedText::default());
                         new_url.set(String::new());  new_tools.set(String::new());
                     },
                     "{t_add}"
@@ -1647,6 +1685,18 @@ fn StepDone(lang: Signal<i18n::Lang>) -> Element {
                     "{t_tailor}"
                 }
             }
+        }
+    }
+}
+
+// ── Shared: which language localized content fields are currently editing ────
+
+#[component]
+fn LangEditBadge(lang: Signal<i18n::Lang>) -> Element {
+    let is_fr = *lang.read() == i18n::Lang::Fr;
+    rsx! {
+        span { class: "lang-edit-badge",
+            if is_fr { "🇫🇷 Editing French" } else { "🇬🇧 Editing English" }
         }
     }
 }

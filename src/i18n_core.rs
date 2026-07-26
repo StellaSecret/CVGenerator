@@ -205,6 +205,9 @@ fn en(key: &'static str) -> &'static str {
         "ed_step_education" => "Education",
         "ed_step_projects"  => "Projects",
         "ed_step_langs"     => "Languages & Certs",
+        "ed_seed_from_en"   => "Fill missing French text from English",
+        "ed_seed_from_fr"   => "Fill missing English text from French",
+        "ed_seed_done"      => "Copied — existing translations were left untouched.",
         // Personal
         "ed_personal_title" => "Personal Information",
         "ed_fullname"       => "Full name",
@@ -380,6 +383,9 @@ fn fr(key: &'static str) -> &'static str {
         "ed_step_education" => "Formation",
         "ed_step_projects"  => "Projets",
         "ed_step_langs"     => "Langues & Certs",
+        "ed_seed_from_en"   => "Compléter le français manquant depuis l'anglais",
+        "ed_seed_from_fr"   => "Compléter l'anglais manquant depuis le français",
+        "ed_seed_done"      => "Copié — les traductions déjà saisies n'ont pas été modifiées.",
         // Personal
         "ed_personal_title" => "Informations personnelles",
         "ed_fullname"       => "Nom complet",
@@ -675,6 +681,9 @@ mod tests {
             "ed_step_education",
             "ed_step_projects",
             "ed_step_langs",
+            "ed_seed_from_en",
+            "ed_seed_from_fr",
+            "ed_seed_done",
         ];
         for key in keys {
             assert_ne!(tr(key, Lang::En), key);

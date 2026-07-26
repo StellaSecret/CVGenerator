@@ -289,7 +289,7 @@ fn wrap_section(title: &str, mut items: Vec<String>) -> String {
     )
 }
 
-fn render_header(p: &crate::models::PersonalInfo) -> String {
+fn render_header(p: &crate::models::PersonalInfo, lang: Lang) -> String {
     let mut contacts = vec![];
     if !p.email.is_empty() {
         contacts.push(format!(
@@ -338,12 +338,13 @@ fn render_header(p: &crate::models::PersonalInfo) -> String {
         format!(r#"<div class="contact">{}</div>"#, contacts.join(""))
     };
 
-    let summary_html = if p.summary.is_empty() {
+    let summary_text = p.summary.get(lang);
+    let summary_html = if summary_text.is_empty() {
         String::new()
     } else {
         format!(
             r#"<div class="summary">{}</div>"#,
-            render_rich_text(&p.summary)
+            render_rich_text(summary_text)
         )
     };
 
@@ -355,7 +356,7 @@ fn render_header(p: &crate::models::PersonalInfo) -> String {
   {summary}
 </div>"#,
         name = esc(&p.name),
-        title = esc(&p.title),
+        title = esc(p.title.get(lang)),
         contact = contact_html,
         summary = summary_html,
     )
@@ -380,6 +381,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             let bullets: String = proj
                 .bullets
                 .iter()
+                .map(|b| b.get(lang))
                 .filter(|b| !b.is_empty())
                 .map(|b| format!("<li>{}</li>", esc(b)))
                 .collect();
@@ -400,17 +402,20 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             } else {
                 format!(r#"<div class="exp-tools">{}</div>"#, tools_html)
             };
-            let name_html = if proj.name.is_empty() {
+            let name_html = if proj.name.get(lang).is_empty() {
                 String::new()
             } else {
-                format!(r#"<div class="exp-project-name">{}</div>"#, esc(&proj.name))
+                format!(
+                    r#"<div class="exp-project-name">{}</div>"#,
+                    esc(proj.name.get(lang))
+                )
             };
-            let context_html = if proj.context.is_empty() {
+            let context_html = if proj.context.get(lang).is_empty() {
                 String::new()
             } else {
                 format!(
                     r#"<div class="exp-project-context">{}</div>"#,
-                    esc(&proj.context)
+                    esc(proj.context.get(lang))
                 )
             };
             projects_html.push_str(&format!(
@@ -434,7 +439,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             location = location_html,
             start = esc(&exp.start_date),
             end = esc(&exp.end_date),
-            role = esc(&exp.role),
+            role = esc(exp.role.get(lang)),
             projects = projects_html,
         ));
     }
@@ -477,6 +482,7 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
         let bullets: String = proj
             .bullets
             .iter()
+            .map(|b| b.get(lang))
             .filter(|b| !b.is_empty())
             .map(|b| format!("<li>{}</li>", esc(b)))
             .collect();
@@ -518,7 +524,7 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
 </div>"#,
             name = esc(&proj.name),
             url = url_html,
-            desc = esc(&proj.description),
+            desc = esc(proj.description.get(lang)),
             bullets = bullets_html,
             tools = tools_div,
         ));
@@ -535,6 +541,7 @@ fn render_education(education: &[crate::models::Education], lang: Lang) -> Strin
         let achievements: String = edu
             .achievements
             .iter()
+            .map(|a| a.get(lang))
             .filter(|a| !a.is_empty())
             .map(|a| format!("<li>{}</li>", esc(a)))
             .collect();
@@ -555,8 +562,8 @@ fn render_education(education: &[crate::models::Education], lang: Lang) -> Strin
             inst = esc(&edu.institution),
             start = esc(&edu.start_year),
             end = esc(&edu.end_year),
-            degree = esc(&edu.degree),
-            field = esc(&edu.field),
+            degree = esc(edu.degree.get(lang)),
+            field = esc(edu.field.get(lang)),
             achievements = ach_html,
         ));
     }
@@ -609,7 +616,7 @@ fn render_certifications(certs: &[crate::models::Certification], lang: Lang) -> 
 pub fn render_lifetime_cv(cv: &LifetimeCV, lang: Lang) -> String {
     let body = format!(
         "{header}{exp}{skills}{projects}{edu}{lang}{certs}",
-        header = render_header(&cv.personal),
+        header = render_header(&cv.personal, lang),
         exp = render_experience(&cv.experiences, lang),
         skills = render_skills(&cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
@@ -692,7 +699,7 @@ pub fn render_tailored_cv(cv: &TailoredCV, job_title: &str, lang: Lang) -> Strin
     let body = format!(
         "{banner}{header}{exp}{skills}{projects}{edu}{lang}{certs}",
         banner = gap_banner,
-        header = render_header(&cv.personal),
+        header = render_header(&cv.personal, lang),
         exp = render_experience(&cv.experiences, lang),
         skills = render_skills(&cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
@@ -721,7 +728,7 @@ mod tests {
             personal: PersonalInfo {
                 name: "Jane Smith".to_string(),
                 email: "jane@example.com".to_string(),
-                title: "Rust Engineer".to_string(),
+                title: LocalizedText::same("Rust Engineer"),
                 location: "Paris, France".to_string(),
                 ..Default::default()
             },
@@ -734,13 +741,13 @@ mod tests {
         cv.experiences.push(Experience {
             id: "e1".to_string(),
             company: "Acme Corp".to_string(),
-            role: "Software Engineer".to_string(),
+            role: LocalizedText::same("Software Engineer"),
             start_date: "Jan 2021".to_string(),
             end_date: "Present".to_string(),
             projects: vec![ExperienceProject {
-                name: "API Platform".to_string(),
-                context: "Legacy monolith needed decomposition".to_string(),
-                bullets: vec!["Built distributed systems".to_string()],
+                name: LocalizedText::same("API Platform"),
+                context: LocalizedText::same("Legacy monolith needed decomposition"),
+                bullets: vec![LocalizedText::same("Built distributed systems")],
                 tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
             }],
             ..Default::default()
@@ -760,8 +767,8 @@ mod tests {
         cv.education.push(Education {
             id: "edu1".to_string(),
             institution: "MIT".to_string(),
-            degree: "MSc".to_string(),
-            field: "Computer Science".to_string(),
+            degree: LocalizedText::same("MSc"),
+            field: LocalizedText::same("Computer Science"),
             start_year: "2017".to_string(),
             end_year: "2019".to_string(),
             achievements: vec![],
@@ -769,10 +776,10 @@ mod tests {
         cv.projects.push(Project {
             id: "p1".to_string(),
             name: "CV Generator".to_string(),
-            description: "A cool Rust project".to_string(),
+            description: LocalizedText::same("A cool Rust project"),
             url: "https://github.com/me/cv-gen".to_string(),
             tools: vec!["Rust".to_string()],
-            bullets: vec!["Implemented keyword matching".to_string()],
+            bullets: vec![LocalizedText::same("Implemented keyword matching")],
         });
         cv
     }

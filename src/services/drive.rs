@@ -251,14 +251,14 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{LifetimeCV, PersonalInfo};
+    use crate::models::{LifetimeCV, LocalizedText, PersonalInfo};
 
     fn sample_cv() -> LifetimeCV {
         LifetimeCV {
             personal: PersonalInfo {
                 name: "Jane Smith".to_string(),
                 email: "jane@example.com".to_string(),
-                title: "Rust Engineer".to_string(),
+                title: LocalizedText::same("Rust Engineer"),
                 ..Default::default()
             },
             ..Default::default()

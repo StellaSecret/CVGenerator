@@ -1,27 +1,115 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+// ── Localized text ────────────────────────────────────────────────────────────
+
+/// A piece of free-text content stored in both English and French so the same
+/// CV can be generated in either language. `get()` returns exactly the
+/// requested language — empty if that language hasn't been filled in yet —
+/// so the two languages never leak into each other. Use
+/// `LifetimeCV::seed_missing_translations` to explicitly copy text across as
+/// a translation starting point.
+///
+/// Deserialization accepts two shapes for backward compatibility with backups
+/// created before this field existed: the old plain `"some text"` string
+/// (which becomes the same in both languages until edited) and the new
+/// `{"en": "...", "fr": "..."}` object.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct LocalizedText {
+    pub en: String,
+    pub fr: String,
+}
+
+impl LocalizedText {
+    /// Returns the text for the requested language only — empty string if that
+    /// language hasn't been filled in. Deliberately does NOT fall back to the
+    /// other language: falling back silently made the two languages look like
+    /// a single shared field. If you want to reuse text as a translation
+    /// starting point, do it explicitly via `LifetimeCV::seed_missing_translations`.
+    pub fn get(&self, lang: crate::i18n_core::Lang) -> &str {
+        use crate::i18n_core::Lang;
+        match lang {
+            Lang::En => &self.en,
+            Lang::Fr => &self.fr,
+        }
+    }
+
+    pub fn set(&mut self, lang: crate::i18n_core::Lang, value: String) {
+        use crate::i18n_core::Lang;
+        match lang {
+            Lang::En => self.en = value,
+            Lang::Fr => self.fr = value,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.en.is_empty() && self.fr.is_empty()
+    }
+
+    /// If `to` is empty and `from` has content, copies `from`'s text into
+    /// `to`. Does nothing if `to` already has content — this never overwrites
+    /// an existing translation. Used by `LifetimeCV::seed_missing_translations`.
+    pub fn seed_missing(&mut self, from: crate::i18n_core::Lang, to: crate::i18n_core::Lang) {
+        if self.get(to).is_empty() && !self.get(from).is_empty() {
+            let text = self.get(from).to_string();
+            self.set(to, text);
+        }
+    }
+
+    /// Convenience for migrating/testing: sets both languages to the same text.
+    pub fn same(s: impl Into<String>) -> Self {
+        let s = s.into();
+        Self {
+            en: s.clone(),
+            fr: s,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LocalizedText {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(String),
+            Full {
+                #[serde(default)]
+                en: String,
+                #[serde(default)]
+                fr: String,
+            },
+        }
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::Legacy(s) => LocalizedText::same(s),
+            Repr::Full { en, fr } => LocalizedText { en, fr },
+        })
+    }
+}
 
 // ── Personal ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PersonalInfo {
     pub name: String,
-    pub title: String, // "Senior Rust Engineer"
+    pub title: LocalizedText, // "Senior Rust Engineer"
     pub email: String,
     pub phone: String,
     pub location: String,
     pub linkedin: String,
     pub github: String,
     pub website: String,
-    pub summary: String, // 2-3 sentence bio
+    pub summary: LocalizedText, // 2-3 sentence bio
 }
 
 // ── Experience ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ExperienceProject {
-    pub name: String,
-    pub context: String,
-    pub bullets: Vec<String>,
+    pub name: LocalizedText,
+    pub context: LocalizedText,
+    pub bullets: Vec<LocalizedText>,
     pub tools: Vec<String>,
 }
 
@@ -29,7 +117,7 @@ pub struct ExperienceProject {
 pub struct Experience {
     pub id: String,
     pub company: String,
-    pub role: String,
+    pub role: LocalizedText,
     pub location: String,
     pub start_date: String,               // "Jan 2021"
     pub end_date: String,                 // "Present" or "Mar 2024"
@@ -117,11 +205,11 @@ pub struct Skill {
 pub struct Education {
     pub id: String,
     pub institution: String,
-    pub degree: String, // "MSc", "BEng", "Bootcamp"
-    pub field: String,  // "Computer Science"
+    pub degree: LocalizedText, // "MSc", "BEng", "Bootcamp"
+    pub field: LocalizedText,  // "Computer Science"
     pub start_year: String,
     pub end_year: String, // "Present" or year
-    pub achievements: Vec<String>,
+    pub achievements: Vec<LocalizedText>,
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -130,10 +218,10 @@ pub struct Education {
 pub struct Project {
     pub id: String,
     pub name: String,
-    pub description: String,
+    pub description: LocalizedText,
     pub url: String,
     pub tools: Vec<String>,
-    pub bullets: Vec<String>,
+    pub bullets: Vec<LocalizedText>,
 }
 
 // ── Languages ─────────────────────────────────────────────────────────────────
@@ -194,15 +282,26 @@ pub struct LifetimeCV {
 
 impl LifetimeCV {
     /// All text in the CV concatenated — used by the matcher for gap analysis.
+    /// Localized fields contribute both languages, so keyword matching works
+    /// whichever language the job description happens to be in.
     pub fn all_text(&self) -> String {
-        let mut parts = vec![self.personal.summary.clone(), self.personal.title.clone()];
+        let mut parts = vec![
+            self.personal.summary.en.clone(),
+            self.personal.summary.fr.clone(),
+            self.personal.title.en.clone(),
+            self.personal.title.fr.clone(),
+        ];
         for exp in &self.experiences {
-            parts.push(exp.role.clone());
+            parts.push(exp.role.en.clone());
+            parts.push(exp.role.fr.clone());
             parts.push(exp.company.clone());
             for proj in &exp.projects {
-                parts.push(proj.name.clone());
-                parts.push(proj.context.clone());
-                parts.extend(proj.bullets.clone());
+                parts.push(proj.name.en.clone());
+                parts.push(proj.name.fr.clone());
+                parts.push(proj.context.en.clone());
+                parts.push(proj.context.fr.clone());
+                parts.extend(proj.bullets.iter().map(|b| b.en.clone()));
+                parts.extend(proj.bullets.iter().map(|b| b.fr.clone()));
                 parts.extend(proj.tools.clone());
             }
         }
@@ -211,11 +310,51 @@ impl LifetimeCV {
         }
         for proj in &self.projects {
             parts.push(proj.name.clone());
-            parts.push(proj.description.clone());
+            parts.push(proj.description.en.clone());
+            parts.push(proj.description.fr.clone());
             parts.extend(proj.tools.clone());
-            parts.extend(proj.bullets.clone());
+            parts.extend(proj.bullets.iter().map(|b| b.en.clone()));
+            parts.extend(proj.bullets.iter().map(|b| b.fr.clone()));
         }
         parts.join(" ")
+    }
+
+    /// Explicit, opt-in action: for every localized field that's empty in
+    /// `to`, copy over whatever text exists in `from` as a starting point to
+    /// translate from. Never touches a field that already has content in
+    /// `to` — this is purely additive, so it's safe to run repeatedly (e.g.
+    /// after adding a new experience) without clobbering translations you've
+    /// already written.
+    pub fn seed_missing_translations(
+        &mut self,
+        from: crate::i18n_core::Lang,
+        to: crate::i18n_core::Lang,
+    ) {
+        self.personal.title.seed_missing(from, to);
+        self.personal.summary.seed_missing(from, to);
+        for exp in &mut self.experiences {
+            exp.role.seed_missing(from, to);
+            for proj in &mut exp.projects {
+                proj.name.seed_missing(from, to);
+                proj.context.seed_missing(from, to);
+                for bullet in &mut proj.bullets {
+                    bullet.seed_missing(from, to);
+                }
+            }
+        }
+        for edu in &mut self.education {
+            edu.degree.seed_missing(from, to);
+            edu.field.seed_missing(from, to);
+            for a in &mut edu.achievements {
+                a.seed_missing(from, to);
+            }
+        }
+        for proj in &mut self.projects {
+            proj.description.seed_missing(from, to);
+            for bullet in &mut proj.bullets {
+                bullet.seed_missing(from, to);
+            }
+        }
     }
 }
 
@@ -224,6 +363,71 @@ impl LifetimeCV {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n_core::Lang;
+
+    // ── LocalizedText ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn get_does_not_fall_back_across_languages() {
+        let text = LocalizedText {
+            en: "Hello".to_string(),
+            fr: String::new(),
+        };
+        assert_eq!(text.get(Lang::En), "Hello");
+        assert_eq!(text.get(Lang::Fr), ""); // must stay empty, not fall back to English
+    }
+
+    #[test]
+    fn seed_missing_only_fills_empty_target() {
+        let mut text = LocalizedText {
+            en: "Hello".to_string(),
+            fr: String::new(),
+        };
+        text.seed_missing(Lang::En, Lang::Fr);
+        assert_eq!(text.fr, "Hello");
+
+        // Running it again after a translation exists must not clobber it.
+        text.fr = "Bonjour".to_string();
+        text.seed_missing(Lang::En, Lang::Fr);
+        assert_eq!(text.fr, "Bonjour");
+    }
+
+    #[test]
+    fn seed_missing_translations_fills_cv_without_overwriting() {
+        let mut cv = LifetimeCV {
+            personal: PersonalInfo {
+                summary: LocalizedText {
+                    en: "An engineer".to_string(),
+                    fr: String::new(),
+                },
+                ..Default::default()
+            },
+            experiences: vec![Experience {
+                role: LocalizedText {
+                    en: "Engineer".to_string(),
+                    fr: "Ingénieur".to_string(),
+                },
+                projects: vec![ExperienceProject {
+                    context: LocalizedText {
+                        en: "Context".to_string(),
+                        fr: String::new(),
+                    },
+                    bullets: vec![LocalizedText {
+                        en: "Did a thing".to_string(),
+                        fr: String::new(),
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        cv.seed_missing_translations(Lang::En, Lang::Fr);
+        assert_eq!(cv.personal.summary.fr, "An engineer");
+        assert_eq!(cv.experiences[0].role.fr, "Ingénieur"); // untouched, already had content
+        assert_eq!(cv.experiences[0].projects[0].context.fr, "Context");
+        assert_eq!(cv.experiences[0].projects[0].bullets[0].fr, "Did a thing");
+    }
 
     // ── LifetimeCV::default ───────────────────────────────────────────────────
 
@@ -255,8 +459,8 @@ mod tests {
     fn all_text_includes_personal_summary_and_title() {
         let cv = LifetimeCV {
             personal: PersonalInfo {
-                summary: "Experienced developer".to_string(),
-                title: "Rust Engineer".to_string(),
+                summary: LocalizedText::same("Experienced developer"),
+                title: LocalizedText::same("Rust Engineer"),
                 ..Default::default()
             },
             ..Default::default()
@@ -271,12 +475,12 @@ mod tests {
         let cv = LifetimeCV {
             experiences: vec![Experience {
                 id: "1".to_string(),
-                role: "Software Engineer".to_string(),
+                role: LocalizedText::same("Software Engineer"),
                 company: "Acme".to_string(),
                 projects: vec![ExperienceProject {
-                    name: "API Platform".to_string(),
-                    context: "Legacy monolith needed decomposition".to_string(),
-                    bullets: vec!["Built APIs".to_string()],
+                    name: LocalizedText::same("API Platform"),
+                    context: LocalizedText::same("Legacy monolith needed decomposition"),
+                    bullets: vec![LocalizedText::same("Built APIs")],
                     tools: vec!["Rust".to_string(), "gRPC".to_string()],
                 }],
                 ..Default::default()
@@ -323,9 +527,9 @@ mod tests {
             projects: vec![Project {
                 id: "1".to_string(),
                 name: "MyProject".to_string(),
-                description: "A Dioxus app".to_string(),
+                description: LocalizedText::same("A Dioxus app"),
                 tools: vec!["Dioxus".to_string()],
-                bullets: vec!["Implemented routing".to_string()],
+                bullets: vec![LocalizedText::same("Implemented routing")],
                 ..Default::default()
             }],
             ..Default::default()
