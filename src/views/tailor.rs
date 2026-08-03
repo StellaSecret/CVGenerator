@@ -7,43 +7,19 @@ use dioxus::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 fn download_pdf(iframe_id: &str, filename: &str) {
+    // Suggested filename for the browser's "Save as PDF" print destination
+    // (it uses document.title, sans extension — the .pdf gets added
+    // automatically).
+    let title = filename.strip_suffix(".pdf").unwrap_or(filename);
     let js = format!(
         r#"(function(){{
         var f = document.getElementById('{iframe_id}');
-        if (!f || !f.contentDocument || !f.contentDocument.body) {{
-            if (f && f.contentWindow) f.contentWindow.print();
-            return;
-        }}
-        if (typeof html2pdf === 'undefined') {{
-            if (f && f.contentWindow) f.contentWindow.print();
-            return;
-        }}
-        var styleTag = f.contentDocument.querySelector('style');
-        var cvDoc = f.contentDocument.querySelector('.cv-doc');
-        if (!cvDoc) {{
-            if (f.contentWindow) f.contentWindow.print();
-            return;
-        }}
-        var sandbox = document.createElement('div');
-        sandbox.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;z-index:-1;';
-        var container = document.createElement('div');
-        container.style.cssText = 'background:#fff;';
-        if (styleTag) {{ container.appendChild(styleTag.cloneNode(true)); }}
-        container.appendChild(cvDoc.cloneNode(true));
-        sandbox.appendChild(container);
-        document.body.appendChild(sandbox);
-        var cleanup = function() {{ if (sandbox.parentNode) sandbox.parentNode.removeChild(sandbox); }};
-        html2pdf().set({{
-            margin: [10, 10, 10, 10],
-            filename: '{filename}',
-            image: {{ type: 'jpeg', quality: 0.98 }},
-            html2canvas: {{ scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' }},
-            jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
-            pagebreak: {{
-                mode: ['css', 'legacy'],
-                avoid: ['.header', '.section-head', '.exp-item', '.proj-item', '.edu-item', '.skills-block', '.gap-banner', '.gap-section']
-            }}
-        }}).from(container).save().then(cleanup).catch(cleanup);
+        if (!f || !f.contentWindow) return;
+        try {{
+            if (f.contentDocument) {{ f.contentDocument.title = {title:?}; }}
+        }} catch (e) {{}}
+        f.contentWindow.focus();
+        f.contentWindow.print();
     }})();"#
     );
     let _ = js_sys::eval(&js);
@@ -101,6 +77,7 @@ pub fn Tailor() -> Element {
     let t_gen = i18n::tr("tl_generate", l);
     let t_match = i18n::tr("tl_match", l);
     let t_dl = i18n::tr("tl_download", l);
+    let t_dl_hint = i18n::tr("pv_download_hint", l);
     let t_ph = i18n::tr("tl_placeholder", l);
 
     rsx! {
@@ -198,6 +175,7 @@ pub fn Tailor() -> Element {
                                     "{t_dl}"
                                 }
                             }
+                            p { class: "hint", "{t_dl_hint}" }
 
                             iframe {
                                 id: "cv-tailor-frame",

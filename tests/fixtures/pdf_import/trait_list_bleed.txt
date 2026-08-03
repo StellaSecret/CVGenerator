@@ -1,0 +1,44 @@
+JORDAN JJ RIVERA
+Platform Engineer, Site Reliability Engineer
+EXPERIENCE
+Site Reliability Engineer
+Nimbus
+	October 2022 – January 2024 ½ Example City
+Situation & Tasks: As part of an SRE team, I provided Level 2 support across Linux
+environments, ensuring the reliability of IaaS, PaaS, and SaaS systems.
+Actions taken:
+– Maintain IaC with Terraform.
+– Designed and maintained CI/CD pipelines with GitLab.
+– Administered DevOps tools.
+– Migrated self-hosted Kubernetes clusters to managed services.
+RANDOM SKILLS
+Jack of all Trades Adaptability
+Fearless Frontliner Flexibility
+Do What Nobody Does
+Situational Awareness
+Act first
+Break things
+– Automated repetitive tasks using Ansible, GitLab-CI, Bash.
+– Supported developers through self-service tooling and documentation.
+– Set up monitoring with Grafana, Prometheus, and VictoriaMetrics.
+– Participated in on-call rotations, RCAs, and post-mortems.
+Results achieved:
+– Up to 95% reduction in cloud costs for specific clusters.
+– 90% reduction in platform migration time.
+– Successfully transitioned daily operations to Level 1 support.
+Project 1: Internal Tooling – Monitoring, Cost Reduction
+	April 2023 – December 2023
+Situation: Critical internal tools required improved observability.
+Tasks: Enhance system reliability, automate manual operations.
+Actions taken:
+– Implemented monitoring with Grafana, Prometheus, and VictoriaMetrics.
+Results achieved:
+– Improved system reliability and reduced support burden.
+EDUCATION
+Example University, Example City
+	Sept 2014 – Oct 2017
+Bachelor of Science
+LANGUAGES
+English ○ ○ ○ ○ ○
+CERTIFICATIONS
+ITIL: Foundation certification (2011)

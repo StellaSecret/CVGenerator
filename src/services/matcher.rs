@@ -376,6 +376,7 @@ mod tests {
                             "PostgreSQL".to_string(),
                             "Kubernetes".to_string(),
                         ],
+                        ..Default::default()
                     }],
                     ..Default::default()
                 },
@@ -392,6 +393,7 @@ mod tests {
                             "Developed web applications with React and TypeScript",
                         )],
                         tools: vec!["JavaScript".to_string(), "React".to_string()],
+                        ..Default::default()
                     }],
                     ..Default::default()
                 },

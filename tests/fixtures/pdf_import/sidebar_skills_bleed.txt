@@ -1,0 +1,85 @@
+JORDAN JJ RIVERA
+Platform Engineer, Site Reliability Engineer
+] 1 Jan 1990 [ jordan.rivera@example.com Ó +1 555 010 0100 ½ Example City
+EXPERIENCE
+Platform Engineer (contractual)
+ACME/WIDGETS/QA
+	December 2024 – February 2026 ½ Example City
+Situation & Tasks: As part of the platform transformation, I joined the Core Team while
+also acting as technical lead for the Zenith platform.
+Actions taken:
+– Implemented GitOps deployment for the Core Socle with regular version upgrades.
+– Technical lead on the automation team.
+Results achieved:
+– Reduced incidents and improved platform stability.
+Project 1: Core – Socle Team
+	February 2025 – February 2026
+Situation: Following the transfer of responsibilities, the Socle Team was tasked with
+maintaining and evolving the platform.
+Tasks: Ensure platform stability, perform upgrades.
+Actions taken:
+– Analyzed and resolved incidents.
+– Maintain IaC with Terraform.
+– Configured and secured Docker credentials in ArgoCD.
+TECHNICAL SKILLS
+CI/CD 4+ yrs
+Infrastructure as Code 3+ yrs
+Configuration Management 4+ yrs
+TOOLS
+•CI/CD
+GitLab-CI 3+ yrs
+GitHub Actions 2+ yrs
+•Infrastructure as Code
+Terraform 3+ yrs
+– Writing of ADR framework documents (configuration repositories, PRA, upgrade
+workflows).
+Results achieved:
+– Stabilized the platform and reduced incident frequency.
+– Decreased operational overhead thanks to GitOps automation.
+Project 2: Zenith – Platform Engineering
+	December 2024 – June 2025
+Situation: The Zenith project aimed to provide a platform in support of the roadmap.
+Tasks: Design the technical architecture, lead the automation team.
+Actions taken:
+– Designed the technical architecture for the platform.
+– Wrote ADRs to document key architectural choices.
+Results achieved:
+– Industrialized the delegation service.
+Project 3: Cross-cutting Initiatives and Strategic Support
+	December 2024 – June 2025
+Situation: Beyond Core and Zenith, several governance initiatives needed structuring.
+Tasks: Contribute to strategic vision, support technical decision-making.
+Actions taken:
+– Initiated the roadmap.
+– Developed a skills assessment matrix.
+Results achieved:
+– Aligned technical initiatives with the digital transformation strategy.
+Techs: Openstack, Scaleway, Debian, Kyverno, Keycloak, Vault, Redis, Kubernetes.
+Site Reliability Engineer
+ACME/WIDGETS/QA
+•Cloud
+AWS1+ yrs
+GCP 1+ yrs
+Scaleway1+ yrs
+•Monitoring/Logging
+Grafana 3+ yrs
+Prometheus 3+ yrs
+•Secrets Management
+Vault 2+ yrs
+	January 2024 – November 2024 ½ Example City
+Situation & Tasks: As part of the SRE transformation, I served as a cross-functional
+Tech Lead for the platform reliability office.
+Actions taken:
+– SRE Structuring: Drafted the roadmap over 6 key axes.
+– Industrialization: Developed pipelines to manage access rights.
+Results achieved:
+– SRE practices adopted across application squads.
+EDUCATION
+Example University, Example City
+	Sept 2014 – Oct 2017
+Bachelor of Science
+LANGUAGES
+English ○ ○ ○ ○ ○
+French ○ ○ ○ ○ ○
+CERTIFICATIONS
+ITIL: Foundation certification (2011)

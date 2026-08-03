@@ -11,11 +11,21 @@ path = "src/lib.rs"
 name = "cv-generator"
 path = "src/main.rs"
 
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [dependencies]
 dioxus = { version = "0.7", features = ["web", "router", "asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "js"] }
+lopdf = { version = "0.34", default-features = false, features = ["nom_parser"] }
 web-sys = { version = "0.3", features = [
     "Window",
     "Document",
@@ -24,6 +34,7 @@ web-sys = { version = "0.3", features = [
     "HtmlAnchorElement",
     "HtmlScriptElement",
     "HtmlButtonElement",
+    "HtmlInputElement",
     "Node",
     "Blob",
     "BlobPropertyBag",
@@ -34,6 +45,7 @@ web-sys = { version = "0.3", features = [
     "Navigator",
     "Storage",
     "MediaQueryList",
+    "console",
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

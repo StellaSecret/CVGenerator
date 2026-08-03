@@ -4,10 +4,95 @@ use crate::models::{LifetimeCV, SkillCategory, TailoredCV};
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    break_ligatures(
+        &s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;"),
+    )
+}
+
+/// Expands precomposed Unicode ligature *characters* (U+FB00–FB04: ﬀ, ﬁ,
+/// ﬂ, ﬃ, ﬄ) into their plain-letter spelling.
+///
+/// These don't come from anything we type — they show up in *imported*
+/// text: a source PDF's font commonly maps its "ff"/"fi"/etc. ligature
+/// glyph's ToUnicode entry straight to the single precomposed codepoint
+/// (that's exactly what our own pdf_import.rs's ToUnicode CMap parser
+/// decodes, faithfully, from real-world PDFs — including our own output,
+/// see below). If that raw codepoint reaches the browser unchanged, our
+/// main body font typically has no glyph for it directly (it only forms
+/// ligatures via the "liga" GSUB feature applied to a *sequence* of plain
+/// letters, not via this standalone presentation-form character), so the
+/// browser silently font-substitutes just that one character from a
+/// fallback font. Printing to PDF then emits that single word as three
+/// separate font runs (main/fallback/main), each its own BT/ET text
+/// object — which breaks the same-row line reconstruction in
+/// pdf_import.rs (the runs no longer glue back into one bullet without a
+/// spurious space, e.g. "offboarding" round-trips as "o ff boarding").
+/// Expanding back to plain letters keeps the whole word on one font/one
+/// text run when this render gets printed, so it round-trips cleanly.
+/// `break_ligatures()` (called from `esc()`) is just this function —
+/// see its own doc comment for why it doesn't do anything beyond this.
+fn expand_ligature_chars(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\u{FB00}' => out.push_str("ff"),
+            '\u{FB01}' => out.push_str("fi"),
+            '\u{FB02}' => out.push_str("fl"),
+            '\u{FB03}' => out.push_str("ffi"),
+            '\u{FB04}' => out.push_str("ffl"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Normalizes ligature *characters* back to plain letters before HTML
+/// escaping (see `expand_ligature_chars`'s doc comment for why this needs
+/// to happen at all). This is deliberately just that — it no longer also
+/// tries to *prevent* Chromium's print-to-PDF path from re-fusing "f" +
+/// "i"/"l"/"f" back into a ligature glyph while printing.
+///
+/// We used to insert a zero-width non-joiner (U+200C) between such letter
+/// pairs for that purpose. It did stop the visible fusion, but at a cost
+/// we didn't anticipate: forcing "f" and "i" to shape as separate glyph
+/// clusters changes the advance width/kerning between them relative to a
+/// fused ligature glyph, and that shifted spacing was large enough to
+/// cross pdf_import.rs's same-row word-gap heuristic on re-import — so a
+/// *plain, never-corrupted* word like "defined" would round-trip as
+/// "def ined", with a real inserted space. That's a strictly worse outcome
+/// than the ligature-fusion problem it was meant to prevent, and it hit
+/// every word with an "fi"/"fl"/"ff" pair, not just previously-imported
+/// ones.
+///
+/// The chosen fix is to allow the fusion and instead make it harmless:
+/// `expand_ligature_chars` already normalizes any precomposed ligature
+/// character back to plain letters on *every* render pass, including ones
+/// fed by re-imported text. So if this render's output gets printed,
+/// re-imported, and printed again, each cycle just re-normalizes and
+/// (possibly) re-fuses — the underlying text stays correct, it's only the
+/// glyph-level ligature-or-not presentation that varies, and that was
+/// never something either this renderer or pdf_import.rs promised to
+/// preserve.
+fn break_ligatures(s: &str) -> String {
+    expand_ligature_chars(s)
+}
+
+// Renders a bullet-list `<li>`. The `•` marker is a real, literal text
+// character rather than the browser's default `list-style: disc` marker
+// (which the CSS above suppresses via `list-style: none`). This matters
+// beyond styling: when Chromium prints a page to PDF, native `<li>` markers
+// are drawn as a small vector shape rather than an extractable glyph, so a
+// PDF re-imported from our own "Download PDF" output would have no textual
+// trace of where each bullet started — every bullet in a project/role
+// silently merges into one run-on paragraph on re-import (see
+// pdf_import::parse_experiences, which detects bullets via a leading "•").
+// Emitting the bullet as ordinary text keeps round-tripping our own PDFs
+// working.
+fn bullet_li(text: &str) -> String {
+    format!("<li>• {}</li>", esc(text))
 }
 
 fn tag(href: &str, label: &str) -> String {
@@ -21,6 +106,48 @@ fn tag(href: &str, label: &str) -> String {
     )
 }
 
+/// Renders a tech/tool chip row, e.g. `<div class="exp-tools">...</div>`,
+/// given the wrapper CSS class and the list of tool names. Returns an
+/// empty string if `tools` is empty (callers rely on this to skip the
+/// wrapping div entirely).
+///
+/// Two things here exist purely so pdf_import.rs can reconstruct this
+/// list on re-import, matching how it already reads a "Techs: A, B, C."
+/// bullet line — round-trip robustness the same way our bullet markers
+/// are rendered as literal "•" text instead of relying on CSS
+/// `list-style` (see `bullet_li`'s call site): a plain, real text node,
+/// not something that only exists via CSS/box layout that print-to-PDF
+/// text extraction can't see.
+///
+/// - A small "Techs: " label precedes the chips. pdf_import.rs's
+///   TOOLS_LABEL_PREFIXES only recognizes a *line* that starts with this
+///   (or "tech stack"/"technologies"), so without it these chips have no
+///   way to be told apart from ordinary narrative text on re-import — and
+///   were previously getting glued onto whatever bullet happened to
+///   precede them.
+/// - Chips are joined with a literal ", " rather than a bare space. Each
+///   chip is its own flex item and print-to-PDF fragments a wrapped flex
+///   row like this into several separate text lines regardless of what
+///   separates them visually, so a space vs. comma makes no visual
+///   difference here — but pdf_import.rs's tools parser splits on comma,
+///   so this is what lets each name come back out as its own entry
+///   instead of the whole row round-tripping as one run-on string.
+fn tools_row_html(css_class: &str, tools: &[String]) -> String {
+    let chips: Vec<String> = tools
+        .iter()
+        .filter(|t| !t.is_empty())
+        .map(|t| tag("", t))
+        .collect();
+    if chips.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<div class="{class}"><span class="tools-label">Techs:</span> {chips}</div>"#,
+        class = css_class,
+        chips = chips.join(", ")
+    )
+}
+
 // ── Shared CSS ────────────────────────────────────────────────────────────────
 
 const CV_CSS: &str = r#"
@@ -28,6 +155,27 @@ const CV_CSS: &str = r#"
 .cv-doc, .cv-doc * { margin: 0; padding: 0; box-sizing: border-box; }
 .cv-doc {
   font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
+  /* Best-effort attempt to stop Chromium's print-to-PDF path from fusing
+     "fi"/"fl"/etc. into a single ligature glyph. In practice this alone
+     hasn't been reliable (verified by round-tripping our own output —
+     the ligature still formed regardless). We no longer try to actively
+     prevent the fusion elsewhere either (see break_ligatures() in esc()
+     — it only *normalizes* an already-fused ligature character back to
+     plain letters, it doesn't try to stop a fresh fusion from happening
+     during this print pass): a previous attempt to force letters apart
+     with a zero-width non-joiner stopped the fusion but perturbed glyph
+     spacing enough to trip pdf_import.rs's word-gap heuristic on
+     re-import, corrupting plain text that was never even a ligature.
+     Whether this word ends up as one fused ligature glyph or separate
+     letters in the printed PDF is harmless either way — esc() normalizes
+     it back to plain letters on every render, so it can't cascade into
+     corruption on a later re-import regardless of which one Chromium
+     picks. These CSS rules are kept only as a low-cost, no-downside
+     nicety for any text that reaches the page without going through
+     esc(). */
+  font-variant-ligatures: none;
+  -webkit-font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "clig" 0, "dlig" 0;
   color: #1a1a2e;
   max-width: 860px;
   margin: 0 auto;
@@ -96,11 +244,13 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-role { font-style: italic; color: #475569; font-size: 0.9rem; margin-top: 1px; }
 .cv-doc .exp-dates { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; }
 .cv-doc .exp-location { font-size: 0.8rem; color: #94a3b8; }
-.cv-doc .exp-bullets { margin: 8px 0 0 18px; }
-.cv-doc .exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
+.cv-doc .exp-bullets { margin: 8px 0 0 18px; list-style: none; padding: 0; }
+.cv-doc .exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; padding-left: 1em; text-indent: -1em; }
 .cv-doc .exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
 .cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
+.cv-doc .exp-project-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
 .cv-doc .exp-project-name { font-weight: 600; color: #1e293b; font-size: 0.88rem; margin-bottom: 2px; }
+.cv-doc .exp-project-dates { font-size: 0.78rem; color: #94a3b8; white-space: nowrap; }
 .cv-doc .exp-project-context { font-style: italic; color: #64748b; font-size: 0.82rem; margin-bottom: 4px; }
 
 /* ── Skills ── */
@@ -114,8 +264,8 @@ const CV_CSS: &str = r#"
 .cv-doc .proj-name { font-weight: 700; color: #0f172a; }
 .cv-doc .proj-url { font-size: 0.8rem; color: #2563eb; text-decoration: none; }
 .cv-doc .proj-desc { font-size: 0.88rem; color: #475569; margin-top: 3px; }
-.cv-doc .proj-bullets { margin: 6px 0 0 18px; }
-.cv-doc .proj-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; }
+.cv-doc .proj-bullets { margin: 6px 0 0 18px; list-style: none; padding: 0; }
+.cv-doc .proj-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; padding-left: 1em; text-indent: -1em; }
 .cv-doc .proj-tools { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
 
 /* ── Education ── */
@@ -124,8 +274,8 @@ const CV_CSS: &str = r#"
 .cv-doc .edu-inst { font-weight: 700; color: #0f172a; }
 .cv-doc .edu-degree { color: #475569; font-size: 0.88rem; margin-top: 2px; }
 .cv-doc .edu-dates { font-size: 0.8rem; color: #94a3b8; }
-.cv-doc .edu-achievements { margin: 6px 0 0 18px; }
-.cv-doc .edu-achievements li { color: #334155; font-size: 0.88rem; margin-bottom: 2px; }
+.cv-doc .edu-achievements { margin: 6px 0 0 18px; list-style: none; padding: 0; }
+.cv-doc .edu-achievements li { color: #334155; font-size: 0.88rem; margin-bottom: 2px; padding-left: 1em; text-indent: -1em; }
 
 /* ── Languages & Certs ── */
 .cv-doc .lang-list { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -142,6 +292,16 @@ const CV_CSS: &str = r#"
   font-size: 0.78rem;
   font-weight: 500;
   white-space: nowrap;
+}
+/* Precedes a chip row (see tools_row_html in this file) so pdf_import.rs
+   can tell the chips apart from narrative text on re-import. Styled to
+   read as a natural small caption rather than a stray label. */
+.cv-doc .tools-label {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 /* ── Gap analysis (tailored only) ── */
@@ -163,12 +323,36 @@ const CV_CSS: &str = r#"
   .cv-doc .toolbar { display: none; }
   .cv-doc { padding: 20px; }
   @page { margin: 1.5cm; }
+  /* Browsers strip background colors during print by default to save ink;
+     without this, section-title borders/tag backgrounds etc. would print
+     as plain black-and-white instead of matching the on-screen preview. */
+  .cv-doc, .cv-doc * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    color-adjust: exact;
+  }
 }
 
-/* ── Keep items intact across page breaks (print & PDF) ── */
+/* ── Keep items intact across page breaks (print & PDF) ──
+   NOTE: .section-head (title + first item, see wrap_section) and
+   .exp-item are deliberately NOT in this list, even though .exp-item
+   used to be. The same failure mode applies to both: an Experience
+   entry can carry several nested sub-projects and easily grow taller
+   than a full page. If a block that large is marked break-inside:avoid,
+   it can't fit on the remaining space of the current page *or* on a
+   fresh one — so the browser pushes the whole thing to the next page
+   and lets it overflow there, leaving the entire remainder of the
+   current page blank (confirmed against real Chromium print-to-PDF
+   output, not just this project's own CSS reasoning).
+   Instead, only the two *small, bounded* trouble spots get explicit
+   protection below: the section title shouldn't be stranded above an
+   empty rest-of-page, and an exp-item's company/role header shouldn't
+   be stranded above its own first project. Both use the same
+   break-after (on the heading) + break-before (on what follows)
+   pairing rather than break-inside:avoid on a wrapper, so a break can
+   still land further inside a large block without relocating the whole
+   thing. */
 .cv-doc .header,
-.cv-doc .section-head,
-.cv-doc .exp-item,
 .cv-doc .proj-item,
 .cv-doc .edu-item,
 .cv-doc .skills-block,
@@ -177,11 +361,13 @@ const CV_CSS: &str = r#"
   break-inside: avoid;
   page-break-inside: avoid;
 }
-.cv-doc .section-title {
+.cv-doc .section-title,
+.cv-doc .exp-role {
   break-after: avoid;
   page-break-after: avoid;
 }
-.cv-doc .section-title + * {
+.cv-doc .section-title + *,
+.cv-doc .exp-project:first-of-type {
   break-before: avoid;
   page-break-before: avoid;
 }
@@ -271,10 +457,11 @@ fn apply_bold(text: &str) -> String {
 }
 
 // Wraps a section title together with its first item/block in a single
-// "section-head" container so the pagination logic (html2pdf's pagebreak.avoid
-// and, for native browser printing, break-inside/break-after CSS) treats them
-// as one atomic unit. This is what stops a heading from being stranded alone
-// at the bottom of a page while its content starts on the next one.
+// "section-head" container so the pagination logic (native browser
+// print-to-PDF's break-inside/break-after CSS, see the @media print block in
+// CV_CSS above) treats them as one atomic unit. This is what stops a heading
+// from being stranded alone at the bottom of a page while its content starts
+// on the next one.
 fn wrap_section(title: &str, mut items: Vec<String>) -> String {
     if items.is_empty() {
         return String::new();
@@ -311,17 +498,26 @@ fn render_header(p: &crate::models::PersonalInfo, lang: Lang) -> String {
         ));
     }
     if !p.linkedin.is_empty() {
+        // Render the URL itself as the link text (not a generic "LinkedIn"
+        // label). A PDF's visible text is the only thing our own importer
+        // can recover on re-import (see pdf_import::extract_urls, which
+        // scans visible text for "linkedin.com" / "github.com" substrings —
+        // it does not read PDF link annotations). A static label would
+        // silently lose this field every time our own PDF is re-imported.
         contacts.push(format!(
             r#"<span class="contact-item">🔗 <a href="{}">{}</a></span>"#,
             esc(&p.linkedin),
-            "LinkedIn"
+            esc(&p.linkedin)
         ));
     }
     if !p.github.is_empty() {
+        // See comment above on the LinkedIn link: keep the URL as the
+        // visible text so round-tripping through our own PDF export/import
+        // preserves the field.
         contacts.push(format!(
             r#"<span class="contact-item">💻 <a href="{}">{}</a></span>"#,
             esc(&p.github),
-            "GitHub"
+            esc(&p.github)
         ));
     }
     if !p.website.is_empty() {
@@ -383,31 +579,30 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
                 .iter()
                 .map(|b| b.get(lang))
                 .filter(|b| !b.is_empty())
-                .map(|b| format!("<li>{}</li>", esc(b)))
+                .map(bullet_li)
                 .collect();
             let bullets_block = if bullets.is_empty() {
                 String::new()
             } else {
                 format!(r#"<ul class="exp-bullets">{}</ul>"#, bullets)
             };
-            let tools_html: String = proj
-                .tools
-                .iter()
-                .filter(|t| !t.is_empty())
-                .map(|t| tag("", t))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let tools_div = if tools_html.is_empty() {
-                String::new()
-            } else {
-                format!(r#"<div class="exp-tools">{}</div>"#, tools_html)
-            };
-            let name_html = if proj.name.get(lang).is_empty() {
+            let tools_div = tools_row_html("exp-tools", &proj.tools);
+            let project_dates_html = if proj.start_date.is_empty() && proj.end_date.is_empty() {
                 String::new()
             } else {
                 format!(
-                    r#"<div class="exp-project-name">{}</div>"#,
-                    esc(proj.name.get(lang))
+                    r#"<span class="exp-project-dates">{} – {}</span>"#,
+                    esc(&proj.start_date),
+                    esc(&proj.end_date)
+                )
+            };
+            let name_html = if proj.name.get(lang).is_empty() && project_dates_html.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    r#"<div class="exp-project-header"><span class="exp-project-name">{}</span>{}</div>"#,
+                    esc(proj.name.get(lang)),
+                    project_dates_html
                 )
             };
             let context_html = if proj.context.get(lang).is_empty() {
@@ -484,13 +679,25 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
             .iter()
             .map(|b| b.get(lang))
             .filter(|b| !b.is_empty())
-            .map(|b| format!("<li>{}</li>", esc(b)))
+            .map(bullet_li)
             .collect();
         let bullets_html = if bullets.is_empty() {
             String::new()
         } else {
             format!(r#"<ul class="proj-bullets">{}</ul>"#, bullets)
         };
+        // NOTE: intentionally NOT using tools_row_html() here. This is the
+        // standalone top-level "Projects" section (crate::models::Project),
+        // parsed on import by parse_projects() — a different, simpler
+        // parser than the one used for a Project nested inside an
+        // Experience. parse_projects() has no concept of a "Techs:" tools
+        // label at all, and worse, treats *any* "Label: text" line as the
+        // start of a brand-new project — so emitting that label here would
+        // make re-import spawn a bogus extra project and silently drop
+        // whatever project these tools actually belonged to. Left as the
+        // original plain chip row (round-trips no better than before, but
+        // doesn't regress either) until parse_projects() gets equivalent
+        // handling.
         let tools_html: String = proj
             .tools
             .iter()
@@ -543,27 +750,53 @@ fn render_education(education: &[crate::models::Education], lang: Lang) -> Strin
             .iter()
             .map(|a| a.get(lang))
             .filter(|a| !a.is_empty())
-            .map(|a| format!("<li>{}</li>", esc(a)))
+            .map(bullet_li)
             .collect();
         let ach_html = if achievements.is_empty() {
             String::new()
         } else {
             format!(r#"<ul class="edu-achievements">{}</ul>"#, achievements)
         };
+        // Only show the dates span when there's actually a start and/or
+        // end year, and only join degree/field with " · " when a field is
+        // actually present — unconditionally rendering "{start} – {end}"
+        // and "{degree} · {field}" (the same failure mode already fixed in
+        // render_certifications) left a dangling "–" or "·" with nothing
+        // on one side whenever a source resume doesn't give dates, or a
+        // degree has no separately-tracked field of study (both common:
+        // this app's own pdf_import doesn't always split a field out from
+        // the institution line, and plenty of resumes list education with
+        // no dates at all). That dangling punctuation isn't just visually
+        // wrong — re-importing our own PDF then had to make sense of a
+        // trailing "–"/"·" with nothing following it, which confused the
+        // entry-boundary detection and merged entries that should have
+        // stayed separate, compounding by one more dangling separator on
+        // every subsequent round trip.
+        let start = esc(&edu.start_year);
+        let end = esc(&edu.end_year);
+        let dates_html = match (start.is_empty(), end.is_empty()) {
+            (true, true) => String::new(),
+            (false, true) => format!(r#"<span class="edu-dates">{start}</span>"#),
+            (true, false) => format!(r#"<span class="edu-dates">{end}</span>"#),
+            (false, false) => format!(r#"<span class="edu-dates">{start} – {end}</span>"#),
+        };
+        let degree = esc(edu.degree.get(lang));
+        let field = esc(edu.field.get(lang));
+        let degree_line = if field.is_empty() {
+            degree
+        } else {
+            format!("{degree} · {field}")
+        };
         items.push(format!(
             r#"<div class="edu-item">
   <div class="edu-header">
     <span class="edu-inst">{inst}</span>
-    <span class="edu-dates">{start} – {end}</span>
+    {dates_html}
   </div>
-  <div class="edu-degree">{degree} · {field}</div>
+  <div class="edu-degree">{degree_line}</div>
   {achievements}
 </div>"#,
             inst = esc(&edu.institution),
-            start = esc(&edu.start_year),
-            end = esc(&edu.end_year),
-            degree = esc(edu.degree.get(lang)),
-            field = esc(edu.field.get(lang)),
             achievements = ach_html,
         ));
     }
@@ -591,19 +824,44 @@ fn render_certifications(certs: &[crate::models::Certification], lang: Lang) -> 
     if certs.is_empty() {
         return String::new();
     }
-    let items: String = certs.iter().map(|c| {
-        let name = if c.url.is_empty() {
-            esc(&c.name)
-        } else {
-            format!(r#"<a href="{}" class="proj-url">{}</a>"#, esc(&c.url), esc(&c.name))
-        };
-        format!(
-            r#"<div class="lang-item"><span class="lang-name">{name}</span> <span class="lang-level">· {issuer}, {date}</span></div>"#,
-            name   = name,
-            issuer = esc(&c.issuer),
-            date   = esc(&c.date),
-        )
-    }).collect();
+    let items: String =
+        certs
+            .iter()
+            .map(|c| {
+                let name = if c.url.is_empty() {
+                    esc(&c.name)
+                } else {
+                    format!(
+                        r#"<a href="{}" class="proj-url">{}</a>"#,
+                        esc(&c.url),
+                        esc(&c.name)
+                    )
+                };
+                // Only show the "· issuer, date" suffix when there's actually an
+                // issuer and/or date to show — unconditionally appending it
+                // (previously: always "· {issuer}, {date}") left a dangling
+                // "· ," on any certification with both fields empty. That's
+                // especially easy to hit after a round trip through this app's
+                // own PDF: on import, issuer/date aren't always split out from
+                // the name (see pdf_import::build_certification_from_buffer), so
+                // they're legitimately blank, and re-exporting used to bolt on
+                // an empty "· ," suffix every time — compounding by one more
+                // "· ," on every subsequent import/export cycle.
+                let issuer = esc(&c.issuer);
+                let date = esc(&c.date);
+                let suffix = match (issuer.is_empty(), date.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => format!(" <span class=\"lang-level\">· {issuer}</span>"),
+                    (true, false) => format!(" <span class=\"lang-level\">· {date}</span>"),
+                    (false, false) => {
+                        format!(" <span class=\"lang-level\">· {issuer}, {date}</span>")
+                    }
+                };
+                format!(
+                    r#"<div class="lang-item"><span class="lang-name">{name}</span>{suffix}</div>"#,
+                )
+            })
+            .collect();
     wrap_section(
         i18n_core::tr("rs_certifications", lang),
         vec![format!(r#"<div class="lang-list">{}</div>"#, items)],
@@ -723,6 +981,116 @@ mod tests {
     use super::*;
     use crate::models::*;
 
+    // ── Ligature handling ────────────────────────────────────────────────────
+    // Regression coverage for the idempotence bug where a precomposed
+    // ligature character (e.g. "ﬀ" U+FB00, decoded verbatim from a source
+    // PDF's ToUnicode CMap by pdf_import.rs) reached the browser untouched,
+    // forcing a mid-word font fallback that fragmented the word across
+    // separate PDF text objects — which on re-import glued back together
+    // with a spurious space ("offboarding" → "o ff boarding").
+
+    #[test]
+    fn expand_ligature_chars_restores_plain_letters() {
+        assert_eq!(expand_ligature_chars("o\u{FB00}boarding"), "offboarding");
+        assert_eq!(expand_ligature_chars("\u{FB01}le"), "file");
+        assert_eq!(expand_ligature_chars("\u{FB02}oor"), "floor");
+        assert_eq!(expand_ligature_chars("o\u{FB03}ce"), "office");
+        assert_eq!(expand_ligature_chars("ru\u{FB04}e"), "ruffle");
+        assert_eq!(expand_ligature_chars("plain text"), "plain text");
+    }
+
+    #[test]
+    fn break_ligatures_expands_precomposed_ligature_char_with_no_extra_chars() {
+        // A precomposed "ﬀ" must end up as plain "f","f" — not pass through
+        // as the single ligature codepoint, and critically: no ZWNJ, no
+        // space, nothing inserted between the two letters. (We used to
+        // insert a ZWNJ here; that's the thing that caused a *new*
+        // round-trip regression — see this function's doc comment — so
+        // this test pins down that the output is exactly the plain
+        // letters and nothing more.)
+        let out = break_ligatures("o\u{FB00}boarding");
+        assert_eq!(out, "offboarding");
+        assert!(!out.contains(' '));
+        assert!(!out.contains('\u{200C}'));
+        assert!(!out.contains('\u{FB00}'));
+    }
+
+    #[test]
+    fn esc_normalizes_precomposed_ligature_in_bullet_text() {
+        // End-to-end through esc(): the exact scenario from the reported
+        // round-trip bug ("Automated offboarding pipelines...").
+        let html = esc("Automated o\u{FB00}boarding pipelines");
+        assert_eq!(html, "Automated offboarding pipelines");
+        assert!(html.contains("offboarding"));
+        assert!(!html.contains('\u{200C}'));
+    }
+
+    #[test]
+    fn esc_does_not_insert_zwnj_for_plain_never_imported_text() {
+        // Regression test for the specific new bug: plain text that was
+        // never a ligature at all (typed directly, e.g. from a freshly
+        // imported source resume) must render completely unmodified aside
+        // from HTML-escaping — no ZWNJ, no altered spacing, so it can't
+        // trip pdf_import.rs's word-gap heuristic on a later re-import.
+        for word in [
+            "defined",
+            "configuration",
+            "fixes",
+            "workflows",
+            "offboarding",
+        ] {
+            let html = esc(word);
+            assert_eq!(html, word, "esc() must not alter plain text {word:?}");
+            assert!(!html.contains('\u{200C}'));
+        }
+    }
+
+    // ── Tech-tag chip round-tripping ─────────────────────────────────────────
+    // Regression coverage for the bug where the tools/tech chip row for a
+    // Project nested in an Experience had no way to be recognized on
+    // re-import (no "Techs:" label, chips space-joined not comma-joined),
+    // so it got glued onto whatever bullet preceded it instead of coming
+    // back as a distinct tools list. See tools_row_html's doc comment.
+
+    #[test]
+    fn tools_row_html_empty_list_renders_nothing() {
+        let out = tools_row_html("exp-tools", &[]);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn tools_row_html_includes_techs_label_and_comma_joins_chips() {
+        let tools = vec![
+            "Openstack".to_string(),
+            "Scaleway".to_string(),
+            "Debian".to_string(),
+        ];
+        let out = tools_row_html("exp-tools", &tools);
+        assert!(
+            out.contains(">Techs:<"),
+            "expected a Techs: label pdf_import.rs's TOOLS_LABEL_PREFIXES can \
+             recognize, got: {out}"
+        );
+        // Comma-joined (not space-joined): this is what lets
+        // flush_project()'s split(',') recover each tool as its own entry
+        // even though the chips fragment onto separate lines on
+        // re-import (see tools_row_html's doc comment for why a space
+        // vs. comma is invisible visually but not to that parser).
+        assert!(out.contains("Openstack</span>, <span"));
+        assert!(out.contains("Scaleway</span>, <span"));
+        assert!(out.contains(r#"<div class="exp-tools">"#));
+    }
+
+    #[test]
+    fn tools_row_html_filters_empty_entries() {
+        let tools = vec!["Openstack".to_string(), "".to_string()];
+        let out = tools_row_html("exp-tools", &tools);
+        // One real chip plus the label — no dangling ", " from the
+        // filtered-out empty entry.
+        assert!(!out.contains(",  ,"));
+        assert!(!out.ends_with(", </div>"));
+    }
+
     fn minimal_cv() -> LifetimeCV {
         LifetimeCV {
             personal: PersonalInfo {
@@ -749,6 +1117,7 @@ mod tests {
                 context: LocalizedText::same("Legacy monolith needed decomposition"),
                 bullets: vec![LocalizedText::same("Built distributed systems")],
                 tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
+                ..Default::default()
             }],
             ..Default::default()
         });

@@ -111,6 +111,12 @@ pub struct ExperienceProject {
     pub context: LocalizedText,
     pub bullets: Vec<LocalizedText>,
     pub tools: Vec<String>,
+    // Optional period for this sub-project (e.g. "February 2025" /
+    // "February 2026"), distinct from the parent Experience's own dates.
+    // Left empty when the source CV doesn't give the project its own
+    // date range.
+    pub start_date: String,
+    pub end_date: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -147,7 +153,7 @@ impl SkillCategory {
             Self::Cloud => "Cloud",
             Self::Database => "Database",
             Self::Soft => "Soft Skill",
-            Self::Other => "Other",
+            Self::Other => "Other Skills",
         }
     }
     pub fn all() -> Vec<Self> {
@@ -356,6 +362,65 @@ impl LifetimeCV {
             }
         }
     }
+
+    /// Apply a parsed PDF import. Merges non-empty fields: overwrites empty
+    /// fields, appends to lists (skills, experiences, etc.) only if the
+    /// current list is empty (to avoid duplicates on re-import).
+    pub fn apply_import(&mut self, imported: LifetimeCV) {
+        // Personal: overwrite if current is empty
+        if self.personal.name.is_empty() {
+            self.personal.name = imported.personal.name;
+        }
+        if self.personal.email.is_empty() {
+            self.personal.email = imported.personal.email;
+        }
+        if self.personal.phone.is_empty() {
+            self.personal.phone = imported.personal.phone;
+        }
+        if self.personal.location.is_empty() {
+            self.personal.location = imported.personal.location;
+        }
+        if self.personal.linkedin.is_empty() {
+            self.personal.linkedin = imported.personal.linkedin;
+        }
+        if self.personal.github.is_empty() {
+            self.personal.github = imported.personal.github;
+        }
+        if self.personal.website.is_empty() {
+            self.personal.website = imported.personal.website;
+        }
+        if self.personal.title.en.is_empty() {
+            self.personal.title.en = imported.personal.title.en;
+        }
+        if self.personal.title.fr.is_empty() {
+            self.personal.title.fr = imported.personal.title.fr;
+        }
+        if self.personal.summary.en.is_empty() {
+            self.personal.summary.en = imported.personal.summary.en;
+        }
+        if self.personal.summary.fr.is_empty() {
+            self.personal.summary.fr = imported.personal.summary.fr;
+        }
+        // Lists: only import if current is empty
+        if self.experiences.is_empty() {
+            self.experiences = imported.experiences;
+        }
+        if self.skills.is_empty() {
+            self.skills = imported.skills;
+        }
+        if self.education.is_empty() {
+            self.education = imported.education;
+        }
+        if self.projects.is_empty() {
+            self.projects = imported.projects;
+        }
+        if self.languages.is_empty() {
+            self.languages = imported.languages;
+        }
+        if self.certifications.is_empty() {
+            self.certifications = imported.certifications;
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -482,6 +547,7 @@ mod tests {
                     context: LocalizedText::same("Legacy monolith needed decomposition"),
                     bullets: vec![LocalizedText::same("Built APIs")],
                     tools: vec!["Rust".to_string(), "gRPC".to_string()],
+                    ..Default::default()
                 }],
                 ..Default::default()
             }],
@@ -583,7 +649,7 @@ mod tests {
         assert_eq!(SkillCategory::Cloud.label(), "Cloud");
         assert_eq!(SkillCategory::Database.label(), "Database");
         assert_eq!(SkillCategory::Soft.label(), "Soft Skill");
-        assert_eq!(SkillCategory::Other.label(), "Other");
+        assert_eq!(SkillCategory::Other.label(), "Other Skills");
     }
 
     #[test]

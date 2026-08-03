@@ -2,9 +2,11 @@
 use crate::i18n;
 use crate::router::Route;
 use cv_generator::models::*;
+use cv_generator::services::pdf_import;
 use cv_generator::services::storage::save_cv;
 use dioxus::prelude::*;
 use uuid::Uuid;
+use web_sys::wasm_bindgen::JsCast as _;
 
 fn new_id() -> String {
     Uuid::new_v4().to_string()
@@ -220,6 +222,8 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 context: LocalizedText::default(),
                                 bullets: vec![LocalizedText::default()],
                                 tools: Vec::new(),
+                                start_date: String::new(),
+                                end_date: String::new(),
                             });
                         },
                         "{t_add_project}"
@@ -235,6 +239,8 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                     context: p.context.clone(),
                                     bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
                                     tools: p.tools.clone(),
+                                    start_date: p.start_date.clone(),
+                                    end_date: p.end_date.clone(),
                                 }
                             }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
                             cv.write().experiences[index] = Experience {
@@ -300,7 +306,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
                             e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new() }]
+                                vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]
                             } else {
                                 item.projects
                             });
@@ -354,7 +360,7 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                                     "Cloud"     => SkillCategory::Cloud,
                                     "Database"  => SkillCategory::Database,
                                     "Soft Skill"=> SkillCategory::Soft,
-                                    "Other"     => SkillCategory::Other,
+                                    "Other Skills" => SkillCategory::Other,
                                     _           => SkillCategory::Programming,
                                 });
                             },
@@ -874,6 +880,8 @@ pub fn CvEditor() -> Element {
     let t_sub = i18n::tr("ed_subtitle", l);
     let t_save_f = i18n::tr("ed_save_finish", l);
     let t_save_c = i18n::tr("ed_save_cont", l);
+    let t_import = i18n::tr("ed_import_pdf", l);
+    let t_import_err = i18n::tr("ed_import_pdf_err", l);
     let (t_seed, seed_from, seed_to) = if l == i18n::Lang::Fr {
         (
             i18n::tr("ed_seed_from_en", l),
@@ -899,10 +907,72 @@ pub fn CvEditor() -> Element {
             div { class: "page-header",
                 h1 { "{t_title}" }
                 p { class: "subtitle", "{t_sub}" }
-                button {
-                    class: "btn-text",
-                    onclick: move |_| { cv.write().seed_missing_translations(seed_from, seed_to); },
-                    "{t_seed}"
+                div { class: "header-actions",
+                    button {
+                        class: "btn-text",
+                        onclick: move |_| { cv.write().seed_missing_translations(seed_from, seed_to); },
+                        "{t_seed}"
+                    }
+                    button {
+                        class: "btn-text",
+                        onclick: move |_| {
+                            if let Some(window) = web_sys::window() {
+                                if let Some(doc) = window.document() {
+                                    if let Some(el) = doc.get_element_by_id("pdf-import-input") {
+                                        let input: web_sys::HtmlInputElement = el.unchecked_into();
+                                        input.click();
+                                    }
+                                }
+                            }
+                        },
+                        "{t_import}"
+                    }
+                    input {
+                        id: "pdf-import-input",
+                        r#type: "file",
+                        accept: ".pdf",
+                        style: "display:none",
+                        onchange: move |evt: Event<FormData>| {
+                            let files = evt.files();
+                            if let Some(file) = files.first() {
+                                let file = file.clone();
+                                let t_err = t_import_err;
+                                let file_size = file.size();
+                                web_sys::console::log_1(&format!("PDF import: {} ({} bytes)", file.name(), file_size).into());
+                                if file_size > 10 * 1024 * 1024 {
+                                    if let Some(w) = web_sys::window() {
+                                        w.alert_with_message("PDF too large (max 10 MB).").ok();
+                                    }
+                                    return;
+                                }
+                                spawn(async move {
+                                    let bytes = match file.read_bytes().await {
+                                        Ok(b) => b.to_vec(),
+                                        Err(e) => {
+                                            web_sys::console::error_1(&format!("PDF read error: {e}").into());
+                                            if let Some(w) = web_sys::window() {
+                                                w.alert_with_message(&format!("{t_err}: {e}")).ok();
+                                            }
+                                            return;
+                                        }
+                                    };
+                                    web_sys::console::log_1(&format!("PDF loaded: {} bytes, starting parse...", bytes.len()).into());
+                                    match pdf_import::import_pdf(&bytes) {
+                                        Ok(parsed) => {
+                                            web_sys::console::log_1(&"PDF import succeeded".into());
+                                            cv.write().apply_import(parsed);
+                                        }
+                                        Err(e) => {
+                                            web_sys::console::error_1(&format!("PDF parse error: {e}").into());
+                                            if let Some(w) = web_sys::window() {
+                                                w.alert_with_message(&format!("{t_err}: {e}")).ok();
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                    }
                 }
             }
 
@@ -1061,6 +1131,8 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
             context: LocalizedText::default(),
             bullets: vec![LocalizedText::default()],
             tools: Vec::new(),
+            start_date: String::new(),
+            end_date: String::new(),
         }]
     });
 
@@ -1213,6 +1285,8 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     context: LocalizedText::default(),
                                     bullets: vec![LocalizedText::default()],
                                     tools: Vec::new(),
+                                    start_date: String::new(),
+                                    end_date: String::new(),
                                 });
                             },
                             "{t_add_project}"
@@ -1229,6 +1303,8 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                         context: p.context.clone(),
                                         bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
                                         tools: p.tools.clone(),
+                                        start_date: p.start_date.clone(),
+                                        end_date: p.end_date.clone(),
                                     }
                                 }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
                                 cv.write().experiences.push(Experience {
@@ -1240,7 +1316,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 new_company.set(String::new()); new_role.set(LocalizedText::default());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new() }]);
+                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]);
                                 show_form.set(false);
                             },
                             "{t_add_pos}"
@@ -1316,7 +1392,7 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     "Cloud"     => SkillCategory::Cloud,
                                     "Database"  => SkillCategory::Database,
                                     "Soft Skill"=> SkillCategory::Soft,
-                                    "Other"     => SkillCategory::Other,
+                                    "Other Skills" => SkillCategory::Other,
                                     _           => SkillCategory::Programming,
                                 });
                             },

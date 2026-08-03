@@ -40,13 +40,14 @@ fn inject_head_resources() {
         let _ = head.append_child(&el);
     }
 
-    if let Ok(el) = doc.create_element("script") {
-        let _ = el.set_attribute(
-            "src",
-            "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js",
-        );
-        let _ = head.append_child(&el);
-    }
+    // NOTE: html2pdf.js (+ html2canvas + jsPDF) previously loaded here has
+    // been removed. That pipeline works by rasterizing the DOM into a
+    // screenshot image and embedding that image in a PDF — producing a PDF
+    // with no real text layer at all (unselectable, unsearchable, and
+    // unreadable by any text-extraction tool, including this app's own PDF
+    // import). We now use the browser's native print-to-PDF instead (see
+    // download_pdf in cv_preview.rs / tailor.rs), which renders actual text
+    // glyphs.
 
     if let Ok(el) = doc.create_element("link") {
         let _ = el.set_attribute("rel", "icon");
