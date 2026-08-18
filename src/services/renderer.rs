@@ -92,7 +92,16 @@ fn break_ligatures(s: &str) -> String {
 // Emitting the bullet as ordinary text keeps round-tripping our own PDFs
 // working.
 fn bullet_li(text: &str) -> String {
-    format!("<li>• {}</li>", esc(text))
+    format!("<li>• {}</li>", render_inline(text))
+}
+
+/// Escapes `text` for HTML and applies inline `**bold**` markup, without the
+/// paragraph/`<br>` splitting that `render_rich_text` does. Use this for any
+/// single-line, user-authored field (bullets, one-line context/description
+/// strings) where a highlighted keyword or phrase should render as
+/// `<strong>`, but the field isn't free-form multi-paragraph prose.
+fn render_inline(text: &str) -> String {
+    apply_bold(&esc(text))
 }
 
 fn tag(href: &str, label: &str) -> String {
@@ -434,21 +443,27 @@ fn apply_bold(text: &str) -> String {
             chars.next(); // consume second *
                           // Collect until next **
             let mut inner = String::new();
+            let mut closed = false;
             loop {
                 match chars.next() {
                     Some('*') if chars.peek() == Some(&'*') => {
                         chars.next();
+                        closed = true;
                         break;
                     }
                     Some(ch) => inner.push(ch),
-                    None => {
-                        result.push_str("**");
-                        result.push_str(&inner);
-                        break;
-                    }
+                    None => break,
                 }
             }
-            result.push_str(&format!("<strong>{inner}</strong>"));
+            if closed {
+                result.push_str(&format!("<strong>{inner}</strong>"));
+            } else {
+                // No closing "**" found — this wasn't a bold marker after
+                // all, so emit the "**" and whatever text followed it
+                // exactly as written rather than swallowing or wrapping it.
+                result.push_str("**");
+                result.push_str(&inner);
+            }
         } else {
             result.push(c);
         }
@@ -610,7 +625,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             } else {
                 format!(
                     r#"<div class="exp-project-context">{}</div>"#,
-                    esc(proj.context.get(lang))
+                    render_inline(proj.context.get(lang))
                 )
             };
             projects_html.push_str(&format!(
@@ -731,7 +746,7 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
 </div>"#,
             name = esc(&proj.name),
             url = url_html,
-            desc = esc(proj.description.get(lang)),
+            desc = render_inline(proj.description.get(lang)),
             bullets = bullets_html,
             tools = tools_div,
         ));
@@ -1337,6 +1352,66 @@ mod tests {
         let html = render_tailored_cv(&cv, "", Lang::En);
         assert!(html.contains("keyword14"), "14th keyword should appear");
         assert!(!html.contains("keyword15"), "15th+ should be truncated");
+    }
+
+    // ── render_inline / bullet_li bold highlighting ────────────────────────────
+
+    #[test]
+    fn render_inline_applies_bold_markers() {
+        assert_eq!(
+            render_inline("Led a **critical** migration"),
+            "Led a <strong>critical</strong> migration"
+        );
+    }
+
+    #[test]
+    fn render_inline_escapes_html_before_bolding() {
+        // esc() must run first so `**<script>**` can't inject a real tag —
+        // apply_bold only ever wraps already-escaped text in <strong>.
+        assert_eq!(
+            render_inline("**<script>**"),
+            "<strong>&lt;script&gt;</strong>"
+        );
+    }
+
+    #[test]
+    fn render_inline_unterminated_bold_marker_is_left_literal() {
+        // A trailing "**" with no closing pair shouldn't eat the rest of
+        // the text or panic; it's just emitted as-is.
+        assert_eq!(render_inline("done **soon"), "done **soon");
+    }
+
+    #[test]
+    fn bullet_li_highlights_bold_text_in_bullets() {
+        assert_eq!(
+            bullet_li("Cut **P0 incidents** by 40%"),
+            "<li>• Cut <strong>P0 incidents</strong> by 40%</li>"
+        );
+    }
+
+    #[test]
+    fn render_experience_bolds_project_context_and_bullets() {
+        use crate::models::{Experience, ExperienceProject, LifetimeCV, LocalizedText};
+        let mut cv = LifetimeCV::default();
+        cv.experiences.push(Experience {
+            id: "e1".into(),
+            company: "Acme".into(),
+            role: LocalizedText::same("Engineer"),
+            location: String::new(),
+            start_date: "2020".into(),
+            end_date: "Present".into(),
+            projects: vec![ExperienceProject {
+                name: LocalizedText::same("Platform"),
+                context: LocalizedText::same("Owned the **core** service"),
+                bullets: vec![LocalizedText::same("Shipped **key** feature")],
+                tools: vec![],
+                start_date: String::new(),
+                end_date: String::new(),
+            }],
+        });
+        let html = render_lifetime_cv(&cv, Lang::En);
+        assert!(html.contains("Owned the <strong>core</strong> service"));
+        assert!(html.contains("Shipped <strong>key</strong> feature"));
     }
 
     // ── score_color_for ───────────────────────────────────────────────────────

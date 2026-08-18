@@ -12,6 +12,189 @@ fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+// ── Bold highlighting ────────────────────────────────────────────────────────
+//
+// Free-text fields (bullets, project context/description, summary) support
+// `**bold**` markup, rendered as <strong> by services::renderer::render_inline
+// / render_rich_text. Typing the asterisks by hand works, but most people
+// don't know that syntax exists, so BoldableField/BoldableTextarea add a "B"
+// button: with a text selection active in the field, it wraps just that
+// selection; with no selection, it toggles bold on the whole field value.
+// Clicking it again on already-bolded text un-bolds it.
+
+/// Wraps (or unwraps) `**bold**` markers around the `[start, end)` character
+/// range of `value`. `start == end` (no selection) toggles bold on the
+/// entire field instead, which is the common case for these short
+/// single-purpose inputs. Offsets are character (not byte) indices, matching
+/// what `HtmlInputElement`/`HtmlTextAreaElement::selection_start/end` return
+/// for the BMP text these CV fields are expected to contain.
+fn toggle_bold_range(value: &str, start: usize, end: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let start = start.min(chars.len());
+    let end = end.max(start).min(chars.len());
+
+    if start == end {
+        let trimmed = value.trim();
+        let already_bold =
+            trimmed.len() >= 4 && trimmed.starts_with("**") && trimmed.ends_with("**");
+        return if already_bold {
+            trimmed[2..trimmed.len() - 2].to_string()
+        } else if value.is_empty() {
+            value.to_string()
+        } else {
+            format!("**{value}**")
+        };
+    }
+
+    let before: String = chars[..start].iter().collect();
+    let selected: String = chars[start..end].iter().collect();
+    let after: String = chars[end..].iter().collect();
+    let already_bold =
+        selected.len() >= 4 && selected.starts_with("**") && selected.ends_with("**");
+    if already_bold {
+        format!("{before}{}{after}", &selected[2..selected.len() - 2])
+    } else {
+        format!("{before}**{selected}**{after}")
+    }
+}
+
+/// Reads the current selection (if any) out of the DOM element with `id`
+/// and returns the bold-toggled value, ready to feed back into the
+/// controlling signal via its `oninput` handler. Returns `None` if the
+/// element can't be found or isn't a text input/textarea (e.g. during
+/// server rendering, where there's no DOM at all).
+fn toggle_bold_for_field(id: &str, current_value: &str) -> String {
+    let selection = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|doc| doc.get_element_by_id(id))
+        .and_then(|el| {
+            if let Ok(input) = el.clone().dyn_into::<web_sys::HtmlInputElement>() {
+                let start = input.selection_start().ok().flatten();
+                let end = input.selection_end().ok().flatten();
+                Some((start.unwrap_or(0) as usize, end.unwrap_or(0) as usize))
+            } else if let Ok(textarea) = el.dyn_into::<web_sys::HtmlTextAreaElement>() {
+                let start = textarea.selection_start().ok().flatten();
+                let end = textarea.selection_end().ok().flatten();
+                Some((start.unwrap_or(0) as usize, end.unwrap_or(0) as usize))
+            } else {
+                None
+            }
+        });
+    let (start, end) = selection.unwrap_or((0, 0));
+    toggle_bold_range(current_value, start, end)
+}
+
+// ── Ctrl+Z for the bold button ──────────────────────────────────────────────
+//
+// The bold button sets `value` on a Dioxus-controlled input, which doesn't
+// go through the browser's native "typed" undo history — so a plain
+// Ctrl+Z right after clicking Bold does nothing (or worse, undoes some
+// unrelated earlier keystroke). We track bold actions ourselves in a small
+// stack, provided as context from `CvEditor`, and a single document-level
+// keydown listener (registered once, in `CvEditor`) pops it on Ctrl/Cmd+Z —
+// but only while focus is still on the exact field that was just bolded, so
+// we never hijack the browser's own undo for normal typing elsewhere.
+const MAX_BOLD_UNDO_DEPTH: usize = 100;
+
+#[derive(Clone)]
+struct BoldUndoEntry {
+    field_id: String,
+    previous_value: String,
+    apply: EventHandler<String>,
+}
+
+type BoldUndoStack = Signal<Vec<BoldUndoEntry>>;
+
+fn push_bold_undo(mut stack: BoldUndoStack, entry: BoldUndoEntry) {
+    let mut s = stack.write();
+    s.push(entry);
+    if s.len() > MAX_BOLD_UNDO_DEPTH {
+        s.remove(0);
+    }
+}
+
+/// Single-line boldable input: a text `input` plus a "B" toggle button.
+#[component]
+fn BoldableField(
+    id: String,
+    value: String,
+    oninput: EventHandler<String>,
+    placeholder: Option<String>,
+) -> Element {
+    let undo_stack: BoldUndoStack = use_context();
+    let field_id = id.clone();
+    let field_id_btn = id.clone();
+    let current = value.clone();
+    rsx! {
+        div { class: "boldable-field",
+            input {
+                id: "{field_id}",
+                r#type: "text",
+                class: "input",
+                placeholder: placeholder.unwrap_or_default(),
+                value: "{value}",
+                oninput: move |e| oninput.call(e.value()),
+            }
+            button {
+                r#type: "button",
+                class: "btn-icon btn-bold",
+                title: "Bold selected text (Ctrl+Z to undo)",
+                onclick: move |_| {
+                    let new_value = toggle_bold_for_field(&field_id_btn, &current);
+                    push_bold_undo(undo_stack, BoldUndoEntry {
+                        field_id: field_id_btn.clone(),
+                        previous_value: current.clone(),
+                        apply: oninput,
+                    });
+                    oninput.call(new_value);
+                },
+                strong { "B" }
+            }
+        }
+    }
+}
+
+/// Multi-line boldable field: a `textarea` plus a "B" toggle button.
+#[component]
+fn BoldableTextarea(
+    id: String,
+    value: String,
+    oninput: EventHandler<String>,
+    rows: i64,
+    placeholder: Option<String>,
+) -> Element {
+    let undo_stack: BoldUndoStack = use_context();
+    let field_id_btn = id.clone();
+    let current = value.clone();
+    rsx! {
+        div { class: "boldable-field boldable-field-textarea",
+            textarea {
+                id: "{id}",
+                class: "input textarea",
+                rows: "{rows}",
+                placeholder: placeholder.unwrap_or_default(),
+                value: "{value}",
+                oninput: move |e| oninput.call(e.value()),
+            }
+            button {
+                r#type: "button",
+                class: "btn-icon btn-bold",
+                title: "Bold selected text (Ctrl+Z to undo)",
+                onclick: move |_| {
+                    let new_value = toggle_bold_for_field(&field_id_btn, &current);
+                    push_bold_undo(undo_stack, BoldUndoEntry {
+                        field_id: field_id_btn.clone(),
+                        previous_value: current.clone(),
+                        apply: oninput,
+                    });
+                    oninput.call(new_value);
+                },
+                strong { "B" }
+            }
+        }
+    }
+}
+
 const STEP_KEYS: [&str; 6] = [
     "ed_step_personal",
     "ed_step_experience",
@@ -167,10 +350,11 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 }
                             }
                             Field { label: t_project_ctx.to_string(),
-                                input { r#type: "text", class: "input",
+                                BoldableField {
                                     key: "{pi}-{l:?}",
+                                    id: format!("exp-ctx-{index}-{pi}"),
                                     value: e_projects.read()[pi].context.get(l).to_string(),
-                                    oninput: move |e| { e_projects.write()[pi].context.set(l, e.value()); },
+                                    oninput: move |v| { e_projects.write()[pi].context.set(l, v); },
                                 }
                             }
                             div { class: "field",
@@ -178,11 +362,11 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 for bi in 0..e_projects.read()[pi].bullets.len() {
                                     div { class: "bullet-row",
                                         span { class: "bullet-dot", "•" }
-                                        input {
-                                            r#type: "text", class: "input",
+                                        BoldableField {
                                             key: "{pi}-{bi}-{l:?}",
+                                            id: format!("exp-bullet-{index}-{pi}-{bi}"),
                                             value: e_projects.read()[pi].bullets[bi].get(l).to_string(),
-                                            oninput: move |e| { e_projects.write()[pi].bullets[bi].set(l, e.value()); },
+                                            oninput: move |v| { e_projects.write()[pi].bullets[bi].set(l, v); },
                                         }
                                         if e_projects.read()[pi].bullets.len() > 1 {
                                             button { class: "btn-icon",
@@ -603,10 +787,12 @@ fn ProjItem(proj: Project, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                     }
                 }
                 Field { label: t_desc.to_string(),
-                    textarea { class: "input textarea", rows: "2",
+                    BoldableTextarea {
                         key: "{l:?}",
+                        id: format!("proj-desc-edit-{index}"),
+                        rows: 2,
                         value: e_desc.read().get(l).to_string(),
-                        oninput: move |e| { e_desc.write().set(l, e.value()); },
+                        oninput: move |v| { e_desc.write().set(l, v); },
                     }
                 }
                 Field { label: t_tools.to_string(),
@@ -870,6 +1056,48 @@ pub fn CvEditor() -> Element {
     let l = *lang.read();
     let mut step = use_signal(|| Step::Personal);
 
+    let bold_undo_stack: BoldUndoStack =
+        use_context_provider(|| Signal::new(Vec::<BoldUndoEntry>::new()));
+    use_effect(move || {
+        let mut stack = bold_undo_stack;
+        let closure =
+            web_sys::wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+                move |evt: web_sys::KeyboardEvent| {
+                    let is_undo_combo = (evt.ctrl_key() || evt.meta_key())
+                        && !evt.shift_key()
+                        && evt.key().eq_ignore_ascii_case("z");
+                    if !is_undo_combo {
+                        return;
+                    }
+                    let Some(entry) = stack.write().pop() else {
+                        return;
+                    };
+                    let focused_id = web_sys::window()
+                        .and_then(|w| w.document())
+                        .and_then(|doc| doc.active_element())
+                        .map(|el| el.id());
+                    if focused_id.as_deref() != Some(entry.field_id.as_str()) {
+                        // Focus has moved since the bold click (or there's
+                        // nothing focused at all) — this Ctrl+Z isn't ours to
+                        // take. Put the entry back and let the browser handle
+                        // its own undo history for whatever field is focused.
+                        stack.write().push(entry);
+                        return;
+                    }
+                    evt.prevent_default();
+                    entry.apply.call(entry.previous_value);
+                },
+            );
+        if let Some(window) = web_sys::window() {
+            let _ = window
+                .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
+        }
+        // Intentionally leaked: this listener needs to outlive the effect's
+        // scope for the lifetime of the page, and CvEditor is mounted once
+        // per visit to the editor route.
+        closure.forget();
+    });
+
     let current_idx = step.read().index();
     let show_nav = *step.read() != Step::Done;
     let show_back = *step.read() != Step::Personal && *step.read() != Step::Done;
@@ -1102,11 +1330,13 @@ fn StepPersonal(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                 }
             }
             Field { label: t_summary.to_string(),
-                textarea { class: "input textarea", rows: "4",
+                BoldableTextarea {
                     key: "{l:?}",
-                    placeholder: "{t_hint}",
+                    id: "personal-summary".to_string(),
+                    rows: 4,
+                    placeholder: t_hint.to_string(),
                     value: cv.read().personal.summary.get(l).to_string(),
-                    oninput: move |e| { cv.write().personal.summary.set(l, e.value()); },
+                    oninput: move |v| { cv.write().personal.summary.set(l, v); },
                 }
             }
         }
@@ -1226,10 +1456,11 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     }
                                 }
                                 Field { label: t_project_ctx.to_string(),
-                                    input { r#type: "text", class: "input",
+                                    BoldableField {
                                         key: "{pi}-{l:?}",
+                                        id: format!("new-exp-ctx-{pi}"),
                                         value: new_projects.read()[pi].context.get(l).to_string(),
-                                        oninput: move |e| { new_projects.write()[pi].context.set(l, e.value()); },
+                                        oninput: move |v| { new_projects.write()[pi].context.set(l, v); },
                                     }
                                 }
                                 div { class: "field",
@@ -1237,12 +1468,12 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     for bi in 0..new_projects.read()[pi].bullets.len() {
                                         div { class: "bullet-row",
                                             span { class: "bullet-dot", "•" }
-                                            input {
-                                                r#type: "text", class: "input",
+                                            BoldableField {
                                                 key: "{pi}-{bi}-{l:?}",
-                                                placeholder: "Reduced API latency by 40%",
+                                                id: format!("new-exp-bullet-{pi}-{bi}"),
+                                                placeholder: "Reduced API latency by 40%".to_string(),
                                                 value: new_projects.read()[pi].bullets[bi].get(l).to_string(),
-                                                oninput: move |e| { new_projects.write()[pi].bullets[bi].set(l, e.value()); },
+                                                oninput: move |v| { new_projects.write()[pi].bullets[bi].set(l, v); },
                                             }
                                             if new_projects.read()[pi].bullets.len() > 1 {
                                                 button {

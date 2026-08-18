@@ -434,6 +434,29 @@ a:hover { text-decoration: underline; }
 .bullet-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .bullet-dot { color: var(--blue); font-size: 1.2rem; flex-shrink: 0; }
 
+/* Bold-toggle "B" button paired with a boldable input/textarea (see
+   BoldableField/BoldableTextarea in cv_editor.rs). Sits flush against the
+   field so it reads as one control, not two. */
+.boldable-field { display: flex; align-items: stretch; gap: 6px; flex: 1; min-width: 0; }
+.boldable-field .input { flex: 1; min-width: 0; }
+.boldable-field-textarea { align-items: flex-start; }
+.btn-bold {
+  flex-shrink: 0;
+  align-self: center;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-2);
+}
+.boldable-field-textarea .btn-bold { align-self: flex-start; margin-top: 2px; }
+.btn-bold:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-pale, #eff6ff); }
+.btn-bold strong { font-size: 0.85rem; }
+
 .subsection { margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--border-2); }
 .subsection:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 

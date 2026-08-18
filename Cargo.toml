@@ -35,6 +35,8 @@ web-sys = { version = "0.3", features = [
     "HtmlScriptElement",
     "HtmlButtonElement",
     "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "KeyboardEvent",
     "Node",
     "Blob",
     "BlobPropertyBag",
