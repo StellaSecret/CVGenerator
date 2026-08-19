@@ -389,6 +389,20 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                     },
                                 }
                             }
+                            div { class: "form-row",
+                                Field { label: t_start.to_string(),
+                                    input { r#type: "text", class: "input",
+                                        value: e_projects.read()[pi].start_date.clone(),
+                                        oninput: move |e| { e_projects.write()[pi].start_date = e.value(); },
+                                    }
+                                }
+                                Field { label: t_end.to_string(),
+                                    input { r#type: "text", class: "input", placeholder: "{t_present}",
+                                        value: e_projects.read()[pi].end_date.clone(),
+                                        oninput: move |e| { e_projects.write()[pi].end_date = e.value(); },
+                                    }
+                                }
+                            }
                             if e_projects.read().len() > 1 {
                                 div { class: "project-actions",
                                     if pi > 0 {
@@ -1523,6 +1537,20 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                                 .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
                                             new_projects.write()[pi].tools = tools;
                                         },
+                                    }
+                                }
+                                div { class: "form-row",
+                                    Field { label: t_start.to_string(),
+                                        input { r#type: "text", class: "input", placeholder: "Jan 2025",
+                                            value: new_projects.read()[pi].start_date.clone(),
+                                            oninput: move |e| { new_projects.write()[pi].start_date = e.value(); },
+                                        }
+                                    }
+                                    Field { label: t_end.to_string(),
+                                        input { r#type: "text", class: "input", placeholder: "{t_present}",
+                                            value: new_projects.read()[pi].end_date.clone(),
+                                            oninput: move |e| { new_projects.write()[pi].end_date = e.value(); },
+                                        }
                                     }
                                 }
                                 if new_projects.read().len() > 1 {
