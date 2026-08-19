@@ -84,35 +84,6 @@ fn toggle_bold_for_field(id: &str, current_value: &str) -> String {
     toggle_bold_range(current_value, start, end)
 }
 
-// ── Ctrl+Z for the bold button ──────────────────────────────────────────────
-//
-// The bold button sets `value` on a Dioxus-controlled input, which doesn't
-// go through the browser's native "typed" undo history — so a plain
-// Ctrl+Z right after clicking Bold does nothing (or worse, undoes some
-// unrelated earlier keystroke). We track bold actions ourselves in a small
-// stack, provided as context from `CvEditor`, and a single document-level
-// keydown listener (registered once, in `CvEditor`) pops it on Ctrl/Cmd+Z —
-// but only while focus is still on the exact field that was just bolded, so
-// we never hijack the browser's own undo for normal typing elsewhere.
-const MAX_BOLD_UNDO_DEPTH: usize = 100;
-
-#[derive(Clone)]
-struct BoldUndoEntry {
-    field_id: String,
-    previous_value: String,
-    apply: EventHandler<String>,
-}
-
-type BoldUndoStack = Signal<Vec<BoldUndoEntry>>;
-
-fn push_bold_undo(mut stack: BoldUndoStack, entry: BoldUndoEntry) {
-    let mut s = stack.write();
-    s.push(entry);
-    if s.len() > MAX_BOLD_UNDO_DEPTH {
-        s.remove(0);
-    }
-}
-
 /// Single-line boldable input: a text `input` plus a "B" toggle button.
 #[component]
 fn BoldableField(
@@ -121,7 +92,6 @@ fn BoldableField(
     oninput: EventHandler<String>,
     placeholder: Option<String>,
 ) -> Element {
-    let undo_stack: BoldUndoStack = use_context();
     let field_id = id.clone();
     let field_id_btn = id.clone();
     let current = value.clone();
@@ -138,15 +108,9 @@ fn BoldableField(
             button {
                 r#type: "button",
                 class: "btn-icon btn-bold",
-                title: "Bold selected text (Ctrl+Z to undo)",
+                title: "Bold selected text",
                 onclick: move |_| {
-                    let new_value = toggle_bold_for_field(&field_id_btn, &current);
-                    push_bold_undo(undo_stack, BoldUndoEntry {
-                        field_id: field_id_btn.clone(),
-                        previous_value: current.clone(),
-                        apply: oninput,
-                    });
-                    oninput.call(new_value);
+                    oninput.call(toggle_bold_for_field(&field_id_btn, &current));
                 },
                 strong { "B" }
             }
@@ -163,7 +127,6 @@ fn BoldableTextarea(
     rows: i64,
     placeholder: Option<String>,
 ) -> Element {
-    let undo_stack: BoldUndoStack = use_context();
     let field_id_btn = id.clone();
     let current = value.clone();
     rsx! {
@@ -179,15 +142,9 @@ fn BoldableTextarea(
             button {
                 r#type: "button",
                 class: "btn-icon btn-bold",
-                title: "Bold selected text (Ctrl+Z to undo)",
+                title: "Bold selected text",
                 onclick: move |_| {
-                    let new_value = toggle_bold_for_field(&field_id_btn, &current);
-                    push_bold_undo(undo_stack, BoldUndoEntry {
-                        field_id: field_id_btn.clone(),
-                        previous_value: current.clone(),
-                        apply: oninput,
-                    });
-                    oninput.call(new_value);
+                    oninput.call(toggle_bold_for_field(&field_id_btn, &current));
                 },
                 strong { "B" }
             }
@@ -298,6 +255,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let t_present = i18n::tr("ed_present", *lang.read());
     let t_add_project = i18n::tr("ed_add_project", *lang.read());
     let t_project_ctx = i18n::tr("ed_project_context", *lang.read());
+    let t_add_context = i18n::tr("ed_add_context", *lang.read());
 
     if *editing.read() {
         rsx! {
@@ -349,12 +307,28 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                     oninput: move |e| { e_projects.write()[pi].name.set(l, e.value()); },
                                 }
                             }
-                            Field { label: t_project_ctx.to_string(),
-                                BoldableField {
-                                    key: "{pi}-{l:?}",
-                                    id: format!("exp-ctx-{index}-{pi}"),
-                                    value: e_projects.read()[pi].context.get(l).to_string(),
-                                    oninput: move |v| { e_projects.write()[pi].context.set(l, v); },
+                            div { class: "field",
+                                label { class: "label", "{t_project_ctx}" }
+                                for ci in 0..e_projects.read()[pi].context.len() {
+                                    div { class: "bullet-row",
+                                        span { class: "bullet-dot", "•" }
+                                        BoldableField {
+                                            key: "{pi}-{ci}-{l:?}",
+                                            id: format!("exp-ctx-{index}-{pi}-{ci}"),
+                                            value: e_projects.read()[pi].context[ci].get(l).to_string(),
+                                            oninput: move |v| { e_projects.write()[pi].context[ci].set(l, v); },
+                                        }
+                                        if e_projects.read()[pi].context.len() > 1 {
+                                            button { class: "btn-icon",
+                                                onclick: move |_| { e_projects.write()[pi].context.remove(ci); },
+                                                "×"
+                                            }
+                                        }
+                                    }
+                                }
+                                button { class: "btn-text",
+                                    onclick: move |_| { e_projects.write()[pi].context.push(LocalizedText::default()); },
+                                    "{t_add_context}"
                                 }
                             }
                             div { class: "field",
@@ -403,7 +377,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                         onclick: move |_| {
                             e_projects.write().push(ExperienceProject {
                                 name: LocalizedText::default(),
-                                context: LocalizedText::default(),
+                                context: vec![LocalizedText::default()],
                                 bullets: vec![LocalizedText::default()],
                                 tools: Vec::new(),
                                 start_date: String::new(),
@@ -420,7 +394,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             let projects: Vec<ExperienceProject> = e_projects.read().iter().map(|p| {
                                 ExperienceProject {
                                     name: p.name.clone(),
-                                    context: p.context.clone(),
+                                    context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
                                     bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
                                     tools: p.tools.clone(),
                                     start_date: p.start_date.clone(),
@@ -461,8 +435,8 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 if !proj.name.get(l).is_empty() {
                                     div { class: "item-project-name", "{proj.name.get(l)}" }
                                 }
-                                if !proj.context.get(l).is_empty() {
-                                    div { class: "item-project-context", "{proj.context.get(l)}" }
+                                for c in proj.context.iter().map(|c| c.get(l)).filter(|c| !c.is_empty()) {
+                                    div { class: "item-project-context", "{c}" }
                                 }
                                 if !proj.bullets.is_empty() {
                                     div { class: "item-tags",
@@ -490,7 +464,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
                             e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]
+                                vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]
                             } else {
                                 item.projects
                             });
@@ -1056,48 +1030,6 @@ pub fn CvEditor() -> Element {
     let l = *lang.read();
     let mut step = use_signal(|| Step::Personal);
 
-    let bold_undo_stack: BoldUndoStack =
-        use_context_provider(|| Signal::new(Vec::<BoldUndoEntry>::new()));
-    use_effect(move || {
-        let mut stack = bold_undo_stack;
-        let closure =
-            web_sys::wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
-                move |evt: web_sys::KeyboardEvent| {
-                    let is_undo_combo = (evt.ctrl_key() || evt.meta_key())
-                        && !evt.shift_key()
-                        && evt.key().eq_ignore_ascii_case("z");
-                    if !is_undo_combo {
-                        return;
-                    }
-                    let Some(entry) = stack.write().pop() else {
-                        return;
-                    };
-                    let focused_id = web_sys::window()
-                        .and_then(|w| w.document())
-                        .and_then(|doc| doc.active_element())
-                        .map(|el| el.id());
-                    if focused_id.as_deref() != Some(entry.field_id.as_str()) {
-                        // Focus has moved since the bold click (or there's
-                        // nothing focused at all) — this Ctrl+Z isn't ours to
-                        // take. Put the entry back and let the browser handle
-                        // its own undo history for whatever field is focused.
-                        stack.write().push(entry);
-                        return;
-                    }
-                    evt.prevent_default();
-                    entry.apply.call(entry.previous_value);
-                },
-            );
-        if let Some(window) = web_sys::window() {
-            let _ = window
-                .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
-        }
-        // Intentionally leaked: this listener needs to outlive the effect's
-        // scope for the lifetime of the page, and CvEditor is mounted once
-        // per visit to the editor route.
-        closure.forget();
-    });
-
     let current_idx = step.read().index();
     let show_nav = *step.read() != Step::Done;
     let show_back = *step.read() != Step::Personal && *step.read() != Step::Done;
@@ -1358,7 +1290,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_projects = use_signal(|| {
         vec![ExperienceProject {
             name: LocalizedText::default(),
-            context: LocalizedText::default(),
+            context: vec![LocalizedText::default()],
             bullets: vec![LocalizedText::default()],
             tools: Vec::new(),
             start_date: String::new(),
@@ -1387,6 +1319,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_add_pos = i18n::tr("ed_add_position", l);
     let t_add_project = i18n::tr("ed_add_project", l);
     let t_project_ctx = i18n::tr("ed_project_context", l);
+    let t_add_context = i18n::tr("ed_add_context", l);
     let t_cancel = i18n::tr("ed_cancel", l);
 
     rsx! {
@@ -1455,12 +1388,28 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                         oninput: move |e| { new_projects.write()[pi].name.set(l, e.value()); },
                                     }
                                 }
-                                Field { label: t_project_ctx.to_string(),
-                                    BoldableField {
-                                        key: "{pi}-{l:?}",
-                                        id: format!("new-exp-ctx-{pi}"),
-                                        value: new_projects.read()[pi].context.get(l).to_string(),
-                                        oninput: move |v| { new_projects.write()[pi].context.set(l, v); },
+                                div { class: "field",
+                                    label { class: "label", "{t_project_ctx}" }
+                                    for ci in 0..new_projects.read()[pi].context.len() {
+                                        div { class: "bullet-row",
+                                            span { class: "bullet-dot", "•" }
+                                            BoldableField {
+                                                key: "{pi}-{ci}-{l:?}",
+                                                id: format!("new-exp-ctx-{pi}-{ci}"),
+                                                value: new_projects.read()[pi].context[ci].get(l).to_string(),
+                                                oninput: move |v| { new_projects.write()[pi].context[ci].set(l, v); },
+                                            }
+                                            if new_projects.read()[pi].context.len() > 1 {
+                                                button { class: "btn-icon",
+                                                    onclick: move |_| { new_projects.write()[pi].context.remove(ci); },
+                                                    "×"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    button { class: "btn-text",
+                                        onclick: move |_| { new_projects.write()[pi].context.push(LocalizedText::default()); },
+                                        "{t_add_context}"
                                     }
                                 }
                                 div { class: "field",
@@ -1513,7 +1462,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             onclick: move |_| {
                                 new_projects.write().push(ExperienceProject {
                                     name: LocalizedText::default(),
-                                    context: LocalizedText::default(),
+                                    context: vec![LocalizedText::default()],
                                     bullets: vec![LocalizedText::default()],
                                     tools: Vec::new(),
                                     start_date: String::new(),
@@ -1531,7 +1480,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 let projects: Vec<ExperienceProject> = new_projects.read().iter().map(|p| {
                                     ExperienceProject {
                                         name: p.name.clone(),
-                                        context: p.context.clone(),
+                                        context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
                                         bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
                                         tools: p.tools.clone(),
                                         start_date: p.start_date.clone(),
@@ -1547,7 +1496,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 new_company.set(String::new()); new_role.set(LocalizedText::default());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: LocalizedText::default(), bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]);
+                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]);
                                 show_form.set(false);
                             },
                             "{t_add_pos}"

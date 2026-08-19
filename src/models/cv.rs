@@ -105,10 +105,50 @@ pub struct PersonalInfo {
 
 // ── Experience ────────────────────────────────────────────────────────────────
 
+/// Backward-compatible deserializer for `ExperienceProject::context`: accepts
+/// either a single `LocalizedText` (the shape it used to be — collapsed into
+/// a one-element list, or an empty list if it was empty) or the current
+/// `Vec<LocalizedText>`. See the field's own doc comment for why this exists.
+fn deserialize_context<'de, D>(deserializer: D) -> Result<Vec<LocalizedText>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Legacy(LocalizedText),
+        List(Vec<LocalizedText>),
+    }
+    Ok(match Repr::deserialize(deserializer)? {
+        Repr::Legacy(lt) if lt.is_empty() => Vec::new(),
+        Repr::Legacy(lt) => vec![lt],
+        Repr::List(list) => list,
+    })
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ExperienceProject {
     pub name: LocalizedText,
-    pub context: LocalizedText,
+    // A list, not one paragraph, matching `bullets`/`Education::achievements`
+    // below — the same shape as everything else in this struct that's
+    // free-form user content. `pdf_import::flush_project` already
+    // accumulates a "Situation: ..." / "Tasks: ..." intro as separate
+    // entries internally (a context-label line like "Tasks:" always
+    // starts a fresh entry — see `commit_pending_line`), so keeping that
+    // as a list instead of joining it into one string is a natural fit,
+    // not a workaround.
+    //
+    // Deserialization accepts both shapes for backward compatibility with
+    // CVs saved before this became a list: the old single `LocalizedText`
+    // (wrapped into a one-element list, or dropped entirely if it was
+    // empty) and the new array. Without this, loading a pre-existing saved
+    // CV would fail to deserialize `ExperienceProject` at all — and
+    // `storage::load_cv` swallows that error into `None`, which reads to
+    // the user as their whole saved CV silently vanishing, not just this
+    // one field. See `LocalizedText`'s own `Deserialize` impl above for the
+    // same pattern applied to its earlier plain-string → `{en, fr}` migration.
+    #[serde(deserialize_with = "deserialize_context", default)]
+    pub context: Vec<LocalizedText>,
     pub bullets: Vec<LocalizedText>,
     pub tools: Vec<String>,
     // Optional period for this sub-project (e.g. "February 2025" /
@@ -304,8 +344,8 @@ impl LifetimeCV {
             for proj in &exp.projects {
                 parts.push(proj.name.en.clone());
                 parts.push(proj.name.fr.clone());
-                parts.push(proj.context.en.clone());
-                parts.push(proj.context.fr.clone());
+                parts.extend(proj.context.iter().map(|c| c.en.clone()));
+                parts.extend(proj.context.iter().map(|c| c.fr.clone()));
                 parts.extend(proj.bullets.iter().map(|b| b.en.clone()));
                 parts.extend(proj.bullets.iter().map(|b| b.fr.clone()));
                 parts.extend(proj.tools.clone());
@@ -342,7 +382,9 @@ impl LifetimeCV {
             exp.role.seed_missing(from, to);
             for proj in &mut exp.projects {
                 proj.name.seed_missing(from, to);
-                proj.context.seed_missing(from, to);
+                for c in &mut proj.context {
+                    c.seed_missing(from, to);
+                }
                 for bullet in &mut proj.bullets {
                     bullet.seed_missing(from, to);
                 }
@@ -473,10 +515,10 @@ mod tests {
                     fr: "Ingénieur".to_string(),
                 },
                 projects: vec![ExperienceProject {
-                    context: LocalizedText {
+                    context: vec![LocalizedText {
                         en: "Context".to_string(),
                         fr: String::new(),
-                    },
+                    }],
                     bullets: vec![LocalizedText {
                         en: "Did a thing".to_string(),
                         fr: String::new(),
@@ -490,7 +532,7 @@ mod tests {
         cv.seed_missing_translations(Lang::En, Lang::Fr);
         assert_eq!(cv.personal.summary.fr, "An engineer");
         assert_eq!(cv.experiences[0].role.fr, "Ingénieur"); // untouched, already had content
-        assert_eq!(cv.experiences[0].projects[0].context.fr, "Context");
+        assert_eq!(cv.experiences[0].projects[0].context[0].fr, "Context");
         assert_eq!(cv.experiences[0].projects[0].bullets[0].fr, "Did a thing");
     }
 
@@ -544,7 +586,7 @@ mod tests {
                 company: "Acme".to_string(),
                 projects: vec![ExperienceProject {
                     name: LocalizedText::same("API Platform"),
-                    context: LocalizedText::same("Legacy monolith needed decomposition"),
+                    context: vec![LocalizedText::same("Legacy monolith needed decomposition")],
                     bullets: vec![LocalizedText::same("Built APIs")],
                     tools: vec!["Rust".to_string(), "gRPC".to_string()],
                     ..Default::default()
@@ -743,6 +785,66 @@ mod tests {
         let json = serde_json::to_string(&cv).unwrap();
         let back: LifetimeCV = serde_json::from_str(&json).unwrap();
         assert_eq!(cv, back);
+    }
+
+    // ── ExperienceProject::context backward compatibility ──────────────────────
+    //
+    // `context` used to be a single `LocalizedText`, not a `Vec`. These pin
+    // down that a CV saved under the old shape still loads correctly under
+    // the new one, rather than failing to deserialize (which `storage::
+    // load_cv` would silently turn into "your saved CV is gone").
+
+    #[test]
+    fn context_deserializes_from_legacy_single_object() {
+        let json = r#"{"name":{"en":"","fr":""},"context":{"en":"Old single context","fr":"Ancien contexte"},"bullets":[],"tools":[],"start_date":"","end_date":""}"#;
+        let proj: ExperienceProject =
+            serde_json::from_str(json).expect("legacy context object should deserialize");
+        assert_eq!(proj.context.len(), 1);
+        assert_eq!(proj.context[0].en, "Old single context");
+        assert_eq!(proj.context[0].fr, "Ancien contexte");
+    }
+
+    #[test]
+    fn context_deserializes_from_legacy_empty_object_as_empty_list() {
+        let json = r#"{"name":{"en":"","fr":""},"context":{"en":"","fr":""},"bullets":[],"tools":[],"start_date":"","end_date":""}"#;
+        let proj: ExperienceProject =
+            serde_json::from_str(json).expect("legacy empty context should deserialize");
+        assert!(proj.context.is_empty());
+    }
+
+    #[test]
+    fn context_deserializes_from_current_list_shape() {
+        let json = r#"{"name":{"en":"","fr":""},"context":[{"en":"First","fr":""},{"en":"Second","fr":""}],"bullets":[],"tools":[],"start_date":"","end_date":""}"#;
+        let proj: ExperienceProject =
+            serde_json::from_str(json).expect("current context array should deserialize");
+        assert_eq!(proj.context.len(), 2);
+        assert_eq!(proj.context[0].en, "First");
+        assert_eq!(proj.context[1].en, "Second");
+    }
+
+    #[test]
+    fn context_deserializes_from_legacy_plain_string() {
+        // Belt-and-suspenders: LocalizedText itself also accepts a bare
+        // string (an even older shape, from before LocalizedText existed).
+        // Confirms that compatibility layer keeps working once nested a
+        // level deeper under the new Vec.
+        let json = r#"{"name":{"en":"","fr":""},"context":"Very old plain string","bullets":[],"tools":[],"start_date":"","end_date":""}"#;
+        let proj: ExperienceProject =
+            serde_json::from_str(json).expect("legacy plain-string context should deserialize");
+        assert_eq!(proj.context.len(), 1);
+        assert_eq!(proj.context[0].en, "Very old plain string");
+        assert_eq!(proj.context[0].fr, "Very old plain string");
+    }
+
+    #[test]
+    fn context_missing_entirely_defaults_to_empty_list() {
+        // An even older ExperienceProject shape from before `context`
+        // existed at all shouldn't fail to load either.
+        let json =
+            r#"{"name":{"en":"","fr":""},"bullets":[],"tools":[],"start_date":"","end_date":""}"#;
+        let proj: ExperienceProject =
+            serde_json::from_str(json).expect("missing context field should default");
+        assert!(proj.context.is_empty());
     }
 }
 

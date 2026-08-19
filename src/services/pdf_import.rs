@@ -3554,15 +3554,21 @@ fn flush_project(
     // and dropping it on the colon check alone silently threw away the
     // entire project intro rather than just an empty label.
     const BARE_LABEL_MAX_LEN: usize = 40;
-    let context_text = context
+    // One list entry per already-merged logical line, not one joined
+    // paragraph — `commit_pending_line` above already splits "Situation:
+    // ..." and "Tasks: ..." into separate entries (a context-label line
+    // always starts a fresh one), so this list is naturally shaped close
+    // to "one bullet per narrative beat" already, without needing any
+    // further re-splitting here.
+    let context_items: Vec<LocalizedText> = context
         .drain(..)
         .filter(|c| {
             let trimmed = c.trim_end();
             !(looks_like_stray_heading(c)
                 || (trimmed.ends_with(':') && trimmed.chars().count() <= BARE_LABEL_MAX_LEN))
         })
-        .collect::<Vec<_>>()
-        .join(" ");
+        .map(LocalizedText::same)
+        .collect();
 
     let tools: Vec<String> = {
         let raw = std::mem::take(tools_text);
@@ -3576,7 +3582,7 @@ fn flush_project(
 
     exp.projects.push(ExperienceProject {
         name: LocalizedText::same(name.take().unwrap_or_default()),
-        context: LocalizedText::same(context_text),
+        context: context_items,
         tools,
         bullets: std::mem::take(bullets),
         start_date: std::mem::take(start_date),
@@ -3967,8 +3973,10 @@ pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {
     // `SKILL_CATEGORY_LABELS`), or implicitly at the very first line.
     //
     // Within a block, decide how to treat line breaks:
-    //   - If ANY line in the block contains a comma, the whole block is a
-    //     flowing comma-separated paragraph, exactly what this app's own
+    //   - If ANY line in the block contains a comma AND comma-splitting
+    //     the joined block produces tag-shaped segments (short — see
+    //     `MAX_TAG_WORDS` below), the whole block is a flowing
+    //     comma-separated paragraph, exactly what this app's own
     //     renderer emits for a skills category (`render_skills` joins all
     //     of a category's skills into one "{label}: a, b, c" text run).
     //     Chromium then wraps that paragraph at arbitrary word
@@ -3980,12 +3988,20 @@ pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {
     //     rendered a spurious comma between them that wasn't in the
     //     source — so here we rejoin the block into one string with
     //     spaces before splitting on commas.
-    //   - If NO line in the block contains a comma, it's the common
-    //     one-skill-per-line sidebar layout (as in a typical human-authored
-    //     resume, e.g. "CI/CD 4+ yrs" / "Infrastructure as Code 3+ yrs",
-    //     each already a complete, standalone entry). Blindly joining
-    //     those with spaces would fuse an entire category into one
-    //     unusable blob, so each line is still split independently there.
+    //   - If NO line in the block contains a comma, OR the block's
+    //     content is full-sentence competency bullets rather than short
+    //     tags (a sidebar of "Piloter la gestion des vulnérabilités
+    //     (détection, analyse et remédiation)"-style bullet points, each
+    //     wrapped across 2-3 physical lines, uses commas as ordinary
+    //     prose punctuation *within* one bullet, not as separators
+    //     *between* skills — comma-splitting that shreds one bullet into
+    //     a dozen word-fragments, and joining the whole block with
+    //     spaces first, as the paragraph case does, produces one
+    //     enormous run-on "skill" spanning everything up to the first
+    //     bullet that happens to contain a comma), each *logical* bullet
+    //     — physical lines re-merged where the PDF wrapped one bullet
+    //     across several rows, via `merge_wrapped_skill_lines` — becomes
+    //     its own skill entry, comma and all.
     let mut blocks: Vec<Vec<&str>> = Vec::new();
     for line in lines {
         let lower = line.to_lowercase();
@@ -4000,10 +4016,26 @@ pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {
         }
     }
 
+    // A comma-split segment longer than this doesn't look like a skill
+    // tag ("GitLab-CI 3+ yrs", "Version Control 5+ yrs") any more — it
+    // looks like a fragment of a sentence. Real-world tag categories in
+    // this app top out around 4-5 words; real competency-bullet
+    // fragments run 10+ words even for the *shortest* fragment between
+    // two commas, so there's a wide, safe margin between the two.
+    const MAX_TAG_WORDS: usize = 8;
+
     for block in blocks {
-        if block.iter().any(|l| l.contains(',')) {
-            let joined = block.join(" ");
+        let joined = block.join(" ");
+        let looks_like_tag_list = joined.contains(',')
+            && joined
+                .split(',')
+                .all(|segment| segment.split_whitespace().count() <= MAX_TAG_WORDS);
+        if looks_like_tag_list {
             parse_skill_line(&joined, &mut skills);
+        } else if block.iter().any(|l| l.contains(',')) {
+            for logical_line in merge_wrapped_skill_lines(&block) {
+                push_whole_skill_line(&logical_line, &mut skills);
+            }
         } else {
             for line in block {
                 parse_skill_line(line, &mut skills);
@@ -4013,30 +4045,52 @@ pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {
     skills
 }
 
+/// Re-merges a competency-bullet block's physical lines back into logical
+/// bullets, undoing the PDF's mid-bullet line wrapping (see
+/// `parse_skills`'s comment on why this block shape needs that instead of
+/// comma-splitting). A physical line is treated as the wrapped
+/// continuation of the previous one — not a new bullet — when either:
+///   - it doesn't start with an uppercase letter (a genuine new bullet in
+///     this style always opens with a capitalized word — an infinitive
+///     verb in French resumes, a capitalized noun/acronym in English
+///     ones — while a line broken mid-phrase continues in lowercase, or
+///     with digits/punctuation, e.g. "cloud et" / "on-premise", "…
+///     Connect," / "2FA)"); or
+///   - the previous line ends with a trailing comma, which unambiguously
+///     means the sentence isn't finished yet regardless of how the next
+///     line starts — this also catches the rarer case of a wrap landing
+///     right before an acronym, e.g. "… suivi de roadmap," / "OKR et
+///     KPI", which the capitalization check alone would miss.
+fn merge_wrapped_skill_lines(lines: &[&str]) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    for &line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let starts_uppercase = trimmed.chars().next().is_some_and(|c| c.is_uppercase());
+        let prev_ends_with_comma = merged
+            .last()
+            .is_some_and(|prev: &String| prev.trim_end().ends_with(','));
+        let is_continuation = !merged.is_empty() && (!starts_uppercase || prev_ends_with_comma);
+        if is_continuation {
+            let prev = merged.last_mut().unwrap();
+            prev.push(' ');
+            prev.push_str(trimmed);
+        } else {
+            merged.push(trimmed.to_string());
+        }
+    }
+    merged
+}
+
 /// Parse one logical (already line-wrap-resolved) skills line/paragraph:
 /// strip this app's own "{Category}: " prefix if present, split the rest
 /// on comma and other common delimiters, and push each non-empty item as
 /// a `Skill`. See `parse_skills` for how lines are grouped into blocks
 /// before reaching here.
 fn parse_skill_line(line: &str, skills: &mut Vec<Skill>) {
-    // Strip this app's own "{Category}: " prefix, if present, and
-    // remember the category for the skills on this line — without
-    // this, re-importing our own exported PDF bakes the category
-    // label into the FIRST skill's name (e.g. "Other Skills: CI/CD"),
-    // and the next export prepends the category label again on top
-    // of that, compounding into "Other Skills: Other Skills: …" a
-    // little further with every import/export round trip.
-    let lower = line.to_lowercase();
-    let mut category = SkillCategory::Other;
-    let mut rest: &str = line;
-    for (label, cat) in SKILL_CATEGORY_LABELS {
-        let prefix = format!("{label}:");
-        if lower.starts_with(&prefix) {
-            category = cat.clone();
-            rest = line[prefix.len()..].trim_start();
-            break;
-        }
-    }
+    let (category, rest) = strip_skill_category_prefix(line);
 
     // Also split on common delimiters
     let mut normalized = rest.replace(" | ", ",");
@@ -4045,27 +4099,62 @@ fn parse_skill_line(line: &str, skills: &mut Vec<Skill>) {
     normalized = normalized.replace(" - ", ",");
 
     for item in normalized.split(',') {
-        let trimmed = item.trim().trim_start_matches(['•', '·', '-']);
-        let trimmed = trimmed.trim();
-        if trimmed.is_empty() || trimmed.len() < 2 {
-            continue;
-        }
-        // Skip lines that look like headers
-        let lower = trimmed.to_lowercase();
-        if lower == "skills"
-            || lower == "compétences"
-            || lower == "technical skills"
-            || lower == "compétences techniques"
-        {
-            continue;
-        }
-        skills.push(Skill {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: trimmed.to_string(),
-            category: category.clone(),
-            level: SkillLevel::Intermediate,
-        });
+        push_skill_entry(item, category.clone(), skills);
     }
+}
+
+/// Like `parse_skill_line`, but for one already-delimited logical bullet
+/// from a competency-bullet block (see `parse_skills`'s comment) — adds it
+/// as a single skill entry without also comma-splitting it, since here the
+/// commas are ordinary sentence punctuation *within* the bullet, not
+/// separators *between* skills. Still strips a leading category-label
+/// prefix and a leading bullet marker, same as the comma-splitting path,
+/// so a stray "Other Skills: " or "• " at the start of a bullet is handled
+/// consistently either way.
+fn push_whole_skill_line(line: &str, skills: &mut Vec<Skill>) {
+    let (category, rest) = strip_skill_category_prefix(line);
+    push_skill_entry(rest, category, skills);
+}
+
+/// Strips this app's own "{Category}: " prefix, if present, and returns
+/// the matched category alongside the remaining text — without this,
+/// re-importing our own exported PDF bakes the category label into the
+/// FIRST skill's name (e.g. "Other Skills: CI/CD"), and the next export
+/// prepends the category label again on top of that, compounding into
+/// "Other Skills: Other Skills: …" a little further with every
+/// import/export round trip.
+fn strip_skill_category_prefix(line: &str) -> (SkillCategory, &str) {
+    let lower = line.to_lowercase();
+    for (label, cat) in SKILL_CATEGORY_LABELS {
+        let prefix = format!("{label}:");
+        if lower.starts_with(&prefix) {
+            return (cat.clone(), line[prefix.len()..].trim_start());
+        }
+    }
+    (SkillCategory::Other, line)
+}
+
+fn push_skill_entry(item: &str, category: SkillCategory, skills: &mut Vec<Skill>) {
+    let trimmed = item.trim().trim_start_matches(['•', '·', '-']);
+    let trimmed = trimmed.trim();
+    if trimmed.is_empty() || trimmed.len() < 2 {
+        return;
+    }
+    // Skip lines that look like headers
+    let lower = trimmed.to_lowercase();
+    if lower == "skills"
+        || lower == "compétences"
+        || lower == "technical skills"
+        || lower == "compétences techniques"
+    {
+        return;
+    }
+    skills.push(Skill {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: trimmed.to_string(),
+        category,
+        level: SkillLevel::Intermediate,
+    });
 }
 
 /// Parse projects section lines.
@@ -5606,7 +5695,7 @@ English - Professional
         assert_eq!(exps[0].projects.len(), 1);
         assert_eq!(exps[0].projects[0].name.en, "Project 1: Cloud Migration");
         assert_eq!(
-            exps[0].projects[0].context.en,
+            exps[0].projects[0].context[0].en,
             "Situation: The team needed a cloud migration."
         );
         let bullet_texts: Vec<&str> = exps[0].projects[0]
@@ -5637,7 +5726,7 @@ English - Professional
         assert_eq!(exps.len(), 1);
         assert_eq!(exps[0].projects.len(), 1);
         assert_eq!(
-            exps[0].projects[0].context.en,
+            exps[0].projects[0].context[0].en,
             "Situation & Tasks: As part of the DevOps/SRE transformation within the IT department, I joined the Socle Team of the Cloud π Native project while also acting as the technical lead for the CITADEL platform."
         );
         let bullet_texts: Vec<&str> = exps[0].projects[0]
@@ -6290,15 +6379,17 @@ mod regression_corpus {
                     if other_role.is_empty() {
                         continue;
                     }
-                    assert!(
-                        !project.context.en.contains(other_role),
-                        "job {:?}'s project {:?} context contains another job's \
-                         role text {:?} — looks like cross-job bleed: {:?}",
-                        exp.role.en,
-                        project.name.en,
-                        other_role,
-                        project.context.en
-                    );
+                    for c in &project.context {
+                        assert!(
+                            !c.en.contains(other_role),
+                            "job {:?}'s project {:?} context contains another job's \
+                             role text {:?} — looks like cross-job bleed: {:?}",
+                            exp.role.en,
+                            project.name.en,
+                            other_role,
+                            c.en
+                        );
+                    }
                 }
             }
         }
@@ -6428,6 +6519,68 @@ mod regression_corpus {
                 ("Français", &LanguageLevel::Native),
                 ("Anglais", &LanguageLevel::Conversational),
             ]
+        );
+    }
+
+    #[test]
+    fn regression_competency_bullets_with_prose_commas_stay_intact() {
+        // Real-world source: a sidebar of full-sentence competency bullets
+        // (each a "Verb, verb, verb object" phrase, wrapped across 2-3
+        // physical lines by the PDF layout), not a flat list of short
+        // "Name N+ yrs" tags. The old block-join logic decided whether to
+        // comma-split an entire multi-hundred-word block based only on
+        // "does *any* line in it contain a comma" — true here, since these
+        // are full sentences — which joined the whole block with spaces
+        // and comma-split it as if every comma were a skill separator.
+        // Since the first comma doesn't appear until deep into the block,
+        // every short standalone tag before it (category headers, soft
+        // skills) got fused into one giant run-on "skill" alongside the
+        // start of the first real sentence.
+        let lines: Vec<String> = [
+            "Qualités humaines",
+            "Curiosité",
+            "Rigoureux",
+            "Concevoir, déployer, sécuriser des infrastructures cloud et",
+            "on-premise",
+            "Administrer des bases de données MySQL/MariaDB,",
+            "PostgreSQL, Elasticsearch, OpenSearch, MongoDB",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+        let skills = parse_skills(&lines);
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+
+        // Short standalone tags stay separate, one per entry — this part
+        // already worked before the fix and must keep working.
+        assert!(names.contains(&"Qualités humaines"));
+        assert!(names.contains(&"Curiosité"));
+        assert!(names.contains(&"Rigoureux"));
+
+        // Each wrapped competency sentence survives as ONE entry, physical
+        // line-wrap rejoined, prose commas intact — not shredded into
+        // word-fragments by comma, and not fused with the unrelated short
+        // tags before it.
+        assert!(
+            names.contains(
+                &"Concevoir, déployer, sécuriser des infrastructures cloud et on-premise"
+            ),
+            "got: {names:?}"
+        );
+        assert!(
+            names.contains(
+                &"Administrer des bases de données MySQL/MariaDB, PostgreSQL, Elasticsearch, OpenSearch, MongoDB"
+            ),
+            "got: {names:?}"
+        );
+
+        // Nothing should look like the old run-on fusion of unrelated tags.
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains("Qualités humaines Curiosité")),
+            "got: {names:?}"
         );
     }
 

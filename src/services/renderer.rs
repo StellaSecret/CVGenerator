@@ -260,7 +260,8 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-project-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
 .cv-doc .exp-project-name { font-weight: 600; color: #1e293b; font-size: 0.88rem; margin-bottom: 2px; }
 .cv-doc .exp-project-dates { font-size: 0.78rem; color: #94a3b8; white-space: nowrap; }
-.cv-doc .exp-project-context { font-style: italic; color: #64748b; font-size: 0.82rem; margin-bottom: 4px; }
+.cv-doc .exp-project-context { margin: 0 0 4px 18px; list-style: none; padding: 0; }
+.cv-doc .exp-project-context li { font-style: italic; color: #64748b; font-size: 0.82rem; margin-bottom: 2px; padding-left: 1em; text-indent: -1em; }
 
 /* ── Skills ── */
 .cv-doc .skills-block { margin-bottom: 8px; }
@@ -458,9 +459,12 @@ fn apply_bold(text: &str) -> String {
             if closed {
                 result.push_str(&format!("<strong>{inner}</strong>"));
             } else {
-                // No closing "**" found — this wasn't a bold marker after
-                // all, so emit the "**" and whatever text followed it
-                // exactly as written rather than swallowing or wrapping it.
+                // Unterminated marker: leave the original text (including
+                // the "**") exactly as written rather than also wrapping
+                // it in <strong> — the two used to run unconditionally
+                // one after the other, duplicating `inner` in both its
+                // literal and bolded form (e.g. "done **soon" rendered as
+                // "done **soon<strong>soon</strong>").
                 result.push_str("**");
                 result.push_str(&inner);
             }
@@ -620,13 +624,17 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
                     project_dates_html
                 )
             };
-            let context_html = if proj.context.get(lang).is_empty() {
+            let context_items: String = proj
+                .context
+                .iter()
+                .map(|c| c.get(lang))
+                .filter(|c| !c.is_empty())
+                .map(bullet_li)
+                .collect();
+            let context_html = if context_items.is_empty() {
                 String::new()
             } else {
-                format!(
-                    r#"<div class="exp-project-context">{}</div>"#,
-                    render_inline(proj.context.get(lang))
-                )
+                format!(r#"<ul class="exp-project-context">{}</ul>"#, context_items)
             };
             projects_html.push_str(&format!(
                 r#"<div class="exp-project">{name}{context}{bullets}{tools}</div>"#,
@@ -1129,7 +1137,7 @@ mod tests {
             end_date: "Present".to_string(),
             projects: vec![ExperienceProject {
                 name: LocalizedText::same("API Platform"),
-                context: LocalizedText::same("Legacy monolith needed decomposition"),
+                context: vec![LocalizedText::same("Legacy monolith needed decomposition")],
                 bullets: vec![LocalizedText::same("Built distributed systems")],
                 tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
                 ..Default::default()
@@ -1402,7 +1410,7 @@ mod tests {
             end_date: "Present".into(),
             projects: vec![ExperienceProject {
                 name: LocalizedText::same("Platform"),
-                context: LocalizedText::same("Owned the **core** service"),
+                context: vec![LocalizedText::same("Owned the **core** service")],
                 bullets: vec![LocalizedText::same("Shipped **key** feature")],
                 tools: vec![],
                 start_date: String::new(),

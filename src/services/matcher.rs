@@ -177,9 +177,23 @@ fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
         text.push(' ');
         text.push_str(&proj.name.fr);
         text.push(' ');
-        text.push_str(&proj.context.en);
+        text.push_str(
+            &proj
+                .context
+                .iter()
+                .map(|c| c.en.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         text.push(' ');
-        text.push_str(&proj.context.fr);
+        text.push_str(
+            &proj
+                .context
+                .iter()
+                .map(|c| c.fr.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         text.push(' ');
         text.push_str(
             &proj
@@ -366,7 +380,9 @@ mod tests {
                     end_date: "Present".to_string(),
                     projects: vec![ExperienceProject {
                         name: LocalizedText::same("Distributed Systems"),
-                        context: LocalizedText::same("High-throughput microservices architecture"),
+                        context: vec![LocalizedText::same(
+                            "High-throughput microservices architecture",
+                        )],
                         bullets: vec![
                             LocalizedText::same("Built distributed systems using Rust and Tokio"),
                             LocalizedText::same("Reduced API latency by 40% through caching"),
@@ -388,7 +404,7 @@ mod tests {
                     end_date: "Dec 2020".to_string(),
                     projects: vec![ExperienceProject {
                         name: LocalizedText::same("Web Applications"),
-                        context: LocalizedText::same("Customer-facing portal overhaul"),
+                        context: vec![LocalizedText::same("Customer-facing portal overhaul")],
                         bullets: vec![LocalizedText::same(
                             "Developed web applications with React and TypeScript",
                         )],
