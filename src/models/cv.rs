@@ -178,8 +178,10 @@ pub enum SkillCategory {
     Programming,
     Framework,
     Tool,
-    Cloud,
+    CloudInfrastructure,
     Database,
+    Monitoring,
+    AutomationDevOps,
     Soft,
     Other,
 }
@@ -190,8 +192,10 @@ impl SkillCategory {
             Self::Programming => "Programming",
             Self::Framework => "Framework",
             Self::Tool => "Tool",
-            Self::Cloud => "Cloud",
+            Self::CloudInfrastructure => "Cloud & Infrastructure",
             Self::Database => "Database",
+            Self::Monitoring => "Monitoring",
+            Self::AutomationDevOps => "Automation & DevOps",
             Self::Soft => "Soft Skill",
             Self::Other => "Other Skills",
         }
@@ -201,8 +205,10 @@ impl SkillCategory {
             Self::Programming,
             Self::Framework,
             Self::Tool,
-            Self::Cloud,
+            Self::CloudInfrastructure,
             Self::Database,
+            Self::Monitoring,
+            Self::AutomationDevOps,
             Self::Soft,
             Self::Other,
         ]
@@ -688,8 +694,16 @@ mod tests {
         assert_eq!(SkillCategory::Programming.label(), "Programming");
         assert_eq!(SkillCategory::Framework.label(), "Framework");
         assert_eq!(SkillCategory::Tool.label(), "Tool");
-        assert_eq!(SkillCategory::Cloud.label(), "Cloud");
+        assert_eq!(
+            SkillCategory::CloudInfrastructure.label(),
+            "Cloud & Infrastructure"
+        );
         assert_eq!(SkillCategory::Database.label(), "Database");
+        assert_eq!(SkillCategory::Monitoring.label(), "Monitoring");
+        assert_eq!(
+            SkillCategory::AutomationDevOps.label(),
+            "Automation & DevOps"
+        );
         assert_eq!(SkillCategory::Soft.label(), "Soft Skill");
         assert_eq!(SkillCategory::Other.label(), "Other Skills");
     }
@@ -699,12 +713,14 @@ mod tests {
         let all = SkillCategory::all();
         assert_eq!(
             all.len(),
-            7,
-            "SkillCategory::all() should return all 7 variants"
+            9,
+            "SkillCategory::all() should return all 9 variants"
         );
         assert!(all.contains(&SkillCategory::Programming));
-        assert!(all.contains(&SkillCategory::Cloud));
+        assert!(all.contains(&SkillCategory::CloudInfrastructure));
         assert!(all.contains(&SkillCategory::Database));
+        assert!(all.contains(&SkillCategory::Monitoring));
+        assert!(all.contains(&SkillCategory::AutomationDevOps));
     }
 
     // ── SkillLevel ────────────────────────────────────────────────────────────

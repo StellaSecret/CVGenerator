@@ -515,8 +515,10 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                                 e_category.set(match e.value().as_str() {
                                     "Framework" => SkillCategory::Framework,
                                     "Tool"      => SkillCategory::Tool,
-                                    "Cloud"     => SkillCategory::Cloud,
+                                    "Cloud & Infrastructure" => SkillCategory::CloudInfrastructure,
                                     "Database"  => SkillCategory::Database,
+                                    "Monitoring" => SkillCategory::Monitoring,
+                                    "Automation & DevOps" => SkillCategory::AutomationDevOps,
                                     "Soft Skill"=> SkillCategory::Soft,
                                     "Other Skills" => SkillCategory::Other,
                                     _           => SkillCategory::Programming,
@@ -1569,8 +1571,10 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 new_category.set(match e.value().as_str() {
                                     "Framework" => SkillCategory::Framework,
                                     "Tool"      => SkillCategory::Tool,
-                                    "Cloud"     => SkillCategory::Cloud,
+                                    "Cloud & Infrastructure" => SkillCategory::CloudInfrastructure,
                                     "Database"  => SkillCategory::Database,
+                                    "Monitoring" => SkillCategory::Monitoring,
+                                    "Automation & DevOps" => SkillCategory::AutomationDevOps,
                                     "Soft Skill"=> SkillCategory::Soft,
                                     "Other Skills" => SkillCategory::Other,
                                     _           => SkillCategory::Programming,

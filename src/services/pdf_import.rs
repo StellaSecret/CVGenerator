@@ -3961,7 +3961,9 @@ const SKILL_CATEGORY_LABELS: &[(&str, SkillCategory)] = &[
     ("programming", SkillCategory::Programming),
     ("framework", SkillCategory::Framework),
     ("database", SkillCategory::Database),
-    ("cloud", SkillCategory::Cloud),
+    ("cloud & infrastructure", SkillCategory::CloudInfrastructure),
+    ("monitoring", SkillCategory::Monitoring),
+    ("automation & devops", SkillCategory::AutomationDevOps),
     ("tool", SkillCategory::Tool),
 ];
 
