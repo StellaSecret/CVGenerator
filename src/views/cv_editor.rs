@@ -311,6 +311,18 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 label { class: "label", "{t_project_ctx}" }
                                 for ci in 0..e_projects.read()[pi].context.len() {
                                     div { class: "bullet-row",
+                                        if ci > 0 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { e_projects.write()[pi].context.swap(ci, ci - 1); },
+                                                "↑"
+                                            }
+                                        }
+                                        if ci < e_projects.read()[pi].context.len() - 1 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { e_projects.write()[pi].context.swap(ci, ci + 1); },
+                                                "↓"
+                                            }
+                                        }
                                         span { class: "bullet-dot", "•" }
                                         BoldableField {
                                             key: "{pi}-{ci}-{l:?}",
@@ -335,6 +347,18 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 label { class: "label", "{t_achieve}" }
                                 for bi in 0..e_projects.read()[pi].bullets.len() {
                                     div { class: "bullet-row",
+                                        if bi > 0 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { e_projects.write()[pi].bullets.swap(bi, bi - 1); },
+                                                "↑"
+                                            }
+                                        }
+                                        if bi < e_projects.read()[pi].bullets.len() - 1 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { e_projects.write()[pi].bullets.swap(bi, bi + 1); },
+                                                "↓"
+                                            }
+                                        }
                                         span { class: "bullet-dot", "•" }
                                         BoldableField {
                                             key: "{pi}-{bi}-{l:?}",
@@ -366,9 +390,23 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 }
                             }
                             if e_projects.read().len() > 1 {
-                                button { class: "btn-text btn-danger",
-                                    onclick: move |_| { e_projects.write().remove(pi); },
-                                    "× Remove project"
+                                div { class: "project-actions",
+                                    if pi > 0 {
+                                        button { class: "btn-icon btn-move",
+                                            onclick: move |_| { e_projects.write().swap(pi, pi - 1); },
+                                            "↑"
+                                        }
+                                    }
+                                    if pi < e_projects.read().len() - 1 {
+                                        button { class: "btn-icon btn-move",
+                                            onclick: move |_| { e_projects.write().swap(pi, pi + 1); },
+                                            "↓"
+                                        }
+                                    }
+                                    button { class: "btn-text btn-danger",
+                                        onclick: move |_| { e_projects.write().remove(pi); },
+                                        "× Remove project"
+                                    }
                                 }
                             }
                         }
@@ -455,6 +493,18 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                     }
                 }
                 div { class: "item-actions",
+                    if index > 0 {
+                        button { class: "btn-icon btn-move",
+                            onclick: move |_| { cv.write().experiences.swap(index, index - 1); },
+                            "↑"
+                        }
+                    }
+                    if index < cv.read().experiences.len() - 1 {
+                        button { class: "btn-icon btn-move",
+                            onclick: move |_| { cv.write().experiences.swap(index, index + 1); },
+                            "↓"
+                        }
+                    }
                     button { class: "btn-icon btn-edit",
                         onclick: move |_| {
                             let item = cv.read().experiences[index].clone();
@@ -1394,6 +1444,18 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     label { class: "label", "{t_project_ctx}" }
                                     for ci in 0..new_projects.read()[pi].context.len() {
                                         div { class: "bullet-row",
+                                            if ci > 0 {
+                                                button { class: "btn-icon btn-move",
+                                                    onclick: move |_| { new_projects.write()[pi].context.swap(ci, ci - 1); },
+                                                    "↑"
+                                                }
+                                            }
+                                            if ci < new_projects.read()[pi].context.len() - 1 {
+                                                button { class: "btn-icon btn-move",
+                                                    onclick: move |_| { new_projects.write()[pi].context.swap(ci, ci + 1); },
+                                                    "↓"
+                                                }
+                                            }
                                             span { class: "bullet-dot", "•" }
                                             BoldableField {
                                                 key: "{pi}-{ci}-{l:?}",
@@ -1418,6 +1480,18 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     label { class: "label", "{t_achieve}" }
                                     for bi in 0..new_projects.read()[pi].bullets.len() {
                                         div { class: "bullet-row",
+                                            if bi > 0 {
+                                                button { class: "btn-icon btn-move",
+                                                    onclick: move |_| { new_projects.write()[pi].bullets.swap(bi, bi - 1); },
+                                                    "↑"
+                                                }
+                                            }
+                                            if bi < new_projects.read()[pi].bullets.len() - 1 {
+                                                button { class: "btn-icon btn-move",
+                                                    onclick: move |_| { new_projects.write()[pi].bullets.swap(bi, bi + 1); },
+                                                    "↓"
+                                                }
+                                            }
                                             span { class: "bullet-dot", "•" }
                                             BoldableField {
                                                 key: "{pi}-{bi}-{l:?}",
@@ -1452,9 +1526,23 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     }
                                 }
                                 if new_projects.read().len() > 1 {
-                                    button { class: "btn-text btn-danger",
-                                        onclick: move |_| { new_projects.write().remove(pi); },
-                                        "× Remove project"
+                                    div { class: "project-actions",
+                                        if pi > 0 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { new_projects.write().swap(pi, pi - 1); },
+                                                "↑"
+                                            }
+                                        }
+                                        if pi < new_projects.read().len() - 1 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { new_projects.write().swap(pi, pi + 1); },
+                                                "↓"
+                                            }
+                                        }
+                                        button { class: "btn-text btn-danger",
+                                            onclick: move |_| { new_projects.write().remove(pi); },
+                                            "× Remove project"
+                                        }
                                     }
                                 }
                             }

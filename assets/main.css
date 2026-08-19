@@ -557,6 +557,43 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow-sm);
 }
 
+.btn-move {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.btn-move:hover { background: var(--bg-hover, #f1f5f9); color: var(--text); }
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+}
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 .item-actions {
   display: flex;
   gap: 4px;

@@ -896,10 +896,10 @@ fn render_certifications(certs: &[crate::models::Certification], lang: Lang) -> 
 /// Render the complete lifetime CV — every item, nothing filtered.
 pub fn render_lifetime_cv(cv: &LifetimeCV, lang: Lang) -> String {
     let body = format!(
-        "{header}{exp}{skills}{projects}{edu}{lang}{certs}",
+        "{header}{skills}{exp}{projects}{edu}{lang}{certs}",
         header = render_header(&cv.personal, lang),
-        exp = render_experience(&cv.experiences, lang),
         skills = render_skills(&cv.skills, lang),
+        exp = render_experience(&cv.experiences, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
         lang = render_languages(&cv.languages, lang),
@@ -978,11 +978,11 @@ pub fn render_tailored_cv(cv: &TailoredCV, job_title: &str, lang: Lang) -> Strin
     );
 
     let body = format!(
-        "{banner}{header}{exp}{skills}{projects}{edu}{lang}{certs}",
+        "{banner}{header}{skills}{exp}{projects}{edu}{lang}{certs}",
         banner = gap_banner,
         header = render_header(&cv.personal, lang),
-        exp = render_experience(&cv.experiences, lang),
         skills = render_skills(&cv.skills, lang),
+        exp = render_experience(&cv.experiences, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
         lang = render_languages(&cv.languages, lang),
