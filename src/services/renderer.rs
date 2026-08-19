@@ -262,6 +262,7 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-project-dates { font-size: 0.78rem; color: #94a3b8; white-space: nowrap; }
 .cv-doc .exp-project-context { margin: 0 0 4px 18px; list-style: none; padding: 0; }
 .cv-doc .exp-project-context li { font-style: italic; color: #64748b; font-size: 0.82rem; margin-bottom: 2px; padding-left: 1em; text-indent: -1em; }
+.cv-doc .exp-project-label { font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; display: block; margin: 6px 0 2px 0; }
 
 /* ── Skills ── */
 .cv-doc .skills-block { margin-bottom: 8px; }
@@ -600,11 +601,6 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
                 .filter(|b| !b.is_empty())
                 .map(bullet_li)
                 .collect();
-            let bullets_block = if bullets.is_empty() {
-                String::new()
-            } else {
-                format!(r#"<ul class="exp-bullets">{}</ul>"#, bullets)
-            };
             let tools_div = tools_row_html("exp-tools", &proj.tools);
             let project_dates_html = if proj.start_date.is_empty() && proj.end_date.is_empty() {
                 String::new()
@@ -634,7 +630,23 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             let context_html = if context_items.is_empty() {
                 String::new()
             } else {
-                format!(r#"<ul class="exp-project-context">{}</ul>"#, context_items)
+                format!(
+                    r#"<span class="exp-project-label">{}</span><ul class="exp-project-context">{}</ul>"#,
+                    if lang == Lang::Fr {
+                        "Contexte :"
+                    } else {
+                        "Context :"
+                    },
+                    context_items
+                )
+            };
+            let bullets_block = if bullets.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    r#"<span class="exp-project-label">Actions &amp; Impact:</span><ul class="exp-bullets">{}</ul>"#,
+                    bullets
+                )
             };
             projects_html.push_str(&format!(
                 r#"<div class="exp-project">{name}{context}{bullets}{tools}</div>"#,
