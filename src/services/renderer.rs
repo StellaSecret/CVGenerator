@@ -256,6 +256,9 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-bullets { margin: 8px 0 0 18px; list-style: none; padding: 0; }
 .cv-doc .exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; padding-left: 1em; text-indent: -1em; }
 .cv-doc .exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
+.cv-doc .exp-skills { margin-top: 8px; font-size: 0.82rem; color: #475569; line-height: 1.5; }
+.cv-doc .exp-skill-category { font-weight: 600; color: #1e293b; }
+.cv-doc .exp-skill-list { color: #475569; }
 .cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
 .cv-doc .exp-project-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
 .cv-doc .exp-project-name { font-weight: 600; color: #1e293b; font-size: 0.88rem; margin-bottom: 2px; }
@@ -578,7 +581,11 @@ fn render_header(p: &crate::models::PersonalInfo, lang: Lang) -> String {
     )
 }
 
-fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> String {
+fn render_experience(
+    experiences: &[crate::models::Experience],
+    all_skills: &[crate::models::Skill],
+    lang: Lang,
+) -> String {
     if experiences.is_empty() {
         return String::new();
     }
@@ -656,6 +663,39 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
                 tools = tools_div,
             ));
         }
+        // Render skills grouped by category
+        let exp_skills: Vec<&crate::models::Skill> = exp
+            .skill_ids
+            .iter()
+            .filter_map(|id| all_skills.iter().find(|s| &s.id == id))
+            .collect();
+        let skills_html = if exp_skills.is_empty() {
+            String::new()
+        } else {
+            let categories = SkillCategory::all();
+            let mut blocks: Vec<String> = Vec::new();
+            for cat in &categories {
+                let cat_skills: Vec<&&crate::models::Skill> =
+                    exp_skills.iter().filter(|s| &s.category == cat).collect();
+                if cat_skills.is_empty() {
+                    continue;
+                }
+                let names: Vec<String> = cat_skills.iter().map(|s| esc(&s.name)).collect();
+                blocks.push(format!(
+                    r#"<span class="exp-skill-category">{}:</span> <span class="exp-skill-list">{}</span>"#,
+                    cat.label(),
+                    names.join(", "),
+                ));
+            }
+            if blocks.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    r#"<div class="exp-skills">{}</div>"#,
+                    blocks.join(" &middot; ")
+                )
+            }
+        };
         items.push(format!(
             r#"<div class="exp-item">
   <div class="exp-header">
@@ -664,6 +704,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
   </div>
   <div class="exp-role">{role}</div>
   {projects}
+  {skills}
 </div>"#,
             company = esc(&exp.company),
             location = location_html,
@@ -671,6 +712,7 @@ fn render_experience(experiences: &[crate::models::Experience], lang: Lang) -> S
             end = esc(&exp.end_date),
             role = esc(exp.role.get(lang)),
             projects = projects_html,
+            skills = skills_html,
         ));
     }
     wrap_section(i18n_core::tr("rs_experience", lang), items)
@@ -911,7 +953,7 @@ pub fn render_lifetime_cv(cv: &LifetimeCV, lang: Lang) -> String {
         "{header}{skills}{exp}{projects}{edu}{lang}{certs}",
         header = render_header(&cv.personal, lang),
         skills = render_skills(&cv.skills, lang),
-        exp = render_experience(&cv.experiences, lang),
+        exp = render_experience(&cv.experiences, &cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
         lang = render_languages(&cv.languages, lang),
@@ -994,7 +1036,7 @@ pub fn render_tailored_cv(cv: &TailoredCV, job_title: &str, lang: Lang) -> Strin
         banner = gap_banner,
         header = render_header(&cv.personal, lang),
         skills = render_skills(&cv.skills, lang),
-        exp = render_experience(&cv.experiences, lang),
+        exp = render_experience(&cv.experiences, &cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
         lang = render_languages(&cv.languages, lang),
@@ -1428,6 +1470,7 @@ mod tests {
                 start_date: String::new(),
                 end_date: String::new(),
             }],
+            skill_ids: vec![],
         });
         let html = render_lifetime_cv(&cv, Lang::En);
         assert!(html.contains("Owned the <strong>core</strong> service"));

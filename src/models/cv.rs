@@ -168,6 +168,8 @@ pub struct Experience {
     pub start_date: String,               // "Jan 2021"
     pub end_date: String,                 // "Present" or "Mar 2024"
     pub projects: Vec<ExperienceProject>, // sub-projects within this role
+    #[serde(default)]
+    pub skill_ids: Vec<String>, // references to skills defined in cv.skills
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────

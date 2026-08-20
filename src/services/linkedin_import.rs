@@ -575,6 +575,7 @@ fn parse_linkedin_experiences(lines: &[String]) -> Vec<Experience> {
             start_date: header.start_date,
             end_date: header.end_date,
             projects,
+            skill_ids: Vec::new(),
         });
 
         i = end;

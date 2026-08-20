@@ -637,7 +637,23 @@ a:hover { text-decoration: underline; }
 }
 .skill-chip:hover { box-shadow: 0 2px 8px rgba(37,99,235,.15); }
 .chip-level { font-size: 0.72rem; color: var(--text-3); }
-
+.skill-picker { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; }
+.skill-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  transition: background var(--fast), border-color var(--fast);
+}
+.skill-check:hover { background: var(--bg-hover, #f1f5f9); border-color: var(--blue); }
+.skill-check input[type="checkbox"] { margin: 0; accent-color: var(--blue); }
+.skill-check-name { font-weight: 500; }
+.skill-check-cat { font-size: 0.72rem; color: var(--text-3); }
 /* ── Tags ──────────────────────────────────────────────────────────────────── */
 .tag {
   display: inline-block;
