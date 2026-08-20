@@ -296,6 +296,13 @@ impl LanguageLevel {
             Self::Native => "Native / Bilingual",
         }
     }
+    pub fn label_fr(&self) -> &str {
+        match self {
+            Self::Conversational => "Conversationnel",
+            Self::Professional => "Professionnel",
+            Self::Native => "Bilingue",
+        }
+    }
     pub fn all() -> Vec<Self> {
         vec![Self::Conversational, Self::Professional, Self::Native]
     }

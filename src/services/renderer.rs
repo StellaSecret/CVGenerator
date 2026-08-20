@@ -888,7 +888,7 @@ fn render_languages(languages: &[crate::models::Language], lang: Lang) -> String
         format!(
             r#"<div class="lang-item"><span class="lang-name">{name}</span> <span class="lang-level">({level})</span></div>"#,
             name  = esc(&l.name),
-            level = l.level.label(),
+            level = if lang == Lang::Fr { l.level.label_fr() } else { l.level.label() },
         )
     }).collect();
     wrap_section(

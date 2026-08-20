@@ -977,7 +977,9 @@ fn LangItem(lang_item: Language, index: usize, mut cv: Signal<LifetimeCV>) -> El
                                 });
                             },
                             for lvl in LanguageLevel::all() {
-                                option { value: lvl.label(), selected: e_level.read().label() == lvl.label(), "{lvl.label()}" }
+                                option { value: lvl.label(), selected: e_level.read().label() == lvl.label(),
+                                    if l == i18n::Lang::Fr { "{lvl.label_fr()}" } else { "{lvl.label()}" }
+                                }
                             }
                         }
                     }
@@ -2016,7 +2018,9 @@ fn StepLanguages(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 });
                             },
                             for lvl in LanguageLevel::all() {
-                                option { value: lvl.label(), "{lvl.label()}" }
+                                option { value: lvl.label(),
+                                    if l == i18n::Lang::Fr { "{lvl.label_fr()}" } else { "{lvl.label()}" }
+                                }
                             }
                         }
                     }
