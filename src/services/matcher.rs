@@ -1,4 +1,4 @@
-use crate::models::{Experience, LifetimeCV, Project, Skill, TailoredCV};
+use crate::models::{Experience, ExperienceProject, LifetimeCV, Project, Skill, TailoredCV};
 use std::collections::HashMap;
 
 // ── Stop words ────────────────────────────────────────────────────────────────
@@ -218,6 +218,25 @@ fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
     score_text(&text, keywords)
 }
 
+fn score_experience_project(proj: &ExperienceProject, keywords: &[(String, usize)]) -> f32 {
+    let mut text = format!("{} {}", proj.name.en, proj.name.fr);
+    for c in &proj.context {
+        text.push(' ');
+        text.push_str(&c.en);
+        text.push(' ');
+        text.push_str(&c.fr);
+    }
+    for b in &proj.bullets {
+        text.push(' ');
+        text.push_str(&b.en);
+        text.push(' ');
+        text.push_str(&b.fr);
+    }
+    text.push(' ');
+    text.push_str(&proj.tools.join(" "));
+    score_text(&text, keywords)
+}
+
 fn score_skill(skill: &Skill, keywords: &[(String, usize)]) -> f32 {
     score_text(&skill.name, keywords)
 }
@@ -286,6 +305,25 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
             if !selected_exp.iter().any(|e| e.id == exp.id) {
                 selected_exp.push(exp.clone());
             }
+        }
+    }
+
+    // Filter projects within each selected experience
+    for exp in &mut selected_exp {
+        if exp.projects.len() <= 1 {
+            continue;
+        }
+        let filtered: Vec<ExperienceProject> = exp
+            .projects
+            .iter()
+            .filter(|p| score_experience_project(p, &top_keywords) > 0.0)
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            // Keep the first project if none scored
+            exp.projects = vec![exp.projects[0].clone()];
+        } else {
+            exp.projects = filtered;
         }
     }
 
