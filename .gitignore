@@ -61,3 +61,6 @@ node_modules/
 playwright-report/
 test-results/
 blob-report/
+
+# ── ONNX model assets ────────────────────────────────────────────────────────
+assets/models/*.onnx

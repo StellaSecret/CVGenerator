@@ -1,7 +1,10 @@
 pub mod auth;
 pub mod drive;
+pub mod embeddings;
 pub mod linkedin_import;
 pub mod matcher;
 pub mod pdf_import;
 pub mod renderer;
+pub mod score;
 pub mod storage;
+pub mod worker;

@@ -1,6 +1,72 @@
 use crate::models::{Experience, ExperienceProject, LifetimeCV, Project, Skill, TailoredCV};
 use std::collections::{HashMap, HashSet};
 
+// ── Relative-cutoff selection ─────────────────────────────────────────────────
+//
+// Shared by the experience-level and project-level filtering below. Given a
+// list of scores (any order), returns the indices that pass a
+// relative-to-the-best-match cutoff: `max_score * fixed_fraction`, optionally
+// raised to at least the sample mean.
+//
+// Why the mean floor is conditional rather than always-on: keyword/TF-IDF
+// scores spread widely (0.05-1.0 relative to the best match), so a fixed
+// fraction alone already discriminates well — and in cases with several
+// genuinely-all-relevant, similarly-scored items, a mean floor can
+// over-trim (it doesn't know a tight cluster there reflects real
+// near-ties rather than a non-discriminating scorer).
+//
+// Embedding/Hybrid cosine-similarity scores cluster far more tightly
+// regardless of true relevance (a known property of sentence-transformer
+// similarity), so the fixed fraction alone barely filters anything —
+// hence the mean floor is needed there to keep discriminating. Callers
+// pass `use_mean_floor = scorer.mode != ScoreMode::Keyword` so Keyword
+// mode's already-validated behavior is untouched.
+//
+// Near-tie margin: even with the mean floor, real-world scores in
+// Embedding/Hybrid mode routinely land within a few hundredths of the
+// cutoff of each other (observed directly: a genuinely relevant
+// experience missed the cutoff by 0.0094 while an unrelated one cleared
+// it, out of a ~0.18-wide overall score range). A gap that small is
+// noise relative to the embedding model's actual resolving power, not a
+// real semantic distinction — but a hard `>=` cutoff treats "missed by
+// 0.01" identically to "missed by 0.15". For a CV tool the two failure
+// modes aren't symmetric: silently dropping the single most relevant
+// item over a coin-flip-sized gap is worse than including one extra,
+// slightly-less-relevant item. So when `use_mean_floor` is on, anything
+// within `NEAR_TIE_MARGIN_FRACTION * max_score` below the cutoff is kept
+// too. This does NOT apply to Keyword mode, whose wider natural spread
+// means a miss by that margin usually IS a real distinction.
+const NEAR_TIE_MARGIN_FRACTION: f32 = 0.03;
+
+fn select_by_relative_cutoff(
+    scores: &[f32],
+    fixed_fraction: f32,
+    use_mean_floor: bool,
+) -> Vec<usize> {
+    if scores.is_empty() {
+        return Vec::new();
+    }
+    let max_score = scores.iter().cloned().fold(0.0_f32, f32::max);
+    let fixed_cutoff = max_score * fixed_fraction;
+    let cutoff = if use_mean_floor {
+        let mean_score = scores.iter().sum::<f32>() / scores.len() as f32;
+        fixed_cutoff.max(mean_score)
+    } else {
+        fixed_cutoff
+    };
+    let effective_cutoff = if use_mean_floor {
+        cutoff - (max_score * NEAR_TIE_MARGIN_FRACTION)
+    } else {
+        cutoff
+    };
+    scores
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| **s > 0.0 && **s >= effective_cutoff)
+        .map(|(i, _)| i)
+        .collect()
+}
+
 // ── Stop words ────────────────────────────────────────────────────────────────
 
 const STOP_WORDS: &[&str] = &[
@@ -385,7 +451,7 @@ fn tokenise(text: &str) -> Vec<String> {
 /// instead of three independent, weaker single-word matches. Multi-word
 /// terms are naturally rarer than single words, so they end up with a
 /// higher IDF weight later without needing an artificial bonus multiplier.
-fn extract_terms(text: &str) -> Vec<String> {
+pub fn extract_terms(text: &str) -> Vec<String> {
     let tokens = tokenise(text);
     let mut terms = tokens.clone();
     for w in tokens.windows(2) {
@@ -462,7 +528,7 @@ fn fuzzy_eq(a: &str, b: &str) -> bool {
 
 /// Does `haystack_terms` contain something matching `needle`, exactly or
 /// fuzzily (typos / near-identical spellings)?
-fn terms_contain(haystack_terms: &HashSet<String>, needle: &str) -> bool {
+pub fn terms_contain(haystack_terms: &HashSet<String>, needle: &str) -> bool {
     if haystack_terms.contains(needle) {
         return true;
     }
@@ -505,7 +571,7 @@ impl Idf {
         Idf { weights }
     }
 
-    fn get(&self, term: &str) -> f32 {
+    pub fn get(&self, term: &str) -> f32 {
         self.weights.get(term).copied().unwrap_or(1.0)
     }
 }
@@ -587,10 +653,48 @@ fn score_experience(exp: &Experience, keywords: &[(String, usize)], idf: &Idf) -
     score_text(&text, keywords, idf)
 }
 
+/// Union (deduplicated, order-preserving) of `tools` across every project
+/// within a single `Experience`.
+///
+/// Why this exists: `tools` is already a per-`ExperienceProject` field (not
+/// per-`Experience`) in the data model, and the editor already lets you tag
+/// tools on an individual project. But plenty of real CVs — including the
+/// one this was built against — are *authored* with one combined tech-stack
+/// line per role covering all of that role's sub-projects together, rather
+/// than one per sub-project (PDF import has no reliable way to attribute a
+/// trailing "Tech: X, Y, Z" line back to a specific sub-project when the
+/// source text only ever wrote it once per role, at the very end). The
+/// practical effect: whichever project happened to end up holding that
+/// combined list gets a large, correct-looking `tools` field, while its
+/// siblings — including, concretely, the ones whose own bullets are what
+/// actually name AWX/Ansible work — end up with an empty one, and lose out
+/// on keyword matches for tools they genuinely used.
+///
+/// Rather than trying to guess a per-project attribution the source text
+/// doesn't actually contain, every project is scored against the pool of
+/// tools used anywhere in its parent experience, on top of its own. This
+/// can't over-credit a project with a tool used by a *different*
+/// experience — only ones already known to belong to the same role.
+pub fn pooled_tools(projects: &[ExperienceProject]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut pooled = Vec::new();
+    for proj in projects {
+        for tool in &proj.tools {
+            if seen.insert(tool.clone()) {
+                pooled.push(tool.clone());
+            }
+        }
+    }
+    pooled
+}
+
 /// Builds the scorable text blob for a single sub-project. Shared between
 /// scoring (`score_experience_project`) and IDF corpus construction in
-/// `tailor_cv`, so the two always see identical text.
-fn experience_project_text(proj: &ExperienceProject) -> String {
+/// `tailor_cv`, so the two always see identical text. `shared_tools` should
+/// be the parent experience's `pooled_tools()` — see that function's doc
+/// comment for why this needs to be pooled rather than using only
+/// `proj.tools`.
+pub fn experience_project_text(proj: &ExperienceProject, shared_tools: &[String]) -> String {
     let mut text = format!("{} {}", proj.name.en, proj.name.fr);
     for c in &proj.context {
         text.push(' ');
@@ -606,6 +710,8 @@ fn experience_project_text(proj: &ExperienceProject) -> String {
     }
     text.push(' ');
     text.push_str(&proj.tools.join(" "));
+    text.push(' ');
+    text.push_str(&shared_tools.join(" "));
     text
 }
 
@@ -613,8 +719,9 @@ fn score_experience_project(
     proj: &ExperienceProject,
     keywords: &[(String, usize)],
     idf: &Idf,
+    shared_tools: &[String],
 ) -> f32 {
-    score_text(&experience_project_text(proj), keywords, idf)
+    score_text(&experience_project_text(proj, shared_tools), keywords, idf)
 }
 
 fn score_skill(skill: &Skill, keywords: &[(String, usize)], idf: &Idf) -> f32 {
@@ -623,7 +730,7 @@ fn score_skill(skill: &Skill, keywords: &[(String, usize)], idf: &Idf) -> f32 {
 
 /// Builds the scorable text blob for a top-level project. Shared between
 /// scoring (`score_project`) and IDF corpus construction in `tailor_cv`.
-fn project_text(proj: &Project) -> String {
+pub fn project_text(proj: &Project) -> String {
     format!(
         "{} {} {} {} {} {}",
         proj.name,
@@ -649,10 +756,59 @@ fn score_project(proj: &Project, keywords: &[(String, usize)], idf: &Idf) -> f32
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// Raw per-experience (and per-project) relevance scores, alongside the
+/// final include/exclude decision — exposed purely for inspection/debugging.
+///
+/// Added specifically to answer "is the embedding scoring itself noise, or
+/// is a downstream selection/aggregation step still wrong?" without that
+/// distinction, every fix to selection logic looks identical from the
+/// outside (the tailored CV just changes which experiences appear) and
+/// there's no way to tell whether an experience was excluded because it
+/// genuinely scored low or because of some other bug — you can only ever
+/// see the final in/out list, never the number that produced it.
+#[derive(Debug, Clone)]
+pub struct ExperienceScoreDebug {
+    pub experience_id: String,
+    pub company: String,
+    /// Whichever of `.fr`/`.en` is non-empty (falls back to `.en` if both
+    /// are set) — this is for a human skimming a debug panel, not for
+    /// rendering, so it doesn't need to respect the CV's active language.
+    pub role: String,
+    pub score: f32,
+    pub selected: bool,
+    pub projects: Vec<ProjectScoreDebug>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectScoreDebug {
+    pub name: String,
+    pub score: f32,
+    pub selected: bool,
+}
+
+fn display_role(role: &crate::models::LocalizedText) -> String {
+    if !role.fr.is_empty() {
+        role.fr.clone()
+    } else {
+        role.en.clone()
+    }
+}
+
+fn display_name(name: &crate::models::LocalizedText) -> String {
+    if !name.fr.is_empty() {
+        name.fr.clone()
+    } else {
+        name.en.clone()
+    }
+}
+
 pub struct TailorResult {
     pub tailored: TailoredCV,
     /// Top keywords from the JD for display
     pub top_keywords: Vec<(String, usize)>,
+    /// Raw scores behind the experience/project selection above — see
+    /// `ExperienceScoreDebug`'s doc comment for why this exists.
+    pub debug_scores: Vec<ExperienceScoreDebug>,
 }
 
 /// Main entry point: given a LifetimeCV and raw JD text, produce a tailored CV.
@@ -676,8 +832,9 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     // everywhere (see `Idf` doc comment above).
     let mut documents: Vec<Vec<String>> = Vec::new();
     for exp in &cv.experiences {
+        let shared_tools = pooled_tools(&exp.projects);
         for proj in &exp.projects {
-            documents.push(extract_terms(&experience_project_text(proj)));
+            documents.push(extract_terms(&experience_project_text(proj, &shared_tools)));
         }
     }
     for proj in &cv.projects {
@@ -699,18 +856,34 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     // Select experiences relative to the best match rather than any nonzero
     // score: with broad JDs, near-every experience block matches at least one
     // low-signal keyword, so an absolute `> 0.0` cutoff barely filters anything.
-    // Keeping only experiences within REL_THRESHOLD of the top score surfaces
-    // the ones that are actually relevant to the JD.
     //
-    // Tuned against real data: TF-IDF + stemming/synonyms/fuzzy matching
-    // compress the score spread compared to plain frequency counting (every
-    // experience now scores 0.4-1.0 relative to the best match, rather than
-    // 0.05-1.0), so the cutoff needs to sit higher than it did before those
-    // changes (was 0.4) to still separate clearly-relevant experiences from
-    // marginal ones.
+    // The cutoff is max(fixed_fraction_of_max, mean_score) rather than just
+    // a fixed fraction of the top score. Why: a fixed fraction assumes the
+    // score distribution has roughly the same *shape* every time, but it
+    // doesn't — TF-IDF/keyword scores tend to spread widely (0.05-1.0
+    // relative to the best match), while embedding-based cosine
+    // similarities (Embedding/Hybrid modes) tend to cluster much more
+    // tightly together (a known property of sentence-transformer
+    // similarity scores). A fraction tuned against the wide keyword
+    // distribution barely filters anything once scores are all clustered
+    // near, say, 0.6-0.75 — which is exactly the bug this fixes (Embedding
+    // mode was including 6 of 7 experiences instead of the ~5 that are
+    // actually relevant). Using the *mean* as a floor self-adapts to
+    // whatever spread the scores actually have: it sits in the middle of
+    // the distribution regardless of how wide or narrow that distribution
+    // is, so it keeps discriminating even when the fixed fraction doesn't.
+    // Taking the max of the two is also safe for the already-validated
+    // keyword-mode behavior — it can only make the cutoff stricter than
+    // the old fixed-fraction alone, never looser, and empirically
+    // reproduces the exact same keyword-mode selection as before.
     const REL_THRESHOLD: f32 = 0.5;
     let max_score = scored_exp.first().map(|(s, _)| *s).unwrap_or(0.0);
-    let cutoff = max_score * REL_THRESHOLD;
+    let mean_score = if scored_exp.is_empty() {
+        0.0
+    } else {
+        scored_exp.iter().map(|(s, _)| *s).sum::<f32>() / scored_exp.len() as f32
+    };
+    let cutoff = (max_score * REL_THRESHOLD).max(mean_score);
 
     // Which experience ids passed the relevance cutoff.
     let mut selected_ids: Vec<String> = scored_exp
@@ -740,6 +913,18 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     // Filter projects within each selected experience, using the same
     // relative-to-best-match logic as experiences: an absolute `> 0.0`
     // cutoff barely trims anything once a project matches any keyword at all.
+    //
+    // NOTE: unlike the experience-level cutoff above, this still uses only
+    // the fixed fraction, NOT the mean-based hybrid. I tried applying the
+    // same hybrid here and verified it breaks a previously-validated case
+    // (a real experience with 4 similarly-scored, genuinely-all-relevant
+    // projects got wrongly trimmed to 2, because tight clustering at the
+    // project level can mean "these are all relevant" rather than "this
+    // scoring mode isn't discriminating" — unlike at the experience level,
+    // where tight clustering reliably signals the latter). So this is a
+    // known, currently-unresolved gap: project-level over-inclusion under
+    // Embedding/Hybrid mode is not fixed by this change, only the
+    // experience-level over-inclusion is.
     for exp in &mut selected_exp {
         if exp.projects.len() <= 1 {
             continue;
@@ -757,10 +942,11 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
         // can, since the algorithm has no way to know which of two
         // similarly-worded projects a human would consider more relevant.
         const PROJECT_REL_THRESHOLD: f32 = 0.7;
+        let shared_tools = pooled_tools(&exp.projects);
         let proj_scores: Vec<f32> = exp
             .projects
             .iter()
-            .map(|p| score_experience_project(p, &top_keywords, &idf))
+            .map(|p| score_experience_project(p, &top_keywords, &idf, &shared_tools))
             .collect();
         let max_proj_score = proj_scores.iter().cloned().fold(0.0_f32, f32::max);
         let proj_cutoff = max_proj_score * PROJECT_REL_THRESHOLD;
@@ -853,9 +1039,366 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
         match_score,
     };
 
+    // Raw scores for every experience/project, independent of the
+    // selection above — see `ExperienceScoreDebug`'s doc comment.
+    let debug_scores: Vec<ExperienceScoreDebug> = scored_exp
+        .iter()
+        .map(|(score, exp)| {
+            let shared_tools = pooled_tools(&exp.projects);
+            let projects = exp
+                .projects
+                .iter()
+                .map(|p| {
+                    let pscore = score_experience_project(p, &top_keywords, &idf, &shared_tools);
+                    ProjectScoreDebug {
+                        name: display_name(&p.name),
+                        score: pscore,
+                        selected: pscore > 0.0,
+                    }
+                })
+                .collect();
+            ExperienceScoreDebug {
+                experience_id: exp.id.clone(),
+                company: exp.company.clone(),
+                role: display_role(&exp.role),
+                score: *score,
+                selected: selected_ids.contains(&exp.id),
+                projects,
+            }
+        })
+        .collect();
+
     TailorResult {
         tailored,
         top_keywords: keywords.into_iter().take(30).collect(),
+        debug_scores,
+    }
+}
+
+pub fn tailor_cv_with_scorer(
+    cv: &LifetimeCV,
+    jd_text: &str,
+    scorer: &mut crate::services::score::Scorer,
+    jd_embedding: Option<&[f32]>,
+) -> TailorResult {
+    let keywords = extract_keywords(jd_text);
+    let top_keywords: Vec<(String, usize)> = keywords.iter().take(40).cloned().collect();
+
+    // Build the TF-IDF corpus from every independently-scorable block in the
+    // candidate's own CV and set it on the scorer.
+    let mut documents: Vec<Vec<String>> = Vec::new();
+    for exp in &cv.experiences {
+        let shared_tools = pooled_tools(&exp.projects);
+        for proj in &exp.projects {
+            documents.push(extract_terms(&experience_project_text(proj, &shared_tools)));
+        }
+    }
+    for proj in &cv.projects {
+        documents.push(extract_terms(&project_text(proj)));
+    }
+    for skill in &cv.skills {
+        documents.push(extract_terms(&skill.name));
+    }
+    scorer.idf = Idf::build(&documents);
+
+    // ── Experiences ──────────────────────────────────────────────────────────
+    let mut scored_exp: Vec<(f32, Experience)> = cv
+        .experiences
+        .iter()
+        .map(|e| {
+            (
+                scorer.score_experience(e, &top_keywords, jd_embedding),
+                e.clone(),
+            )
+        })
+        .collect();
+    scored_exp.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // See the long comment on the equivalent block in `tailor_cv` above for
+    // why this uses max(fixed_fraction, mean) rather than just a fixed
+    // fraction — this hybrid cutoff is what actually matters here, since
+    // this function (not `tailor_cv`) is the one the live app calls for
+    // Embedding/Hybrid mode, where the bug this fixes was observed.
+    const REL_THRESHOLD: f32 = 0.5;
+    let exp_scores: Vec<f32> = scored_exp.iter().map(|(s, _)| *s).collect();
+    let use_mean_floor = scorer.mode != crate::services::score::ScoreMode::Keyword;
+    let keep_idx = select_by_relative_cutoff(&exp_scores, REL_THRESHOLD, use_mean_floor);
+    // Also kept on its own (not just folded into the cutoff): used again
+    // below as one component of the overall `match_score` badge.
+    let mean_score = if exp_scores.is_empty() {
+        0.0
+    } else {
+        exp_scores.iter().sum::<f32>() / exp_scores.len() as f32
+    };
+
+    let mut selected_ids: Vec<String> = keep_idx
+        .iter()
+        .map(|&i| scored_exp[i].1.id.clone())
+        .collect();
+
+    if selected_ids.len() < 2 {
+        for exp in cv.experiences.iter().take(2) {
+            if !selected_ids.contains(&exp.id) {
+                selected_ids.push(exp.id.clone());
+            }
+        }
+    }
+
+    let mut selected_exp: Vec<Experience> = cv
+        .experiences
+        .iter()
+        .filter(|e| selected_ids.contains(&e.id))
+        .cloned()
+        .collect();
+
+    // Filter projects within each selected experience.
+    //
+    // For Keyword mode this stays the original fixed-fraction-of-max
+    // cutoff, exactly as validated (4 similarly-scored, genuinely-all-
+    // relevant projects correctly survive because keyword scores rarely
+    // cluster that tightly by accident, so 0.7*max is already a real
+    // discriminator).
+    //
+    // For Embedding/Hybrid mode, cosine similarities cluster far more
+    // tightly than keyword scores (a known property of sentence-
+    // transformer similarity, same reasoning as the experience-level
+    // cutoff above), so 0.7*max alone barely trims anything and this
+    // over-includes projects — the gap called out (and left open) in an
+    // earlier pass at this function. Fix: raise the floor to the mean
+    // score too, same recipe already validated at the experience level,
+    // but *only* outside Keyword mode, so the keyword-mode case that
+    // motivated the "don't apply this here" comment is left untouched —
+    // it's gated on `scorer.mode`, not applied unconditionally.
+    for exp in &mut selected_exp {
+        if exp.projects.len() <= 1 {
+            continue;
+        }
+        const PROJECT_REL_THRESHOLD: f32 = 0.7;
+        let shared_tools = pooled_tools(&exp.projects);
+        let proj_scores: Vec<f32> = exp
+            .projects
+            .iter()
+            .map(|p| scorer.score_experience_project(p, &top_keywords, jd_embedding, &shared_tools))
+            .collect();
+        let use_mean_floor = scorer.mode != crate::services::score::ScoreMode::Keyword;
+        let mut keep_idx =
+            select_by_relative_cutoff(&proj_scores, PROJECT_REL_THRESHOLD, use_mean_floor);
+
+        if keep_idx.is_empty() {
+            if let Some((best_i, _)) = proj_scores
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            {
+                keep_idx.push(best_i);
+            }
+        }
+
+        let mut i = 0;
+        exp.projects.retain(|_| {
+            let keep = keep_idx.contains(&i);
+            i += 1;
+            keep
+        });
+    }
+
+    // ── Skills ────────────────────────────────────────────────────────────────
+    // Score each skill once (was previously computed twice — once per
+    // filter closure below — purely wasted work; capturing the scores also
+    // lets match_score below include skill relevance, not just experience
+    // relevance).
+    let skill_scores: Vec<f32> = cv
+        .skills
+        .iter()
+        .map(|s| scorer.score_skill(s, &top_keywords, jd_embedding))
+        .collect();
+
+    let mut matched_skills: Vec<Skill> = cv
+        .skills
+        .iter()
+        .zip(&skill_scores)
+        .filter(|(_, s)| **s > 0.0)
+        .map(|(skill, _)| skill.clone())
+        .collect();
+
+    let unmatched_skills: Vec<Skill> = cv
+        .skills
+        .iter()
+        .zip(&skill_scores)
+        .filter(|(_, s)| **s == 0.0)
+        .map(|(skill, _)| skill.clone())
+        .collect();
+
+    matched_skills.extend(unmatched_skills);
+
+    // ── Projects ──────────────────────────────────────────────────────────────
+    let mut scored_proj: Vec<(f32, Project)> = cv
+        .projects
+        .iter()
+        .map(|p| {
+            (
+                scorer.score_project(p, &top_keywords, jd_embedding),
+                p.clone(),
+            )
+        })
+        .collect();
+    scored_proj.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let selected_proj: Vec<Project> = scored_proj
+        .into_iter()
+        .filter(|(s, _)| *s > 0.0)
+        .map(|(_, p)| p)
+        .collect();
+
+    // ── Match / gap analysis ──────────────────────────────────────────────────
+    // The matched/missing keyword TAGS are deliberately always keyword-based,
+    // in every mode (including Embedding/Hybrid) — there's no meaningful way
+    // to show "semantic similarity" as a list of discrete matched/unmatched
+    // keyword chips, since embeddings don't work in terms of individual
+    // words at all. This is an intentional design choice, not a bug.
+    let cv_terms: HashSet<String> = extract_terms(&cv.all_text()).into_iter().collect();
+    let (matched_keywords, missing_keywords): (Vec<String>, Vec<String>) = top_keywords
+        .iter()
+        .take(30)
+        .map(|(kw, _)| kw.clone())
+        .partition(|kw| terms_contain(&cv_terms, kw));
+
+    // `match_score` (the headline "X% CORRESPONDANCE" badge in the UI), on
+    // the other hand, previously used the SAME keyword-only ratio as the
+    // tags above — completely disconnected from `scorer`/`mode`. That meant
+    // Embedding and Hybrid mode always showed the exact same percentage as
+    // Keyword mode, silently, with nothing indicating the badge wasn't
+    // reflecting the mode actually selected (this was caught because a
+    // real Embedding-mode run produced byte-for-byte the same 57% and the
+    // same matched/missing tag lists as an earlier Keyword-mode run against
+    // the same JD — not a coincidence, the code path was identical).
+    //
+    // Fix: combine `mean_score` (experience relevance, already computed
+    // above from `scorer.score_experience(...)`, mode-aware) with the mean
+    // of `skill_scores` (also mode-aware, computed above). Using
+    // experience-relevance alone regressed CVs with matching skills but
+    // few/no experiences down to a flat 0% regardless of skill fit — caught
+    // by a test using a minimal fixture (one skill, zero experiences)
+    // expecting a nonzero score. Blending both means a skills-heavy CV
+    // still registers appropriately, while an experience-heavy CV's score
+    // is barely affected (skills contribute one term to the average
+    // alongside however many experience scores there are).
+    //
+    // Clamped to [0.0, 1.0] since cosine similarity (Embedding/Hybrid
+    // modes) is mathematically unbounded to [-1, 1], unlike the keyword
+    // ratio, which is naturally already bounded to [0, 1] — this keeps the
+    // badge from ever showing a negative or over-100% percentage
+    // regardless of mode.
+    let mean_skill_score = {
+        // Only average over skills that actually scored > 0 (the ones
+        // ending up in `matched_skills`), not every skill on the CV.
+        // Averaging over all skills — including the many that will
+        // legitimately score 0 against any single JD in a broad/diverse
+        // skill list — would punish having a comprehensive skill list: a
+        // CV with 50 skills where 10 are perfectly relevant would score
+        // worse on this component than one listing only those same 10.
+        // "How well do your *relevant* skills fit" is closer to what a
+        // person reads a % match badge as meaning than "average
+        // relevance across literally everything you've ever listed."
+        let matched: Vec<f32> = skill_scores.iter().copied().filter(|s| *s > 0.0).collect();
+        if matched.is_empty() {
+            0.0
+        } else {
+            matched.iter().sum::<f32>() / matched.len() as f32
+        }
+    };
+    // Only include each component if it actually has data — otherwise an
+    // empty category (e.g. zero experiences) would contribute a phantom
+    // 0.0 into the average and needlessly dilute the other component's
+    // score, rather than being cleanly excluded.
+    //
+    // Weighted, not a flat average: experience and skill scores are on
+    // structurally different scales under this scoring scheme — a single
+    // short skill name (e.g. "Ansible") can only ever match one or two of
+    // the JD's ~40 top keywords, capping its own score low no matter how
+    // relevant it is, while a full experience paragraph naturally
+    // accumulates many more weighted matches. A flat 50/50 average
+    // measurably dragged real-CV scores down (verified: ~39% → ~20% on a
+    // real CV/JD pair) purely from this scale mismatch, not from any
+    // actual drop in relevance. Weighting experience heavily (0.85) when
+    // present keeps the badge close to what experience-relevance alone
+    // would show, with skills as a modest secondary signal (0.15) — and
+    // if only one category has data (e.g. the skills-only CV that caught
+    // the original bug), it's used alone at its own scale, unaffected by
+    // the weighting, since the weights cancel out via normalization below.
+    const EXPERIENCE_WEIGHT: f32 = 0.85;
+    const SKILL_WEIGHT: f32 = 0.15;
+    let mut weighted_sum = 0.0;
+    let mut weight_total = 0.0;
+    if !scored_exp.is_empty() {
+        weighted_sum += mean_score * EXPERIENCE_WEIGHT;
+        weight_total += EXPERIENCE_WEIGHT;
+    }
+    if !skill_scores.is_empty() {
+        weighted_sum += mean_skill_score * SKILL_WEIGHT;
+        weight_total += SKILL_WEIGHT;
+    }
+    let match_score = if weight_total > 0.0 {
+        (weighted_sum / weight_total).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    let tailored = TailoredCV {
+        personal: cv.personal.clone(),
+        experiences: selected_exp,
+        skills: matched_skills,
+        education: cv.education.clone(),
+        projects: selected_proj,
+        languages: cv.languages.clone(),
+        certifications: cv.certifications.clone(),
+        matched_keywords,
+        missing_keywords,
+        match_score,
+    };
+
+    // Raw scores for every experience/project, independent of the
+    // selection above — see `ExperienceScoreDebug`'s doc comment. This is
+    // the live (Embedding/Hybrid-capable) path, so this is what actually
+    // lets you see whether e.g. KAIMAN scored low (an embedding-quality
+    // problem) or scored fine but still lost the cutoff (a selection-logic
+    // problem) instead of only ever seeing the final in/out list.
+    let debug_scores: Vec<ExperienceScoreDebug> = scored_exp
+        .iter()
+        .map(|(score, exp)| {
+            let shared_tools = pooled_tools(&exp.projects);
+            let projects = exp
+                .projects
+                .iter()
+                .map(|p| {
+                    let pscore = scorer.score_experience_project(
+                        p,
+                        &top_keywords,
+                        jd_embedding,
+                        &shared_tools,
+                    );
+                    ProjectScoreDebug {
+                        name: display_name(&p.name),
+                        score: pscore,
+                        selected: pscore > 0.0,
+                    }
+                })
+                .collect();
+            ExperienceScoreDebug {
+                experience_id: exp.id.clone(),
+                company: exp.company.clone(),
+                role: display_role(&exp.role),
+                score: *score,
+                selected: selected_ids.contains(&exp.id),
+                projects,
+            }
+        })
+        .collect();
+
+    TailorResult {
+        tailored,
+        top_keywords: keywords.into_iter().take(30).collect(),
+        debug_scores,
     }
 }
 
@@ -1005,6 +1548,164 @@ mod tests {
         assert_eq!(
             unigram_entries, 1,
             "All case variants should collapse to a single unigram entry"
+        );
+    }
+
+    // ── select_by_relative_cutoff ────────────────────────────────────────────
+
+    #[test]
+    fn cutoff_keyword_like_spread_keeps_only_top_without_mean_floor() {
+        // Wide spread, e.g. real keyword scores: only the top one clears 0.7*max.
+        let scores = vec![0.82, 0.30, 0.10, 0.05];
+        let kept = select_by_relative_cutoff(&scores, 0.7, false);
+        assert_eq!(kept, vec![0]);
+    }
+
+    #[test]
+    fn cutoff_keyword_like_near_ties_all_kept_without_mean_floor() {
+        // 4 genuinely-similar, all-relevant scores (the case the old
+        // project-level code was tuned to preserve) — fixed fraction alone
+        // keeps all 4, exactly like before this change.
+        let scores = vec![0.82, 0.79, 0.75, 0.71];
+        let mut kept = select_by_relative_cutoff(&scores, 0.7, false);
+        kept.sort();
+        assert_eq!(kept, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn cutoff_embedding_like_tight_cluster_trimmed_with_mean_floor() {
+        // Tightly clustered cosine-similarity-like scores (everything
+        // sits within 0.7x of the max, so the fixed fraction alone can't
+        // discriminate at all — this is the exact "6 of 7 experiences
+        // included instead of ~5" symptom this fix addresses).
+        let scores = vec![0.75, 0.72, 0.70, 0.68, 0.65, 0.60, 0.58];
+        let fixed_only = select_by_relative_cutoff(&scores, 0.7, false);
+        let with_mean_floor = select_by_relative_cutoff(&scores, 0.7, true);
+        assert_eq!(
+            fixed_only.len(),
+            scores.len(),
+            "fixed fraction alone should barely filter a tight cluster"
+        );
+        assert!(
+            with_mean_floor.len() < fixed_only.len(),
+            "mean floor should trim the tight cluster down, got {:?}",
+            with_mean_floor
+        );
+        let mut with_mean_floor_sorted = with_mean_floor.clone();
+        with_mean_floor_sorted.sort();
+        // Index 4 (0.65) is included too: it's within the 3% near-tie
+        // margin below the mean-floor cutoff (see NEAR_TIE_MARGIN_FRACTION).
+        assert_eq!(with_mean_floor_sorted, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn cutoff_near_tie_margin_rescues_a_narrow_miss_but_not_a_real_gap() {
+        // These are the *actual* observed scores from a real embedding run
+        // (DTNUM, SIRIUS, proxIT, KAIMAN, BRED IT, CA-GIP, Groupe HN) that
+        // motivated this margin: KAIMAN (genuinely the most relevant
+        // remaining experience for an AWX/CIS-hardening JD) missed the
+        // mean-floor cutoff by 0.0094 while proxIT (pure mainframe, no
+        // AWX/Ansible/CIS content at all) cleared it — out of an overall
+        // score range of about 0.18. That gap is noise, not signal, and
+        // dropping KAIMAN over it was the wrong call.
+        let scores = vec![0.4858, 0.4784, 0.4070, 0.3954, 0.3866, 0.3755, 0.3047];
+        let kept = select_by_relative_cutoff(&scores, 0.5, true);
+        let mut kept_sorted = kept.clone();
+        kept_sorted.sort();
+        // indices: 0=DTNUM, 1=SIRIUS, 2=proxIT, 3=KAIMAN kept;
+        // 4=BRED IT, 5=CA-GIP, 6=Groupe HN correctly still excluded —
+        // the margin rescues a narrow miss, it doesn't just keep everyone.
+        assert_eq!(kept_sorted, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn cutoff_empty_scores_returns_empty() {
+        assert!(select_by_relative_cutoff(&[], 0.7, false).is_empty());
+        assert!(select_by_relative_cutoff(&[], 0.7, true).is_empty());
+    }
+
+    #[test]
+    fn cutoff_zero_scores_excluded_even_under_cutoff() {
+        // A 0.0 score should never be selected regardless of where the
+        // cutoff lands (mirrors the old `*s > 0.0` guard).
+        let scores = vec![0.0, 0.0, 0.0];
+        assert!(select_by_relative_cutoff(&scores, 0.7, false).is_empty());
+        assert!(select_by_relative_cutoff(&scores, 0.7, true).is_empty());
+    }
+
+    // Regression coverage for a real data-modeling gap: a CV author (or
+    // PDF import) can write one combined tools line covering all of a
+    // role's sub-projects, leaving individual `ExperienceProject.tools`
+    // fields empty except on whichever project happened to end up holding
+    // it. `pooled_tools` is what lets per-project scoring still credit a
+    // project for a tool that's only recorded on a sibling within the same
+    // experience — see its doc comment for the full rationale.
+    #[test]
+    fn pooled_tools_unions_across_sibling_projects_without_duplicates() {
+        let p1 = ExperienceProject {
+            tools: vec!["Ansible".to_string(), "AWX".to_string()],
+            ..Default::default()
+        };
+        let p2 = ExperienceProject {
+            // "AWX" repeated on purpose: must not appear twice in the pool.
+            tools: vec!["AWX".to_string(), "Terraform".to_string()],
+            ..Default::default()
+        };
+        let p3 = ExperienceProject {
+            tools: vec![],
+            ..Default::default()
+        };
+        let pooled = pooled_tools(&[p1, p2, p3]);
+        assert_eq!(pooled, vec!["Ansible", "AWX", "Terraform"]);
+    }
+
+    #[test]
+    fn experience_project_scoring_credits_tools_only_recorded_on_a_sibling() {
+        // Mirrors the real KAIMAN scenario: the project whose own bullets
+        // actually reference AWX has an EMPTY tools list, while a sibling
+        // project (unrelated bullets) holds the full tools list for the
+        // whole role. Without pooling, the AWX-mentioning project would
+        // get no credit at all for the "awx"/"ansible" keywords beyond
+        // whatever it happens to say in prose.
+        let keywords = vec![("awx".to_string(), 5), ("ansible".to_string(), 5)];
+
+        let mentions_awx_no_tools = ExperienceProject {
+            bullets: vec![crate::models::LocalizedText::same(
+                "conçu des playbooks awx pour ce projet",
+            )],
+            tools: vec![],
+            ..Default::default()
+        };
+        let sibling_holds_the_tools = ExperienceProject {
+            bullets: vec![crate::models::LocalizedText::same(
+                "support technique sans rapport",
+            )],
+            tools: vec!["AWX".to_string(), "Ansible".to_string()],
+            ..Default::default()
+        };
+
+        // A tiny synthetic IDF corpus is enough here — we're only checking
+        // that pooling changes the *relative* score, not testing IDF
+        // weighting itself.
+        let idf = Idf::build(&[
+            vec!["awx".to_string(), "ansible".to_string()],
+            vec!["unrelated".to_string(), "terms".to_string()],
+        ]);
+
+        let shared_tools = pooled_tools(&[
+            mentions_awx_no_tools.clone(),
+            sibling_holds_the_tools.clone(),
+        ]);
+
+        let score_without_pooling =
+            score_experience_project(&mentions_awx_no_tools, &keywords, &idf, &[]);
+        let score_with_pooling =
+            score_experience_project(&mentions_awx_no_tools, &keywords, &idf, &shared_tools);
+
+        assert!(
+            score_with_pooling > score_without_pooling,
+            "pooling sibling tools should raise this project's score \
+             (without: {score_without_pooling}, with: {score_with_pooling})"
         );
     }
 
