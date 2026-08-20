@@ -227,10 +227,14 @@ const CV_CSS: &str = r#"
 .cv-doc .contact-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .cv-doc .summary {
   margin-top: 14px;
+  padding: 10px 14px;
   color: #334155;
-  font-size: 0.9rem;
-  line-height: 1.7;
+  font-size: 0.88rem;
+  line-height: 1.65;
   max-width: 700px;
+  background: #f8fafc;
+  border-left: 3px solid #2563eb;
+  border-radius: 0 6px 6px 0;
 }
 
 /* ── Section ── */
