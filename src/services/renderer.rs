@@ -104,6 +104,14 @@ fn render_inline(text: &str) -> String {
     apply_bold(&esc(text))
 }
 
+fn ensure_scheme(url: &str) -> String {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else {
+        format!("https://{}", url)
+    }
+}
+
 fn tag(href: &str, label: &str) -> String {
     format!(r#"<span class="tag">{}</span>"#, esc(label)).replace(
         "tag",
@@ -525,32 +533,26 @@ fn render_header(p: &crate::models::PersonalInfo, lang: Lang) -> String {
         ));
     }
     if !p.linkedin.is_empty() {
-        // Render the URL itself as the link text (not a generic "LinkedIn"
-        // label). A PDF's visible text is the only thing our own importer
-        // can recover on re-import (see pdf_import::extract_urls, which
-        // scans visible text for "linkedin.com" / "github.com" substrings —
-        // it does not read PDF link annotations). A static label would
-        // silently lose this field every time our own PDF is re-imported.
+        let li = ensure_scheme(&p.linkedin);
         contacts.push(format!(
-            r#"<span class="contact-item">🔗 <a href="{}">{}</a></span>"#,
-            esc(&p.linkedin),
+            r#"<span class="contact-item">🔗 <a href="{}" target="_blank" rel="noopener noreferrer">{}</a></span>"#,
+            esc(&li),
             esc(&p.linkedin)
         ));
     }
     if !p.github.is_empty() {
-        // See comment above on the LinkedIn link: keep the URL as the
-        // visible text so round-tripping through our own PDF export/import
-        // preserves the field.
+        let gh = ensure_scheme(&p.github);
         contacts.push(format!(
-            r#"<span class="contact-item">💻 <a href="{}">{}</a></span>"#,
-            esc(&p.github),
+            r#"<span class="contact-item">💻 <a href="{}" target="_blank" rel="noopener noreferrer">{}</a></span>"#,
+            esc(&gh),
             esc(&p.github)
         ));
     }
     if !p.website.is_empty() {
+        let ws = ensure_scheme(&p.website);
         contacts.push(format!(
-            r#"<span class="contact-item">🌐 <a href="{}">{}</a></span>"#,
-            esc(&p.website),
+            r#"<span class="contact-item">🌐 <a href="{}" target="_blank" rel="noopener noreferrer">{}</a></span>"#,
+            esc(&ws),
             esc(&p.website)
         ));
     }
