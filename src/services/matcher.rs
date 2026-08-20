@@ -118,6 +118,84 @@ const STOP_WORDS: &[&str] = &[
     "skill",
     "knowledge",
     "understanding",
+    // ── French stop words ───────────────────────────────────────────────────
+    "le",
+    "la",
+    "les",
+    "un",
+    "une",
+    "des",
+    "du",
+    "de",
+    "et",
+    "ou",
+    "mais",
+    "dans",
+    "sur",
+    "sous",
+    "avec",
+    "sans",
+    "par",
+    "pour",
+    "vers",
+    "chez",
+    "entre",
+    "au",
+    "aux",
+    "ce",
+    "ces",
+    "cet",
+    "cette",
+    "son",
+    "sa",
+    "ses",
+    "leur",
+    "leurs",
+    "nos",
+    "notre",
+    "votre",
+    "vos",
+    "que",
+    "qui",
+    "quoi",
+    "dont",
+    "est",
+    "sont",
+    "sera",
+    "seront",
+    "être",
+    "avoir",
+    "ont",
+    "fait",
+    "faire",
+    "afin",
+    "ainsi",
+    "aussi",
+    "alors",
+    "donc",
+    "comme",
+    "tout",
+    "tous",
+    "toute",
+    "toutes",
+    "plus",
+    "moins",
+    "même",
+    "ensemble",
+    "cadre",
+    "projet",
+    "programme",
+    "équipe",
+    "équipes",
+    "mission",
+    "poste",
+    "candidat",
+    "candidate",
+    "recherche",
+    "rejoindre",
+    "travailler",
+    "quelqu",
+    "déjà",
 ];
 
 // ── Tokeniser ─────────────────────────────────────────────────────────────────
@@ -293,38 +371,89 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
         .collect();
     scored_exp.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Always include at least 2 most-recent (original order) even if unscored
-    let mut selected_exp: Vec<Experience> = scored_exp
+    // Select experiences relative to the best match rather than any nonzero
+    // score: with broad JDs, near-every experience block matches at least one
+    // low-signal keyword, so an absolute `> 0.0` cutoff barely filters anything.
+    // Keeping only experiences within REL_THRESHOLD of the top score surfaces
+    // the ones that are actually relevant to the JD.
+    const REL_THRESHOLD: f32 = 0.4;
+    let max_score = scored_exp.first().map(|(s, _)| *s).unwrap_or(0.0);
+    let cutoff = max_score * REL_THRESHOLD;
+
+    // Which experience ids passed the relevance cutoff.
+    let mut selected_ids: Vec<String> = scored_exp
         .iter()
-        .filter(|(s, _)| *s > 0.0)
-        .map(|(_, e)| e.clone())
+        .filter(|(s, _)| *s > 0.0 && *s >= cutoff)
+        .map(|(_, e)| e.id.clone())
         .collect();
 
-    if selected_exp.len() < 2 {
+    if selected_ids.len() < 2 {
         for exp in cv.experiences.iter().take(2) {
-            if !selected_exp.iter().any(|e| e.id == exp.id) {
-                selected_exp.push(exp.clone());
+            if !selected_ids.contains(&exp.id) {
+                selected_ids.push(exp.id.clone());
             }
         }
     }
 
-    // Filter projects within each selected experience
+    // Rebuild the selection in the CV's original (reverse-chronological) order
+    // rather than relevance-score order — readers expect a CV timeline, not a
+    // ranking, and the score is only meant to decide inclusion, not ordering.
+    let mut selected_exp: Vec<Experience> = cv
+        .experiences
+        .iter()
+        .filter(|e| selected_ids.contains(&e.id))
+        .cloned()
+        .collect();
+
+    // Filter projects within each selected experience, using the same
+    // relative-to-best-match logic as experiences: an absolute `> 0.0`
+    // cutoff barely trims anything once a project matches any keyword at all.
     for exp in &mut selected_exp {
         if exp.projects.len() <= 1 {
             continue;
         }
-        let filtered: Vec<ExperienceProject> = exp
+        // Score each project but keep track of its original index so the
+        // final selection can be re-ordered back into the CV's own order
+        // (chronological / as-entered), matching the experience-level fix.
+        //
+        // Project scores cluster much more tightly than experience scores
+        // (e.g. 0.11-0.24 rather than 0.05-0.55), since every project within
+        // an already-relevant experience tends to share its vocabulary. The
+        // experience-level REL_THRESHOLD (0.4) is too lenient here and keeps
+        // everything, so projects use a stricter relative cutoff.
+        const PROJECT_REL_THRESHOLD: f32 = 0.65;
+        let proj_scores: Vec<f32> = exp
             .projects
             .iter()
-            .filter(|p| score_experience_project(p, &top_keywords) > 0.0)
-            .cloned()
+            .map(|p| score_experience_project(p, &top_keywords))
             .collect();
-        if filtered.is_empty() {
-            // Keep the first project if none scored
-            exp.projects = vec![exp.projects[0].clone()];
-        } else {
-            exp.projects = filtered;
+        let max_proj_score = proj_scores.iter().cloned().fold(0.0_f32, f32::max);
+        let proj_cutoff = max_proj_score * PROJECT_REL_THRESHOLD;
+
+        let mut keep_idx: Vec<usize> = proj_scores
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| **s > 0.0 && **s >= proj_cutoff)
+            .map(|(i, _)| i)
+            .collect();
+
+        if keep_idx.is_empty() {
+            // Keep the single best-scoring project if none clears the cutoff
+            if let Some((best_i, _)) = proj_scores
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            {
+                keep_idx.push(best_i);
+            }
         }
+
+        let mut i = 0;
+        exp.projects.retain(|_| {
+            let keep = keep_idx.contains(&i);
+            i += 1;
+            keep
+        });
     }
 
     // ── Skills ────────────────────────────────────────────────────────────────
