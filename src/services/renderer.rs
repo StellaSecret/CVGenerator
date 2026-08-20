@@ -104,14 +104,6 @@ fn render_inline(text: &str) -> String {
     apply_bold(&esc(text))
 }
 
-fn ensure_scheme(url: &str) -> String {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        url.to_string()
-    } else {
-        format!("https://{}", url)
-    }
-}
-
 fn tag(href: &str, label: &str) -> String {
     format!(r#"<span class="tag">{}</span>"#, esc(label)).replace(
         "tag",
@@ -235,14 +227,10 @@ const CV_CSS: &str = r#"
 .cv-doc .contact-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .cv-doc .summary {
   margin-top: 14px;
-  padding: 10px 14px;
   color: #334155;
-  font-size: 0.88rem;
-  line-height: 1.65;
+  font-size: 0.9rem;
+  line-height: 1.7;
   max-width: 700px;
-  background: #f8fafc;
-  border-left: 3px solid #2563eb;
-  border-radius: 0 6px 6px 0;
 }
 
 /* ── Section ── */
@@ -347,6 +335,14 @@ const CV_CSS: &str = r#"
 
 @media print {
   .cv-doc .toolbar { display: none; }
+  /* The gap-analysis banner (match score + matched/missing keyword tags) is
+     an on-screen editing aid for the candidate, not part of the CV itself —
+     it must never appear on the document a recruiter actually receives.
+     Screen still shows it (see .gap-banner above); print/PDF output hides
+     it entirely rather than just visually de-emphasizing it, since even a
+     faint "Match score: 57%" printed above your name would look wrong on
+     a document going out to an employer. */
+  .cv-doc .gap-banner { display: none; }
   .cv-doc { padding: 20px; }
   @page { margin: 1.5cm; }
   /* Browsers strip background colors during print by default to save ink;
@@ -533,26 +529,32 @@ fn render_header(p: &crate::models::PersonalInfo, lang: Lang) -> String {
         ));
     }
     if !p.linkedin.is_empty() {
-        let li = ensure_scheme(&p.linkedin);
+        // Render the URL itself as the link text (not a generic "LinkedIn"
+        // label). A PDF's visible text is the only thing our own importer
+        // can recover on re-import (see pdf_import::extract_urls, which
+        // scans visible text for "linkedin.com" / "github.com" substrings —
+        // it does not read PDF link annotations). A static label would
+        // silently lose this field every time our own PDF is re-imported.
         contacts.push(format!(
-            r#"<span class="contact-item">🔗 <a href="{}" target="_blank" rel="noopener noreferrer">{}</a></span>"#,
-            esc(&li),
+            r#"<span class="contact-item">🔗 <a href="{}">{}</a></span>"#,
+            esc(&p.linkedin),
             esc(&p.linkedin)
         ));
     }
     if !p.github.is_empty() {
-        let gh = ensure_scheme(&p.github);
+        // See comment above on the LinkedIn link: keep the URL as the
+        // visible text so round-tripping through our own PDF export/import
+        // preserves the field.
         contacts.push(format!(
-            r#"<span class="contact-item">💻 <a href="{}" target="_blank" rel="noopener noreferrer">{}</a></span>"#,
-            esc(&gh),
+            r#"<span class="contact-item">💻 <a href="{}">{}</a></span>"#,
+            esc(&p.github),
             esc(&p.github)
         ));
     }
     if !p.website.is_empty() {
-        let ws = ensure_scheme(&p.website);
         contacts.push(format!(
-            r#"<span class="contact-item">🌐 <a href="{}" target="_blank" rel="noopener noreferrer">{}</a></span>"#,
-            esc(&ws),
+            r#"<span class="contact-item">🌐 <a href="{}">{}</a></span>"#,
+            esc(&p.website),
             esc(&p.website)
         ));
     }
@@ -1377,6 +1379,37 @@ mod tests {
             ..Default::default()
         };
         assert!(render_tailored_cv(&cv, "", Lang::En).contains("75%"));
+    }
+
+    #[test]
+    fn gap_banner_is_hidden_in_print_output() {
+        // The gap-analysis banner (match score + matched/missing keywords)
+        // is an on-screen editing aid, not part of the CV a recruiter should
+        // receive. It must still render in the screen HTML (checked above),
+        // but the embedded CSS must hide it under @media print so it never
+        // shows up in the downloaded/printed PDF.
+        let cv = TailoredCV {
+            match_score: 0.75,
+            ..Default::default()
+        };
+        let html = render_tailored_cv(&cv, "", Lang::En);
+        assert!(
+            html.contains(".gap-banner") && html.contains("display: none"),
+            "expected a print-media rule hiding .gap-banner"
+        );
+
+        let print_block_start = html
+            .find("@media print")
+            .expect("no @media print block found");
+        let print_block_end = html[print_block_start..]
+            .find("\n}\n")
+            .map(|i| print_block_start + i)
+            .unwrap_or(html.len());
+        let print_block = &html[print_block_start..print_block_end];
+        assert!(
+            print_block.contains(".gap-banner") && print_block.contains("display: none"),
+            "the display:none rule for .gap-banner must be inside the @media print block, not just present somewhere in the stylesheet"
+        );
     }
 
     #[test]
