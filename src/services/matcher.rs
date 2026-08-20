@@ -1,5 +1,5 @@
 use crate::models::{Experience, ExperienceProject, LifetimeCV, Project, Skill, TailoredCV};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ── Stop words ────────────────────────────────────────────────────────────────
 
@@ -198,24 +198,213 @@ const STOP_WORDS: &[&str] = &[
     "déjà",
 ];
 
+// ── Synonym / canonicalisation dictionary ─────────────────────────────────────
+//
+// Domain-specific (DevOps/SRE/infra) FR+EN term variants mapped to one
+// canonical token, so e.g. "hardening", "durcissement" and "sécurisation" are
+// treated as the same keyword instead of three separate weak signals. This is
+// hand-curated and rule-based — no learned weights, easy to extend by adding
+// a line. Keys/values are matched against the accent-stripped, lowercased,
+// *stemmed* form (see `normalize`), so only add the stemmed form here (e.g.
+// "deploi" not "déploiement" — check `stem()` if unsure what a word reduces
+// to).
+fn synonym_map() -> HashMap<&'static str, &'static str> {
+    // NOTE: keys are the *actual output* of `stem()` on the accent-stripped
+    // lowercase word, not the word itself — the stemmer here is a simple
+    // single-pass suffix stripper, not a real linguistic stemmer, so it
+    // doesn't always reduce related words to an intuitively "obvious" shared
+    // root (e.g. "sécurisation" → "secur" but "hardening" → "harden"; these
+    // don't collide on their own, hence needing an explicit synonym entry).
+    // If you add a new variant, run it through `stem()` first to find the
+    // real key rather than guessing.
+    let pairs: &[(&str, &str)] = &[
+        // hardening / sécurisation / durcissement
+        ("harden", "hardening"),
+        ("durc", "hardening"),
+        ("secur", "hardening"),
+        // deployment / déploiement
+        ("deploi", "deploy"),
+        ("deploy", "deploy"),
+        ("deployer", "deploy"),
+        // versioning / versionning / versionnage
+        ("versionn", "versioning"),
+        ("version", "versioning"),
+        ("versionnage", "versioning"),
+        // rollback
+        ("rollback", "rollback"),
+        // playbook
+        ("playbook", "playbook"),
+        // audit
+        ("audit", "audit"),
+        // compliance / conformité
+        ("conformite", "compliance"),
+        ("conformit", "compliance"),
+        ("compliance", "compliance"),
+        // fleet / parc / infrastructure
+        ("parc", "fleet"),
+        ("infrastructure", "fleet"),
+        ("infra", "fleet"),
+        // dashboard / tableau de bord
+        ("dashboard", "dashboard"),
+        // tracking / suivi
+        ("suivi", "tracking"),
+        ("track", "tracking"),
+        // batch / lot
+        ("lot", "batch"),
+        ("lots", "batch"),
+        ("batch", "batch"),
+        // automation / automatisation
+        ("automat", "automation"),
+        ("automa", "automation"),
+        // implementation / implémentation / implémenter
+        ("implementa", "implement"),
+        ("implementer", "implement"),
+        // inventory / inventaire
+        ("inventaire", "inventory"),
+        ("inventair", "inventory"),
+        ("inventory", "inventory"),
+        // cmdb
+        ("cmdb", "cmdb"),
+        // server / serveur
+        ("serv", "server"),
+        ("server", "server"),
+    ];
+    pairs.iter().cloned().collect()
+}
+
+// ── Accent stripping ──────────────────────────────────────────────────────────
+
+fn strip_accents(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'à' | 'â' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
+// ── Lightweight suffix-stripping stemmer (EN + FR) ────────────────────────────
+//
+// Not a full Porter/Snowball stemmer — a small, deterministic suffix
+// stripper tuned for CV/JD vocabulary, so e.g. "déploiements",
+// "déploiement" and "deploying" collapse to the same root instead of
+// counting as three unrelated keywords. Longest suffixes are tried first.
+fn stem(word: &str) -> String {
+    const SUFFIXES: &[&str] = &[
+        "issements",
+        "isations",
+        "issement",
+        "isation",
+        "ations",
+        "ement",
+        "ements",
+        "ateur",
+        "atrice",
+        "ateurs",
+        "atrices",
+        "iser",
+        "isee",
+        "isees",
+        "ise",
+        "ises",
+        "tion",
+        "tions",
+        "ing",
+        "eurs",
+        "euse",
+        "euses",
+        "eur",
+        "ment",
+        "ments",
+        "able",
+        "ables",
+        "ible",
+        "ibles",
+        "ant",
+        "ants",
+        "ent",
+        "ents",
+        "ed",
+        "es",
+        "s",
+    ];
+    if word.len() <= 4 {
+        return word.to_string();
+    }
+    for suf in SUFFIXES {
+        if word.len() > suf.len() + 3 && word.ends_with(suf) {
+            return word[..word.len() - suf.len()].to_string();
+        }
+    }
+    word.to_string()
+}
+
+/// Normalize a raw token: lowercase, strip accents, stem, then canonicalise
+/// via the synonym dictionary if a mapping exists (checked on both the
+/// stemmed and un-stemmed form, since some dictionary keys are prefixes).
+fn normalize(word: &str) -> String {
+    let base = strip_accents(&word.to_lowercase());
+    let stemmed = stem(&base);
+    let syns = synonym_map();
+    if let Some(canon) = syns.get(stemmed.as_str()) {
+        return canon.to_string();
+    }
+    if let Some(canon) = syns.get(base.as_str()) {
+        return canon.to_string();
+    }
+    stemmed
+}
+
 // ── Tokeniser ─────────────────────────────────────────────────────────────────
 
-fn tokenise(text: &str) -> Vec<String> {
+fn raw_tokenise(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
-        .map(|w| w.to_lowercase())
+        .map(|w| w.to_string())
         .filter(|w| w.len() >= 3)
-        .filter(|w| !STOP_WORDS.contains(&w.as_str()))
         .collect()
+}
+
+/// Tokenise, drop stop words, then normalize (accent-strip + stem + synonym
+/// canonicalisation) each remaining token.
+fn tokenise(text: &str) -> Vec<String> {
+    raw_tokenise(text)
+        .into_iter()
+        .filter(|w| !STOP_WORDS.contains(&strip_accents(&w.to_lowercase()).as_str()))
+        .map(|w| normalize(&w))
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Build unigrams + bigrams + trigrams from normalized tokens, so phrases
+/// like "gestion de version" / "chef de projet" are matched as one unit
+/// instead of three independent, weaker single-word matches. Multi-word
+/// terms are naturally rarer than single words, so they end up with a
+/// higher IDF weight later without needing an artificial bonus multiplier.
+fn extract_terms(text: &str) -> Vec<String> {
+    let tokens = tokenise(text);
+    let mut terms = tokens.clone();
+    for w in tokens.windows(2) {
+        terms.push(format!("{} {}", w[0], w[1]));
+    }
+    for w in tokens.windows(3) {
+        terms.push(format!("{} {} {}", w[0], w[1], w[2]));
+    }
+    terms
 }
 
 // ── Keyword extraction ────────────────────────────────────────────────────────
 
-/// Extract keywords from a JD text, returned sorted by frequency (desc).
-/// Each entry is (keyword, frequency).
+/// Extract keyword terms (unigrams/bigrams/trigrams) from a JD text, sorted
+/// by frequency (desc). Each entry is (term, frequency).
 pub fn extract_keywords(text: &str) -> Vec<(String, usize)> {
     let mut freq: HashMap<String, usize> = HashMap::new();
-    for token in tokenise(text) {
-        *freq.entry(token).or_insert(0) += 1;
+    for term in extract_terms(text) {
+        *freq.entry(term).or_insert(0) += 1;
     }
     let mut sorted: Vec<(String, usize)> = freq.into_iter().collect();
     // Sort by frequency desc, then alphabetically for determinism
@@ -223,31 +412,133 @@ pub fn extract_keywords(text: &str) -> Vec<(String, usize)> {
     sorted
 }
 
-// ── Scoring ───────────────────────────────────────────────────────────────────
+// ── Levenshtein distance (small, iterative, no deps) ──────────────────────────
 
-/// Returns a relevance score for `text` against `keywords`.
-/// Score = sum of (keyword_frequency * match_weight) / total_kw_weight
-fn score_text(text: &str, keywords: &[(String, usize)]) -> f32 {
-    if keywords.is_empty() || text.is_empty() {
-        return 0.0;
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (la, lb) = (a.len(), b.len());
+    if la == 0 {
+        return lb;
     }
-    let text_lower = text.to_lowercase();
-    let total_weight: usize = keywords.iter().map(|(_, f)| f).sum();
+    if lb == 0 {
+        return la;
+    }
+    let mut prev: Vec<usize> = (0..=lb).collect();
+    let mut curr = vec![0usize; lb + 1];
+    for i in 1..=la {
+        curr[0] = i;
+        for j in 1..=lb {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (curr[j - 1] + 1).min(prev[j] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[lb]
+}
 
-    let matched_weight: usize = keywords
-        .iter()
-        .filter(|(kw, _)| text_lower.contains(kw.as_str()))
-        .map(|(_, f)| f)
-        .sum();
-
-    if total_weight == 0 {
-        0.0
+/// Fuzzy single-word match: exact, or close enough by edit distance relative
+/// to word length (longer words tolerate a bigger absolute distance). Only
+/// applied to single-word terms — multi-word phrases must match exactly,
+/// since fuzzy-matching whole phrases gets unreliable fast (and stop-word
+/// stripping/stemming already normalizes most phrase variation away).
+fn fuzzy_eq(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    if a.contains(' ') || b.contains(' ') {
+        return false;
+    }
+    let max_len = a.len().max(b.len());
+    let tolerance = if max_len >= 8 {
+        2
+    } else if max_len >= 5 {
+        1
     } else {
-        matched_weight as f32 / total_weight as f32
+        0
+    };
+    tolerance > 0 && levenshtein(a, b) <= tolerance
+}
+
+/// Does `haystack_terms` contain something matching `needle`, exactly or
+/// fuzzily (typos / near-identical spellings)?
+fn terms_contain(haystack_terms: &HashSet<String>, needle: &str) -> bool {
+    if haystack_terms.contains(needle) {
+        return true;
+    }
+    haystack_terms.iter().any(|t| fuzzy_eq(t, needle))
+}
+
+// ── TF-IDF ────────────────────────────────────────────────────────────────────
+//
+// `Idf` is built once per `tailor_cv` call from every independently-scorable
+// text block in the candidate's own CV (each experience-project, each
+// top-level project, each skill). Weighting keywords by inverse document
+// frequency across that corpus means a JD term that shows up in *every*
+// block of the CV (generic filler like "team", "deploy") is down-weighted
+// relative to a term that's distinctive to one or two blocks (e.g.
+// "hardening", "cmdb") — something raw frequency counting can't do, since it
+// treats every matched keyword as equally significant regardless of how
+// common it is across the candidate's whole CV.
+pub struct Idf {
+    weights: HashMap<String, f32>,
+}
+
+impl Idf {
+    pub fn build(documents: &[Vec<String>]) -> Self {
+        let n = documents.len().max(1) as f32;
+        let mut df: HashMap<String, usize> = HashMap::new();
+        for doc in documents {
+            let unique: HashSet<&String> = doc.iter().collect();
+            for term in unique {
+                *df.entry(term.clone()).or_insert(0) += 1;
+            }
+        }
+        let weights = df
+            .into_iter()
+            .map(|(term, d)| {
+                // Smoothed IDF, always >= 1.0 so unseen terms still count.
+                let idf = ((n + 1.0) / (d as f32 + 1.0)).ln() + 1.0;
+                (term, idf)
+            })
+            .collect();
+        Idf { weights }
+    }
+
+    fn get(&self, term: &str) -> f32 {
+        self.weights.get(term).copied().unwrap_or(1.0)
     }
 }
 
-fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
+// ── Scoring ───────────────────────────────────────────────────────────────────
+
+/// Returns a relevance score for `text` against `keywords`, TF-IDF weighted:
+/// score = sum(jd_frequency * idf) over matched keywords / sum(jd_frequency * idf) over all keywords.
+/// Matching is exact-or-fuzzy per term (see `terms_contain`).
+fn score_text(text: &str, keywords: &[(String, usize)], idf: &Idf) -> f32 {
+    if keywords.is_empty() || text.is_empty() {
+        return 0.0;
+    }
+    let text_terms: HashSet<String> = extract_terms(text).into_iter().collect();
+
+    let total_weight: f32 = keywords
+        .iter()
+        .map(|(kw, freq)| *freq as f32 * idf.get(kw))
+        .sum();
+    if total_weight <= 0.0 {
+        return 0.0;
+    }
+
+    let matched_weight: f32 = keywords
+        .iter()
+        .filter(|(kw, _)| terms_contain(&text_terms, kw))
+        .map(|(kw, freq)| *freq as f32 * idf.get(kw))
+        .sum();
+
+    matched_weight / total_weight
+}
+
+fn score_experience(exp: &Experience, keywords: &[(String, usize)], idf: &Idf) -> f32 {
     let mut text = format!("{} {} {}", exp.role.en, exp.role.fr, exp.company);
     for proj in &exp.projects {
         text.push(' ');
@@ -293,10 +584,13 @@ fn score_experience(exp: &Experience, keywords: &[(String, usize)]) -> f32 {
         text.push(' ');
         text.push_str(&proj.tools.join(" "));
     }
-    score_text(&text, keywords)
+    score_text(&text, keywords, idf)
 }
 
-fn score_experience_project(proj: &ExperienceProject, keywords: &[(String, usize)]) -> f32 {
+/// Builds the scorable text blob for a single sub-project. Shared between
+/// scoring (`score_experience_project`) and IDF corpus construction in
+/// `tailor_cv`, so the two always see identical text.
+fn experience_project_text(proj: &ExperienceProject) -> String {
     let mut text = format!("{} {}", proj.name.en, proj.name.fr);
     for c in &proj.context {
         text.push(' ');
@@ -312,15 +606,25 @@ fn score_experience_project(proj: &ExperienceProject, keywords: &[(String, usize
     }
     text.push(' ');
     text.push_str(&proj.tools.join(" "));
-    score_text(&text, keywords)
+    text
 }
 
-fn score_skill(skill: &Skill, keywords: &[(String, usize)]) -> f32 {
-    score_text(&skill.name, keywords)
+fn score_experience_project(
+    proj: &ExperienceProject,
+    keywords: &[(String, usize)],
+    idf: &Idf,
+) -> f32 {
+    score_text(&experience_project_text(proj), keywords, idf)
 }
 
-fn score_project(proj: &Project, keywords: &[(String, usize)]) -> f32 {
-    let text = format!(
+fn score_skill(skill: &Skill, keywords: &[(String, usize)], idf: &Idf) -> f32 {
+    score_text(&skill.name, keywords, idf)
+}
+
+/// Builds the scorable text blob for a top-level project. Shared between
+/// scoring (`score_project`) and IDF corpus construction in `tailor_cv`.
+fn project_text(proj: &Project) -> String {
+    format!(
         "{} {} {} {} {} {}",
         proj.name,
         proj.description.en,
@@ -336,8 +640,11 @@ fn score_project(proj: &Project, keywords: &[(String, usize)]) -> f32 {
             .map(|b| b.fr.as_str())
             .collect::<Vec<_>>()
             .join(" "),
-    );
-    score_text(&text, keywords)
+    )
+}
+
+fn score_project(proj: &Project, keywords: &[(String, usize)], idf: &Idf) -> f32 {
+    score_text(&project_text(proj), keywords, idf)
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -363,11 +670,29 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     // Work with the top 40 most-frequent keywords only
     let top_keywords: Vec<(String, usize)> = keywords.iter().take(40).cloned().collect();
 
+    // Build the TF-IDF corpus from every independently-scorable block in the
+    // candidate's own CV, so keyword weighting can tell a term that's
+    // distinctive to one or two blocks apart from one that shows up
+    // everywhere (see `Idf` doc comment above).
+    let mut documents: Vec<Vec<String>> = Vec::new();
+    for exp in &cv.experiences {
+        for proj in &exp.projects {
+            documents.push(extract_terms(&experience_project_text(proj)));
+        }
+    }
+    for proj in &cv.projects {
+        documents.push(extract_terms(&project_text(proj)));
+    }
+    for skill in &cv.skills {
+        documents.push(extract_terms(&skill.name));
+    }
+    let idf = Idf::build(&documents);
+
     // ── Experiences ──────────────────────────────────────────────────────────
     let mut scored_exp: Vec<(f32, Experience)> = cv
         .experiences
         .iter()
-        .map(|e| (score_experience(e, &top_keywords), e.clone()))
+        .map(|e| (score_experience(e, &top_keywords, &idf), e.clone()))
         .collect();
     scored_exp.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -376,7 +701,14 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     // low-signal keyword, so an absolute `> 0.0` cutoff barely filters anything.
     // Keeping only experiences within REL_THRESHOLD of the top score surfaces
     // the ones that are actually relevant to the JD.
-    const REL_THRESHOLD: f32 = 0.4;
+    //
+    // Tuned against real data: TF-IDF + stemming/synonyms/fuzzy matching
+    // compress the score spread compared to plain frequency counting (every
+    // experience now scores 0.4-1.0 relative to the best match, rather than
+    // 0.05-1.0), so the cutoff needs to sit higher than it did before those
+    // changes (was 0.4) to still separate clearly-relevant experiences from
+    // marginal ones.
+    const REL_THRESHOLD: f32 = 0.5;
     let max_score = scored_exp.first().map(|(s, _)| *s).unwrap_or(0.0);
     let cutoff = max_score * REL_THRESHOLD;
 
@@ -416,16 +748,19 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
         // final selection can be re-ordered back into the CV's own order
         // (chronological / as-entered), matching the experience-level fix.
         //
-        // Project scores cluster much more tightly than experience scores
-        // (e.g. 0.11-0.24 rather than 0.05-0.55), since every project within
-        // an already-relevant experience tends to share its vocabulary. The
-        // experience-level REL_THRESHOLD (0.4) is too lenient here and keeps
-        // everything, so projects use a stricter relative cutoff.
-        const PROJECT_REL_THRESHOLD: f32 = 0.65;
+        // Project scores cluster much more tightly than experience scores,
+        // since every project within an already-relevant experience tends to
+        // share its vocabulary. Tuned against real data (post TF-IDF/synonym
+        // changes): 0.7 correctly reproduces manual project selection for
+        // SIRIUS, KAIMAN and BRED IT. It can't perfectly separate near-tied
+        // scores (e.g. two DTNUM sub-projects 0.008 apart) — no threshold
+        // can, since the algorithm has no way to know which of two
+        // similarly-worded projects a human would consider more relevant.
+        const PROJECT_REL_THRESHOLD: f32 = 0.7;
         let proj_scores: Vec<f32> = exp
             .projects
             .iter()
-            .map(|p| score_experience_project(p, &top_keywords))
+            .map(|p| score_experience_project(p, &top_keywords, &idf))
             .collect();
         let max_proj_score = proj_scores.iter().cloned().fold(0.0_f32, f32::max);
         let proj_cutoff = max_proj_score * PROJECT_REL_THRESHOLD;
@@ -460,14 +795,14 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     let mut matched_skills: Vec<Skill> = cv
         .skills
         .iter()
-        .filter(|s| score_skill(s, &top_keywords) > 0.0)
+        .filter(|s| score_skill(s, &top_keywords, &idf) > 0.0)
         .cloned()
         .collect();
 
     let unmatched_skills: Vec<Skill> = cv
         .skills
         .iter()
-        .filter(|s| score_skill(s, &top_keywords) == 0.0)
+        .filter(|s| score_skill(s, &top_keywords, &idf) == 0.0)
         .cloned()
         .collect();
 
@@ -477,7 +812,7 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     let mut scored_proj: Vec<(f32, Project)> = cv
         .projects
         .iter()
-        .map(|p| (score_project(p, &top_keywords), p.clone()))
+        .map(|p| (score_project(p, &top_keywords, &idf), p.clone()))
         .collect();
     scored_proj.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let selected_proj: Vec<Project> = scored_proj
@@ -487,14 +822,17 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
         .collect();
 
     // ── Match / gap analysis ──────────────────────────────────────────────────
-    // Map to owned String keys first so partition collects into Vec<String>
-    // directly, avoiding the &(String, usize) vs String type mismatch.
-    let cv_text_lower = cv.all_text().to_lowercase();
+    // Uses the same normalized-term + fuzzy matching as scoring (rather than
+    // plain substring containment on raw lowercased text), so a keyword like
+    // "hardening" correctly shows as matched even when the CV only contains
+    // "durcissement" / "sécurisation", and a multi-word JD term like "chef
+    // hardening" is checked as a phrase, not three independent substrings.
+    let cv_terms: HashSet<String> = extract_terms(&cv.all_text()).into_iter().collect();
     let (matched_keywords, missing_keywords): (Vec<String>, Vec<String>) = top_keywords
         .iter()
         .take(30)
         .map(|(kw, _)| kw.clone())
-        .partition(|kw| cv_text_lower.contains(kw.as_str()));
+        .partition(|kw| terms_contain(&cv_terms, kw));
 
     let match_score = if top_keywords.is_empty() {
         0.0
@@ -656,10 +994,18 @@ mod tests {
 
     #[test]
     fn keywords_case_insensitive() {
+        // extract_keywords now also emits bigrams/trigrams (e.g. "rust rust"),
+        // so the three case variants no longer collapse to a single overall
+        // entry — but they must still collapse to a single *unigram* entry,
+        // which should rank first since it has the highest frequency.
         let kws = extract_keywords("Rust RUST rust");
-        assert_eq!(kws.len(), 1, "All variants should collapse to one entry");
         assert_eq!(kws[0].0, "rust");
         assert_eq!(kws[0].1, 3);
+        let unigram_entries = kws.iter().filter(|(k, _)| !k.contains(' ')).count();
+        assert_eq!(
+            unigram_entries, 1,
+            "All case variants should collapse to a single unigram entry"
+        );
     }
 
     #[test]
@@ -697,17 +1043,25 @@ mod tests {
 
     // ── score_text ────────────────────────────────────────────────────────────
 
+    // An empty-corpus Idf falls back to a default weight of 1.0 for every
+    // term (see `Idf::get`), which makes these tests equivalent to plain
+    // frequency weighting — the same behaviour the old (pre-TF-IDF) tests
+    // asserted on.
+    fn no_idf() -> Idf {
+        Idf::build(&[])
+    }
+
     #[test]
     fn score_text_perfect_match_is_one() {
         let kws = vec![("rust".to_string(), 2), ("postgresql".to_string(), 1)];
-        let s = score_text("rust postgresql developer", &kws);
+        let s = score_text("rust postgresql developer", &kws, &no_idf());
         assert_eq!(s, 1.0);
     }
 
     #[test]
     fn score_text_no_match_is_zero() {
         let kws = vec![("golang".to_string(), 1), ("java".to_string(), 1)];
-        let s = score_text("rust postgresql developer", &kws);
+        let s = score_text("rust postgresql developer", &kws, &no_idf());
         assert_eq!(s, 0.0);
     }
 
@@ -715,7 +1069,7 @@ mod tests {
     fn score_text_partial_match_weighted() {
         // rust weight=2, java weight=1, total=3; only rust matches → 2/3
         let kws = vec![("rust".to_string(), 2), ("java".to_string(), 1)];
-        let s = score_text("senior rust developer", &kws);
+        let s = score_text("senior rust developer", &kws, &no_idf());
         let expected = 2.0_f32 / 3.0_f32;
         assert!(
             (s - expected).abs() < 1e-4,
@@ -727,16 +1081,53 @@ mod tests {
 
     #[test]
     fn score_text_empty_inputs_return_zero() {
-        assert_eq!(score_text("", &[]), 0.0);
-        assert_eq!(score_text("rust", &[]), 0.0);
-        assert_eq!(score_text("", &[("rust".to_string(), 1)]), 0.0);
+        assert_eq!(score_text("", &[], &no_idf()), 0.0);
+        assert_eq!(score_text("rust", &[], &no_idf()), 0.0);
+        assert_eq!(score_text("", &[("rust".to_string(), 1)], &no_idf()), 0.0);
     }
 
     #[test]
     fn score_text_is_case_insensitive() {
         let kws = vec![("rust".to_string(), 1)];
         // keyword is lowercase; text has uppercase — should still match
-        assert_eq!(score_text("RUST Engineer", &kws), 1.0);
+        assert_eq!(score_text("RUST Engineer", &kws, &no_idf()), 1.0);
+    }
+
+    // ── stemming / synonyms / fuzzy matching ────────────────────────────────
+
+    #[test]
+    fn synonyms_collapse_fr_en_variants() {
+        // "hardening" (EN) and "durcissement" (FR) should normalize to the
+        // same canonical term via the synonym dictionary.
+        assert_eq!(normalize("hardening"), normalize("durcissement"));
+        assert_eq!(normalize("hardening"), normalize("sécurisation"));
+    }
+
+    #[test]
+    fn stemming_collapses_inflections() {
+        // French plural/verb-form variants of "déploiement" should share a
+        // stem, and so should the English "deploy"/"deployment" family.
+        assert_eq!(stem("deploiement"), stem("deploiements"));
+        assert_eq!(normalize("deploiement"), normalize("deploying"));
+    }
+
+    #[test]
+    fn fuzzy_eq_tolerates_small_typos_not_big_ones() {
+        assert!(fuzzy_eq("hardening", "hardning")); // dropped letter, len>=8 → tolerance 2
+        assert!(!fuzzy_eq("cis", "sql")); // short words, no fuzziness allowed
+        assert!(!fuzzy_eq("hardening", "monitoring")); // unrelated words, too far apart
+    }
+
+    #[test]
+    fn ngrams_capture_multiword_phrases() {
+        let kws = extract_keywords("gestion de version rollback");
+        let names: Vec<&str> = kws.iter().map(|(k, _)| k.as_str()).collect();
+        // "de" is a stop word, so the surviving bigram is "gestion version".
+        assert!(
+            names.iter().any(|n| n.contains(' ')),
+            "expected at least one multi-word term, got {:?}",
+            names
+        );
     }
 
     // ── tailor_cv ─────────────────────────────────────────────────────────────
