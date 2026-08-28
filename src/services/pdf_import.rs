@@ -2870,7 +2870,8 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
     let mut current_project_end: String = String::new();
     let mut current_context: Vec<String> = Vec::new();
     // Raw text of an in-progress "Techs: ..." line (which itself often wraps
-    // across several PDF lines) — parsed into project.tools at flush time.
+    // across several PDF lines) — parsed into project.skill_ids (as staged
+    // raw names, resolved to real Skill ids later) at flush time.
     let mut current_tools_text: String = String::new();
     let mut current_bullets: Vec<LocalizedText> = Vec::new();
     // Shadow lookback buffer of the last two plain (non-bullet, non-date)
@@ -3583,7 +3584,16 @@ fn flush_project(
     exp.projects.push(ExperienceProject {
         name: LocalizedText::same(name.take().unwrap_or_default()),
         context: context_items,
-        tools,
+        // Interim staging, NOT final IDs: at this point in parsing, the
+        // canonical `cv.skills` list may not exist yet (section order in
+        // the source PDF is whatever it is — "skills" doesn't necessarily
+        // come before "experience"). These raw parsed tool NAMES are
+        // temporarily placed in `skill_ids` and resolved into real
+        // `Skill.id`s by `resolve_project_skill_ids`, called once from the
+        // top-level import function after `cv.skills` is finalized. A
+        // name with no matching skill is dropped there, not kept as
+        // free text — see that function's doc comment.
+        skill_ids: tools,
         bullets: std::mem::take(bullets),
         start_date: std::mem::take(start_date),
         end_date: std::mem::take(end_date),
@@ -4887,7 +4897,40 @@ pub fn parse_cv(text: &str) -> LifetimeCV {
         }
     }
 
+    resolve_project_skill_ids(&mut cv);
+
     cv
+}
+
+/// Resolves every `ExperienceProject.skill_ids` from the raw tool NAME
+/// strings `flush_project` temporarily staged there (see its call site's
+/// comment) into real `Skill.id`s, now that `cv.skills` is finalized.
+///
+/// Matching is case-insensitive exact-name only — no fuzzy matching, no
+/// creating a new `Skill` for a name that doesn't already exist in
+/// `cv.skills`. A parsed tool name with no match is simply dropped, not
+/// kept as free text: this mirrors the editor's own "strict" tag picker,
+/// which only ever lets you attach a project to a skill that's already in
+/// `cv.skills` — so a freshly-imported CV and a manually-edited one end up
+/// with the same invariant (every `skill_ids` entry is always a real,
+/// resolvable skill), rather than import quietly being a looser, parallel
+/// path that can produce data the editor itself could never create.
+fn resolve_project_skill_ids(cv: &mut LifetimeCV) {
+    let skills = cv.skills.clone();
+    for exp in &mut cv.experiences {
+        for proj in &mut exp.projects {
+            proj.skill_ids = proj
+                .skill_ids
+                .iter()
+                .filter_map(|raw_name| {
+                    skills
+                        .iter()
+                        .find(|s| s.name.eq_ignore_ascii_case(raw_name))
+                        .map(|s| s.id.clone())
+                })
+                .collect();
+        }
+    }
 }
 
 /// Scan every bullet in every Experience/project for the "<tool> N+ yrs"
@@ -5558,10 +5601,11 @@ English - Professional
             "the unrelated prior bullet must not have absorbed any tools-list content"
         );
         assert_eq!(
-            proj.tools,
+            proj.skill_ids,
             vec!["Openstack", "Scaleway", "Debian"],
-            "every tool name must survive as its own entry, got: {:?}",
-            proj.tools
+            "every tool name must survive as its own entry (staged in \
+             skill_ids pre-resolution — see flush_project's comment), got: {:?}",
+            proj.skill_ids
         );
     }
 
@@ -5740,8 +5784,9 @@ English - Professional
     }
 
     /// Regression test: a "Techs: A, B, C." line (possibly wrapped across
-    /// several PDF lines) must be parsed into project.tools as individual
-    /// technology names, not left as raw context text.
+    /// several PDF lines) must be parsed into project.skill_ids (staged as
+    /// raw names pre-resolution — see flush_project's comment) as
+    /// individual technology names, not left as raw context text.
     #[test]
     fn parse_experiences_extracts_tools_from_techs_line() {
         let lines = vec![
@@ -5756,7 +5801,7 @@ English - Professional
         assert_eq!(exps.len(), 1);
         assert_eq!(exps[0].projects.len(), 1);
         assert_eq!(
-            exps[0].projects[0].tools,
+            exps[0].projects[0].skill_ids,
             vec![
                 "Openstack",
                 "Scaleway",

@@ -115,46 +115,48 @@ fn tag(href: &str, label: &str) -> String {
     )
 }
 
-/// Renders a tech/tool chip row, e.g. `<div class="exp-tools">...</div>`,
-/// given the wrapper CSS class and the list of tool names. Returns an
-/// empty string if `tools` is empty (callers rely on this to skip the
-/// wrapping div entirely).
-///
-/// Two things here exist purely so pdf_import.rs can reconstruct this
-/// list on re-import, matching how it already reads a "Techs: A, B, C."
-/// bullet line — round-trip robustness the same way our bullet markers
-/// are rendered as literal "•" text instead of relying on CSS
-/// `list-style` (see `bullet_li`'s call site): a plain, real text node,
-/// not something that only exists via CSS/box layout that print-to-PDF
-/// text extraction can't see.
-///
-/// - A small "Techs: " label precedes the chips. pdf_import.rs's
-///   TOOLS_LABEL_PREFIXES only recognizes a *line* that starts with this
-///   (or "tech stack"/"technologies"), so without it these chips have no
-///   way to be told apart from ordinary narrative text on re-import — and
-///   were previously getting glued onto whatever bullet happened to
-///   precede them.
-/// - Chips are joined with a literal ", " rather than a bare space. Each
-///   chip is its own flex item and print-to-PDF fragments a wrapped flex
-///   row like this into several separate text lines regardless of what
-///   separates them visually, so a space vs. comma makes no visual
-///   difference here — but pdf_import.rs's tools parser splits on comma,
-///   so this is what lets each name come back out as its own entry
-///   instead of the whole row round-tripping as one run-on string.
-fn tools_row_html(css_class: &str, tools: &[String]) -> String {
-    let chips: Vec<String> = tools
+/// Renders a set of skill references (`skill_ids`, resolved via
+/// `all_skills`) grouped by `SkillCategory`, the same
+/// "Programming: A, B · Cloud & Infrastructure: C, D" format used for an
+/// `Experience`'s own skills line — shared so a `ExperienceProject`'s tools
+/// (also `skill_ids` now, not free text) render identically instead of as a
+/// flat, uncategorized "Techs: A, B, C" chip row.
+fn categorized_skill_line(
+    wrapper_class: &str,
+    skill_ids: &[String],
+    all_skills: &[crate::models::Skill],
+) -> String {
+    let matched: Vec<&crate::models::Skill> = skill_ids
         .iter()
-        .filter(|t| !t.is_empty())
-        .map(|t| tag("", t))
+        .filter_map(|id| all_skills.iter().find(|s| &s.id == id))
         .collect();
-    if chips.is_empty() {
+    if matched.is_empty() {
         return String::new();
     }
-    format!(
-        r#"<div class="{class}"><span class="tools-label">Techs:</span> {chips}</div>"#,
-        class = css_class,
-        chips = chips.join(", ")
-    )
+    let categories = SkillCategory::all();
+    let mut blocks: Vec<String> = Vec::new();
+    for cat in &categories {
+        let cat_skills: Vec<&&crate::models::Skill> =
+            matched.iter().filter(|s| &s.category == cat).collect();
+        if cat_skills.is_empty() {
+            continue;
+        }
+        let names: Vec<String> = cat_skills.iter().map(|s| esc(&s.name)).collect();
+        blocks.push(format!(
+            r#"<span class="exp-skill-category">{}:</span> <span class="exp-skill-list">{}</span>"#,
+            cat.label(),
+            names.join(", "),
+        ));
+    }
+    if blocks.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<div class="{}">{}</div>"#,
+            wrapper_class,
+            blocks.join(" &middot; ")
+        )
+    }
 }
 
 // ── Shared CSS ────────────────────────────────────────────────────────────────
@@ -256,7 +258,7 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-bullets { margin: 8px 0 0 18px; list-style: none; padding: 0; }
 .cv-doc .exp-bullets li { color: #334155; margin-bottom: 3px; font-size: 0.88rem; padding-left: 1em; text-indent: -1em; }
 .cv-doc .exp-tools { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
-.cv-doc .exp-skills { margin-top: 8px; font-size: 0.82rem; color: #475569; line-height: 1.5; }
+.cv-doc .exp-project-skills { margin-top: 6px; font-size: 0.78rem; color: #64748b; line-height: 1.45; }
 .cv-doc .exp-skill-category { font-weight: 600; color: #1e293b; }
 .cv-doc .exp-skill-list { color: #475569; }
 .cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
@@ -306,16 +308,6 @@ const CV_CSS: &str = r#"
   font-size: 0.78rem;
   font-weight: 500;
   white-space: nowrap;
-}
-/* Precedes a chip row (see tools_row_html in this file) so pdf_import.rs
-   can tell the chips apart from narrative text on re-import. Styled to
-   read as a natural small caption rather than a stray label. */
-.cv-doc .tools-label {
-  color: #94a3b8;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
 /* ── Gap analysis (tailored only) ── */
@@ -616,7 +608,8 @@ fn render_experience(
                 .filter(|b| !b.is_empty())
                 .map(bullet_li)
                 .collect();
-            let tools_div = tools_row_html("exp-tools", &proj.tools);
+            let tools_div =
+                categorized_skill_line("exp-project-skills", &proj.skill_ids, all_skills);
             let project_dates_html = if proj.start_date.is_empty() && proj.end_date.is_empty() {
                 String::new()
             } else {
@@ -671,39 +664,6 @@ fn render_experience(
                 tools = tools_div,
             ));
         }
-        // Render skills grouped by category
-        let exp_skills: Vec<&crate::models::Skill> = exp
-            .skill_ids
-            .iter()
-            .filter_map(|id| all_skills.iter().find(|s| &s.id == id))
-            .collect();
-        let skills_html = if exp_skills.is_empty() {
-            String::new()
-        } else {
-            let categories = SkillCategory::all();
-            let mut blocks: Vec<String> = Vec::new();
-            for cat in &categories {
-                let cat_skills: Vec<&&crate::models::Skill> =
-                    exp_skills.iter().filter(|s| &s.category == cat).collect();
-                if cat_skills.is_empty() {
-                    continue;
-                }
-                let names: Vec<String> = cat_skills.iter().map(|s| esc(&s.name)).collect();
-                blocks.push(format!(
-                    r#"<span class="exp-skill-category">{}:</span> <span class="exp-skill-list">{}</span>"#,
-                    cat.label(),
-                    names.join(", "),
-                ));
-            }
-            if blocks.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    r#"<div class="exp-skills">{}</div>"#,
-                    blocks.join(" &middot; ")
-                )
-            }
-        };
         items.push(format!(
             r#"<div class="exp-item">
   <div class="exp-header">
@@ -712,7 +672,6 @@ fn render_experience(
   </div>
   <div class="exp-role">{role}</div>
   {projects}
-  {skills}
 </div>"#,
             company = esc(&exp.company),
             location = location_html,
@@ -720,7 +679,6 @@ fn render_experience(
             end = esc(&exp.end_date),
             role = esc(exp.role.get(lang)),
             projects = projects_html,
-            skills = skills_html,
         ));
     }
     wrap_section(i18n_core::tr("rs_experience", lang), items)
@@ -771,7 +729,8 @@ fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
         } else {
             format!(r#"<ul class="proj-bullets">{}</ul>"#, bullets)
         };
-        // NOTE: intentionally NOT using tools_row_html() here. This is the
+        // NOTE: intentionally NOT using the categorized "Techs:"-style
+        // rendering used for an ExperienceProject's tools here. This is the
         // standalone top-level "Projects" section (crate::models::Project),
         // parsed on import by parse_projects() — a different, simpler
         // parser than the one used for a Project nested inside an
@@ -1130,50 +1089,77 @@ mod tests {
         }
     }
 
-    // ── Tech-tag chip round-tripping ─────────────────────────────────────────
-    // Regression coverage for the bug where the tools/tech chip row for a
-    // Project nested in an Experience had no way to be recognized on
-    // re-import (no "Techs:" label, chips space-joined not comma-joined),
-    // so it got glued onto whatever bullet preceded it instead of coming
-    // back as a distinct tools list. See tools_row_html's doc comment.
+    // ── Categorized skill/tools line ─────────────────────────────────────────
+    // `categorized_skill_line` is shared by both an Experience's own skills
+    // line and an ExperienceProject's tools line — both are `skill_ids` now
+    // (see ExperienceProject's doc comment in models/cv.rs), so both render
+    // in the same "Category: a, b · Category2: c, d" format instead of a
+    // flat, uncategorized chip row.
+    //
+    // NOTE: this intentionally does NOT preserve the old flat-chip
+    // rendering's re-import round-trip property (comma-joined chips under a
+    // recognizable "Techs:" label that pdf_import.rs's flush_project could
+    // parse back via a simple split(',')). That parser has not been updated
+    // to understand this categorized, multi-segment format — re-importing a
+    // PDF exported after this change will not recover a project's tool tags
+    // automatically; they'd need retagging via the editor's skill picker.
+    // This was a deliberate trade accepted for now in favor of visual
+    // consistency with the experience-level line, not an oversight.
 
     #[test]
-    fn tools_row_html_empty_list_renders_nothing() {
-        let out = tools_row_html("exp-tools", &[]);
+    fn categorized_skill_line_empty_ids_renders_nothing() {
+        let out = categorized_skill_line("exp-project-skills", &[], &[]);
         assert_eq!(out, "");
     }
 
     #[test]
-    fn tools_row_html_includes_techs_label_and_comma_joins_chips() {
-        let tools = vec![
-            "Openstack".to_string(),
-            "Scaleway".to_string(),
-            "Debian".to_string(),
+    fn categorized_skill_line_groups_by_category_in_category_order() {
+        let skills = vec![
+            crate::models::Skill {
+                id: "s1".to_string(),
+                name: "Ansible".to_string(),
+                category: SkillCategory::AutomationDevOps,
+                ..Default::default()
+            },
+            crate::models::Skill {
+                id: "s2".to_string(),
+                name: "Kubernetes".to_string(),
+                category: SkillCategory::CloudInfrastructure,
+                ..Default::default()
+            },
+            crate::models::Skill {
+                id: "s3".to_string(),
+                name: "AWX".to_string(),
+                category: SkillCategory::AutomationDevOps,
+                ..Default::default()
+            },
         ];
-        let out = tools_row_html("exp-tools", &tools);
-        assert!(
-            out.contains(">Techs:<"),
-            "expected a Techs: label pdf_import.rs's TOOLS_LABEL_PREFIXES can \
-             recognize, got: {out}"
-        );
-        // Comma-joined (not space-joined): this is what lets
-        // flush_project()'s split(',') recover each tool as its own entry
-        // even though the chips fragment onto separate lines on
-        // re-import (see tools_row_html's doc comment for why a space
-        // vs. comma is invisible visually but not to that parser).
-        assert!(out.contains("Openstack</span>, <span"));
-        assert!(out.contains("Scaleway</span>, <span"));
-        assert!(out.contains(r#"<div class="exp-tools">"#));
+        let ids = vec!["s1".to_string(), "s2".to_string(), "s3".to_string()];
+        let out = categorized_skill_line("exp-project-skills", &ids, &skills);
+        // Same category's skills (Ansible, AWX) grouped into one segment,
+        // not two separate "DevOps: Ansible" / "DevOps: AWX" segments.
+        assert!(out.contains("Ansible, AWX") || out.contains("AWX, Ansible"));
+        assert!(out.contains("Kubernetes"));
+        assert!(out.contains(r#"<div class="exp-project-skills">"#));
+        assert!(out.contains("exp-skill-category"));
+        assert!(out.contains("exp-skill-list"));
+        // Categories joined with a middle dot, matching the experience-level line.
+        assert!(out.contains(" &middot; "));
     }
 
     #[test]
-    fn tools_row_html_filters_empty_entries() {
-        let tools = vec!["Openstack".to_string(), "".to_string()];
-        let out = tools_row_html("exp-tools", &tools);
-        // One real chip plus the label — no dangling ", " from the
-        // filtered-out empty entry.
-        assert!(!out.contains(",  ,"));
-        assert!(!out.ends_with(", </div>"));
+    fn categorized_skill_line_unmatched_ids_are_dropped() {
+        // An id with no corresponding Skill (e.g. a stale reference) should
+        // be silently skipped, not panic or render an empty/garbled entry.
+        let skills = vec![crate::models::Skill {
+            id: "s1".to_string(),
+            name: "Terraform".to_string(),
+            category: SkillCategory::AutomationDevOps,
+            ..Default::default()
+        }];
+        let ids = vec!["s1".to_string(), "does-not-exist".to_string()];
+        let out = categorized_skill_line("exp-project-skills", &ids, &skills);
+        assert!(out.contains("Terraform"));
     }
 
     fn minimal_cv() -> LifetimeCV {
@@ -1201,7 +1187,7 @@ mod tests {
                 name: LocalizedText::same("API Platform"),
                 context: vec![LocalizedText::same("Legacy monolith needed decomposition")],
                 bullets: vec![LocalizedText::same("Built distributed systems")],
-                tools: vec!["Rust".to_string(), "PostgreSQL".to_string()],
+                skill_ids: vec!["s1".to_string(), "s2".to_string()],
                 ..Default::default()
             }],
             ..Default::default()
@@ -1505,7 +1491,7 @@ mod tests {
                 name: LocalizedText::same("Platform"),
                 context: vec![LocalizedText::same("Owned the **core** service")],
                 bullets: vec![LocalizedText::same("Shipped **key** feature")],
-                tools: vec![],
+                skill_ids: vec![],
                 start_date: String::new(),
                 end_date: String::new(),
             }],

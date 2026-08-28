@@ -384,13 +384,30 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 }
                             }
                             Field { label: t_tools.to_string(),
-                                input { r#type: "text", class: "input",
-                                    value: e_projects.read()[pi].tools.join(", "),
-                                    oninput: move |e| {
-                                        let tools: Vec<String> = e.value().split(',')
-                                            .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-                                        e_projects.write()[pi].tools = tools;
-                                    },
+                                div { class: "skill-check-list",
+                                    for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
+                                        {
+                                            let sk_id = sk.0.clone();
+                                            let checked = e_projects.read()[pi].skill_ids.contains(&sk_id);
+                                            rsx! {
+                                                label { class: "skill-check",
+                                                    input {
+                                                        r#type: "checkbox",
+                                                        checked: checked,
+                                                        onchange: move |e| {
+                                                            if e.checked() {
+                                                                e_projects.write()[pi].skill_ids.push(sk_id.clone());
+                                                            } else {
+                                                                e_projects.write()[pi].skill_ids.retain(|id| id != &sk_id);
+                                                            }
+                                                        },
+                                                    }
+                                                    span { class: "skill-check-name", "{sk.1}" }
+                                                    span { class: "skill-check-cat", "{sk.2}" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             div { class: "form-row",
@@ -435,7 +452,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 name: LocalizedText::default(),
                                 context: vec![LocalizedText::default()],
                                 bullets: vec![LocalizedText::default()],
-                                tools: Vec::new(),
+                                skill_ids: Vec::new(),
                                 start_date: String::new(),
                                 end_date: String::new(),
                             });
@@ -461,7 +478,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                     name: p.name.clone(),
                                     context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
                                     bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
-                                    tools: p.tools.clone(),
+                                    skill_ids: p.skill_ids.clone(),
                                     start_date: p.start_date.clone(),
                                     end_date: p.end_date.clone(),
                                 }
@@ -511,9 +528,11 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                         }
                                     }
                                 }
-                                if !proj.tools.is_empty() {
+                                if !proj.skill_ids.is_empty() {
                                     div { class: "item-tags",
-                                        for t in &proj.tools { span { class: "tag-small", "{t}" } }
+                                        for t in proj.skill_ids.iter().filter_map(|id| all_skills.iter().find(|s| &s.id == id).map(|s| s.name.clone())) {
+                                            span { class: "tag-small", "{t}" }
+                                        }
                                     }
                                 }
                             }
@@ -549,7 +568,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
                             e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]
+                                vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]
                             } else {
                                 item.projects
                             });
@@ -1404,7 +1423,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
             name: LocalizedText::default(),
             context: vec![LocalizedText::default()],
             bullets: vec![LocalizedText::default()],
-            tools: Vec::new(),
+            skill_ids: Vec::new(),
             start_date: String::new(),
             end_date: String::new(),
         }]
@@ -1580,13 +1599,30 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     }
                                 }
                                 Field { label: t_tools.to_string(),
-                                    input { r#type: "text", class: "input", placeholder: "Rust, PostgreSQL, Kubernetes",
-                                        value: new_projects.read()[pi].tools.join(", "),
-                                        oninput: move |e| {
-                                            let tools: Vec<String> = e.value().split(',')
-                                                .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-                                            new_projects.write()[pi].tools = tools;
-                                        },
+                                    div { class: "skill-check-list",
+                                        for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
+                                            {
+                                                let sk_id = sk.0.clone();
+                                                let checked = new_projects.read()[pi].skill_ids.contains(&sk_id);
+                                                rsx! {
+                                                    label { class: "skill-check",
+                                                        input {
+                                                            r#type: "checkbox",
+                                                            checked: checked,
+                                                            onchange: move |e| {
+                                                                if e.checked() {
+                                                                    new_projects.write()[pi].skill_ids.push(sk_id.clone());
+                                                                } else {
+                                                                    new_projects.write()[pi].skill_ids.retain(|id| id != &sk_id);
+                                                                }
+                                                            },
+                                                        }
+                                                        span { class: "skill-check-name", "{sk.1}" }
+                                                        span { class: "skill-check-cat", "{sk.2}" }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 div { class: "form-row",
@@ -1632,7 +1668,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     name: LocalizedText::default(),
                                     context: vec![LocalizedText::default()],
                                     bullets: vec![LocalizedText::default()],
-                                    tools: Vec::new(),
+                                    skill_ids: Vec::new(),
                                     start_date: String::new(),
                                     end_date: String::new(),
                                 });
@@ -1659,7 +1695,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                         name: p.name.clone(),
                                         context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
                                         bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
-                                        tools: p.tools.clone(),
+                                        skill_ids: p.skill_ids.clone(),
                                         start_date: p.start_date.clone(),
                                         end_date: p.end_date.clone(),
                                     }
@@ -1674,7 +1710,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 new_company.set(String::new()); new_role.set(LocalizedText::default());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], tools: Vec::new(), start_date: String::new(), end_date: String::new() }]);
+                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
                                 new_skill_ids.set(Vec::new());
                                 show_form.set(false);
                             },

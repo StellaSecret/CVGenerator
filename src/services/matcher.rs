@@ -604,7 +604,12 @@ fn score_text(text: &str, keywords: &[(String, usize)], idf: &Idf) -> f32 {
     matched_weight / total_weight
 }
 
-fn score_experience(exp: &Experience, keywords: &[(String, usize)], idf: &Idf) -> f32 {
+fn score_experience(
+    exp: &Experience,
+    keywords: &[(String, usize)],
+    idf: &Idf,
+    skills: &[Skill],
+) -> f32 {
     let mut text = format!("{} {} {}", exp.role.en, exp.role.fr, exp.company);
     for proj in &exp.projects {
         text.push(' ');
@@ -648,40 +653,49 @@ fn score_experience(exp: &Experience, keywords: &[(String, usize)], idf: &Idf) -
                 .join(" "),
         );
         text.push(' ');
-        text.push_str(&proj.tools.join(" "));
+        text.push_str(
+            &proj
+                .skill_ids
+                .iter()
+                .filter_map(|id| skills.iter().find(|s| &s.id == id).map(|s| s.name.as_str()))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
     }
     score_text(&text, keywords, idf)
 }
 
-/// Union (deduplicated, order-preserving) of `tools` across every project
-/// within a single `Experience`.
+/// Union (deduplicated, order-preserving) of tool/skill *names*, resolved
+/// via `skills` from the `skill_ids` recorded on every project within a
+/// single `Experience`.
 ///
-/// Why this exists: `tools` is already a per-`ExperienceProject` field (not
-/// per-`Experience`) in the data model, and the editor already lets you tag
-/// tools on an individual project. But plenty of real CVs — including the
-/// one this was built against — are *authored* with one combined tech-stack
-/// line per role covering all of that role's sub-projects together, rather
-/// than one per sub-project (PDF import has no reliable way to attribute a
-/// trailing "Tech: X, Y, Z" line back to a specific sub-project when the
-/// source text only ever wrote it once per role, at the very end). The
-/// practical effect: whichever project happened to end up holding that
-/// combined list gets a large, correct-looking `tools` field, while its
-/// siblings — including, concretely, the ones whose own bullets are what
-/// actually name AWX/Ansible work — end up with an empty one, and lose out
-/// on keyword matches for tools they genuinely used.
+/// Why this exists: `skill_ids` is already a per-`ExperienceProject` field
+/// (not per-`Experience`) in the data model, and the editor only lets you
+/// pick tools that already exist in `cv.skills` — strict, no free text. But
+/// plenty of real CVs are *authored* (or PDF-imported) with one combined
+/// tech-stack line per role covering all of that role's sub-projects
+/// together, rather than one per sub-project, and a person re-tagging an
+/// imported CV project-by-project may not get to every project right away.
+/// The practical effect, until every project is individually tagged:
+/// whichever project happens to hold most of a role's tags scores well,
+/// while siblings — including, concretely, ones whose own bullets are what
+/// actually name AWX/Ansible work — end up under-tagged and lose out on
+/// keyword matches for tools they genuinely used.
 ///
-/// Rather than trying to guess a per-project attribution the source text
-/// doesn't actually contain, every project is scored against the pool of
-/// tools used anywhere in its parent experience, on top of its own. This
-/// can't over-credit a project with a tool used by a *different*
-/// experience — only ones already known to belong to the same role.
-pub fn pooled_tools(projects: &[ExperienceProject]) -> Vec<String> {
+/// Rather than only ever scoring a project against its own tags, every
+/// project is also scored against the pool of tags used anywhere in its
+/// parent experience. This can't over-credit a project with a tool used by
+/// a *different* experience — only ones already known to belong to the
+/// same role.
+pub fn pooled_tools(projects: &[ExperienceProject], skills: &[Skill]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut pooled = Vec::new();
     for proj in projects {
-        for tool in &proj.tools {
-            if seen.insert(tool.clone()) {
-                pooled.push(tool.clone());
+        for skill_id in &proj.skill_ids {
+            if let Some(skill) = skills.iter().find(|s| &s.id == skill_id) {
+                if seen.insert(skill.name.clone()) {
+                    pooled.push(skill.name.clone());
+                }
             }
         }
     }
@@ -691,9 +705,10 @@ pub fn pooled_tools(projects: &[ExperienceProject]) -> Vec<String> {
 /// Builds the scorable text blob for a single sub-project. Shared between
 /// scoring (`score_experience_project`) and IDF corpus construction in
 /// `tailor_cv`, so the two always see identical text. `shared_tools` should
-/// be the parent experience's `pooled_tools()` — see that function's doc
-/// comment for why this needs to be pooled rather than using only
-/// `proj.tools`.
+/// be the parent experience's `pooled_tools()` output (already resolved to
+/// skill names, and already inclusive of this project's own tags, since
+/// pooling iterates every project in the experience including this one) —
+/// see that function's doc comment for why pooling is needed at all.
 pub fn experience_project_text(proj: &ExperienceProject, shared_tools: &[String]) -> String {
     let mut text = format!("{} {}", proj.name.en, proj.name.fr);
     for c in &proj.context {
@@ -708,8 +723,6 @@ pub fn experience_project_text(proj: &ExperienceProject, shared_tools: &[String]
         text.push(' ');
         text.push_str(&b.fr);
     }
-    text.push(' ');
-    text.push_str(&proj.tools.join(" "));
     text.push(' ');
     text.push_str(&shared_tools.join(" "));
     text
@@ -832,7 +845,7 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     // everywhere (see `Idf` doc comment above).
     let mut documents: Vec<Vec<String>> = Vec::new();
     for exp in &cv.experiences {
-        let shared_tools = pooled_tools(&exp.projects);
+        let shared_tools = pooled_tools(&exp.projects, &cv.skills);
         for proj in &exp.projects {
             documents.push(extract_terms(&experience_project_text(proj, &shared_tools)));
         }
@@ -849,7 +862,12 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     let mut scored_exp: Vec<(f32, Experience)> = cv
         .experiences
         .iter()
-        .map(|e| (score_experience(e, &top_keywords, &idf), e.clone()))
+        .map(|e| {
+            (
+                score_experience(e, &top_keywords, &idf, &cv.skills),
+                e.clone(),
+            )
+        })
         .collect();
     scored_exp.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -942,7 +960,7 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
         // can, since the algorithm has no way to know which of two
         // similarly-worded projects a human would consider more relevant.
         const PROJECT_REL_THRESHOLD: f32 = 0.7;
-        let shared_tools = pooled_tools(&exp.projects);
+        let shared_tools = pooled_tools(&exp.projects, &cv.skills);
         let proj_scores: Vec<f32> = exp
             .projects
             .iter()
@@ -1044,7 +1062,7 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     let debug_scores: Vec<ExperienceScoreDebug> = scored_exp
         .iter()
         .map(|(score, exp)| {
-            let shared_tools = pooled_tools(&exp.projects);
+            let shared_tools = pooled_tools(&exp.projects, &cv.skills);
             let projects = exp
                 .projects
                 .iter()
@@ -1088,7 +1106,7 @@ pub fn tailor_cv_with_scorer(
     // candidate's own CV and set it on the scorer.
     let mut documents: Vec<Vec<String>> = Vec::new();
     for exp in &cv.experiences {
-        let shared_tools = pooled_tools(&exp.projects);
+        let shared_tools = pooled_tools(&exp.projects, &cv.skills);
         for proj in &exp.projects {
             documents.push(extract_terms(&experience_project_text(proj, &shared_tools)));
         }
@@ -1107,7 +1125,7 @@ pub fn tailor_cv_with_scorer(
         .iter()
         .map(|e| {
             (
-                scorer.score_experience(e, &top_keywords, jd_embedding),
+                scorer.score_experience(e, &top_keywords, jd_embedding, &cv.skills),
                 e.clone(),
             )
         })
@@ -1174,7 +1192,7 @@ pub fn tailor_cv_with_scorer(
             continue;
         }
         const PROJECT_REL_THRESHOLD: f32 = 0.7;
-        let shared_tools = pooled_tools(&exp.projects);
+        let shared_tools = pooled_tools(&exp.projects, &cv.skills);
         let proj_scores: Vec<f32> = exp
             .projects
             .iter()
@@ -1366,7 +1384,7 @@ pub fn tailor_cv_with_scorer(
     let debug_scores: Vec<ExperienceScoreDebug> = scored_exp
         .iter()
         .map(|(score, exp)| {
-            let shared_tools = pooled_tools(&exp.projects);
+            let shared_tools = pooled_tools(&exp.projects, &cv.skills);
             let projects = exp
                 .projects
                 .iter()
@@ -1435,11 +1453,7 @@ mod tests {
                             LocalizedText::same("Built distributed systems using Rust and Tokio"),
                             LocalizedText::same("Reduced API latency by 40% through caching"),
                         ],
-                        tools: vec![
-                            "Rust".to_string(),
-                            "PostgreSQL".to_string(),
-                            "Kubernetes".to_string(),
-                        ],
+                        skill_ids: vec!["s1".to_string(), "s2".to_string()],
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -1456,7 +1470,7 @@ mod tests {
                         bullets: vec![LocalizedText::same(
                             "Developed web applications with React and TypeScript",
                         )],
-                        tools: vec!["JavaScript".to_string(), "React".to_string()],
+                        skill_ids: vec![],
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -1635,52 +1649,81 @@ mod tests {
 
     // Regression coverage for a real data-modeling gap: a CV author (or
     // PDF import) can write one combined tools line covering all of a
-    // role's sub-projects, leaving individual `ExperienceProject.tools`
+    // role's sub-projects, leaving individual `ExperienceProject.skill_ids`
     // fields empty except on whichever project happened to end up holding
     // it. `pooled_tools` is what lets per-project scoring still credit a
     // project for a tool that's only recorded on a sibling within the same
     // experience — see its doc comment for the full rationale.
     #[test]
     fn pooled_tools_unions_across_sibling_projects_without_duplicates() {
+        let skills = vec![
+            Skill {
+                id: "s-ansible".to_string(),
+                name: "Ansible".to_string(),
+                ..Default::default()
+            },
+            Skill {
+                id: "s-awx".to_string(),
+                name: "AWX".to_string(),
+                ..Default::default()
+            },
+            Skill {
+                id: "s-terraform".to_string(),
+                name: "Terraform".to_string(),
+                ..Default::default()
+            },
+        ];
         let p1 = ExperienceProject {
-            tools: vec!["Ansible".to_string(), "AWX".to_string()],
+            skill_ids: vec!["s-ansible".to_string(), "s-awx".to_string()],
             ..Default::default()
         };
         let p2 = ExperienceProject {
-            // "AWX" repeated on purpose: must not appear twice in the pool.
-            tools: vec!["AWX".to_string(), "Terraform".to_string()],
+            // "s-awx" repeated on purpose: must not appear twice in the pool.
+            skill_ids: vec!["s-awx".to_string(), "s-terraform".to_string()],
             ..Default::default()
         };
         let p3 = ExperienceProject {
-            tools: vec![],
+            skill_ids: vec![],
             ..Default::default()
         };
-        let pooled = pooled_tools(&[p1, p2, p3]);
+        let pooled = pooled_tools(&[p1, p2, p3], &skills);
         assert_eq!(pooled, vec!["Ansible", "AWX", "Terraform"]);
     }
 
     #[test]
     fn experience_project_scoring_credits_tools_only_recorded_on_a_sibling() {
         // Mirrors the real KAIMAN scenario: the project whose own bullets
-        // actually reference AWX has an EMPTY tools list, while a sibling
-        // project (unrelated bullets) holds the full tools list for the
-        // whole role. Without pooling, the AWX-mentioning project would
-        // get no credit at all for the "awx"/"ansible" keywords beyond
-        // whatever it happens to say in prose.
+        // actually reference AWX has NO skill tags at all, while a sibling
+        // project (unrelated bullets) holds the tags for the whole role.
+        // Without pooling, the AWX-mentioning project would get no credit
+        // at all for the "awx"/"ansible" keywords beyond whatever it
+        // happens to say in prose.
         let keywords = vec![("awx".to_string(), 5), ("ansible".to_string(), 5)];
+        let skills = vec![
+            Skill {
+                id: "s-awx".to_string(),
+                name: "AWX".to_string(),
+                ..Default::default()
+            },
+            Skill {
+                id: "s-ansible".to_string(),
+                name: "Ansible".to_string(),
+                ..Default::default()
+            },
+        ];
 
-        let mentions_awx_no_tools = ExperienceProject {
+        let mentions_awx_no_tags = ExperienceProject {
             bullets: vec![crate::models::LocalizedText::same(
                 "conçu des playbooks awx pour ce projet",
             )],
-            tools: vec![],
+            skill_ids: vec![],
             ..Default::default()
         };
-        let sibling_holds_the_tools = ExperienceProject {
+        let sibling_holds_the_tags = ExperienceProject {
             bullets: vec![crate::models::LocalizedText::same(
                 "support technique sans rapport",
             )],
-            tools: vec!["AWX".to_string(), "Ansible".to_string()],
+            skill_ids: vec!["s-awx".to_string(), "s-ansible".to_string()],
             ..Default::default()
         };
 
@@ -1692,15 +1735,15 @@ mod tests {
             vec!["unrelated".to_string(), "terms".to_string()],
         ]);
 
-        let shared_tools = pooled_tools(&[
-            mentions_awx_no_tools.clone(),
-            sibling_holds_the_tools.clone(),
-        ]);
+        let shared_tools = pooled_tools(
+            &[mentions_awx_no_tags.clone(), sibling_holds_the_tags.clone()],
+            &skills,
+        );
 
         let score_without_pooling =
-            score_experience_project(&mentions_awx_no_tools, &keywords, &idf, &[]);
+            score_experience_project(&mentions_awx_no_tags, &keywords, &idf, &[]);
         let score_with_pooling =
-            score_experience_project(&mentions_awx_no_tools, &keywords, &idf, &shared_tools);
+            score_experience_project(&mentions_awx_no_tags, &keywords, &idf, &shared_tools);
 
         assert!(
             score_with_pooling > score_without_pooling,

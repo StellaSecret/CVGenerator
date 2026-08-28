@@ -150,7 +150,25 @@ pub struct ExperienceProject {
     #[serde(deserialize_with = "deserialize_context", default)]
     pub context: Vec<LocalizedText>,
     pub bullets: Vec<LocalizedText>,
-    pub tools: Vec<String>,
+    // References into `cv.skills` (by `Skill.id`), NOT free-text tool
+    // names. Deliberately strict: the editor only lets you pick from
+    // skills that already exist in `cv.skills` (reusing the same
+    // `skill_ids` pattern `Experience` already uses), rather than
+    // free-typed text that drifts in spelling/casing from the CV's
+    // canonical skill names (which is exactly what caused several
+    // keyword-matching bugs earlier — "K8s" vs "Kubernetes", accents,
+    // etc.) and required a same-experience "pooled_tools" fallback in
+    // `matcher.rs` for projects that never got a matching tool typed in.
+    //
+    // No backward-compat migration from the old free-text `tools` field
+    // is attempted here: `#[serde(default)]` means a CV saved before this
+    // change simply loads with an empty `skill_ids` for every project
+    // (the old `tools` array is an unrecognized field to serde, and is
+    // silently ignored on load rather than erroring) — the person re-tags
+    // projects with the new picker rather than the app trying to guess
+    // which old free-text string matches which of their canonical skills.
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
     // Optional period for this sub-project (e.g. "February 2025" /
     // "February 2026"), distinct from the parent Experience's own dates.
     // Left empty when the source CV doesn't give the project its own
@@ -363,7 +381,12 @@ impl LifetimeCV {
                 parts.extend(proj.context.iter().map(|c| c.fr.clone()));
                 parts.extend(proj.bullets.iter().map(|b| b.en.clone()));
                 parts.extend(proj.bullets.iter().map(|b| b.fr.clone()));
-                parts.extend(proj.tools.clone());
+                parts.extend(proj.skill_ids.iter().filter_map(|id| {
+                    self.skills
+                        .iter()
+                        .find(|s| &s.id == id)
+                        .map(|s| s.name.clone())
+                }));
             }
         }
         for skill in &self.skills {
@@ -595,6 +618,18 @@ mod tests {
     #[test]
     fn all_text_includes_experience_fields() {
         let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-rust".to_string(),
+                    name: "Rust".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-grpc".to_string(),
+                    name: "gRPC".to_string(),
+                    ..Default::default()
+                },
+            ],
             experiences: vec![Experience {
                 id: "1".to_string(),
                 role: LocalizedText::same("Software Engineer"),
@@ -603,7 +638,7 @@ mod tests {
                     name: LocalizedText::same("API Platform"),
                     context: vec![LocalizedText::same("Legacy monolith needed decomposition")],
                     bullets: vec![LocalizedText::same("Built APIs")],
-                    tools: vec!["Rust".to_string(), "gRPC".to_string()],
+                    skill_ids: vec!["s-rust".to_string(), "s-grpc".to_string()],
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -667,12 +702,24 @@ mod tests {
     #[test]
     fn all_text_multiple_experiences_all_included() {
         let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-python".to_string(),
+                    name: "Python".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-go".to_string(),
+                    name: "Go".to_string(),
+                    ..Default::default()
+                },
+            ],
             experiences: vec![
                 Experience {
                     id: "1".to_string(),
                     company: "AlphaCo".to_string(),
                     projects: vec![ExperienceProject {
-                        tools: vec!["Python".to_string()],
+                        skill_ids: vec!["s-python".to_string()],
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -681,7 +728,7 @@ mod tests {
                     id: "2".to_string(),
                     company: "BetaCo".to_string(),
                     projects: vec![ExperienceProject {
-                        tools: vec!["Go".to_string()],
+                        skill_ids: vec!["s-go".to_string()],
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -780,7 +827,7 @@ mod tests {
                 id: "e1".to_string(),
                 company: "Acme".to_string(),
                 projects: vec![ExperienceProject {
-                    tools: vec!["Rust".to_string()],
+                    skill_ids: vec!["s1".to_string()],
                     ..Default::default()
                 }],
                 ..Default::default()

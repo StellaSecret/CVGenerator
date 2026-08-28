@@ -131,9 +131,10 @@ impl Scorer {
         exp: &Experience,
         keywords: &[(String, usize)],
         jd_embedding: Option<&[f32]>,
+        skills: &[Skill],
     ) -> f32 {
         match self.mode {
-            ScoreMode::Keyword => self.score_experience_keyword(exp, keywords),
+            ScoreMode::Keyword => self.score_experience_keyword(exp, keywords, skills),
             ScoreMode::Embedding | ScoreMode::Hybrid => {
                 // Score each project on its own and take the best match,
                 // rather than concatenating every project's role/context/
@@ -165,7 +166,7 @@ impl Scorer {
                     let text = format!("{} {} {}", exp.role.en, exp.role.fr, exp.company);
                     return self.score_text(&text, keywords, jd_embedding);
                 }
-                let shared_tools = crate::services::matcher::pooled_tools(&exp.projects);
+                let shared_tools = crate::services::matcher::pooled_tools(&exp.projects, skills);
                 exp.projects
                     .iter()
                     .map(|p| {
@@ -176,7 +177,12 @@ impl Scorer {
         }
     }
 
-    fn score_experience_keyword(&mut self, exp: &Experience, keywords: &[(String, usize)]) -> f32 {
+    fn score_experience_keyword(
+        &mut self,
+        exp: &Experience,
+        keywords: &[(String, usize)],
+        skills: &[Skill],
+    ) -> f32 {
         let mut text = format!("{} {} {}", exp.role.en, exp.role.fr, exp.company);
         for proj in &exp.projects {
             text.push(' ');
@@ -220,7 +226,14 @@ impl Scorer {
                     .join(" "),
             );
             text.push(' ');
-            text.push_str(&proj.tools.join(" "));
+            text.push_str(
+                &proj
+                    .skill_ids
+                    .iter()
+                    .filter_map(|id| skills.iter().find(|s| &s.id == id).map(|s| s.name.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
         }
         self.score_text_keyword(&text, keywords)
     }
@@ -322,7 +335,7 @@ mod tests {
             ..Default::default()
         };
 
-        let exp_score = scorer.score_experience(&exp, &keywords, None);
+        let exp_score = scorer.score_experience(&exp, &keywords, None, &[]);
         let strong_score = scorer.score_experience_project(&strong_project, &keywords, None, &[]);
         let weak_score = scorer.score_experience_project(&weak_project, &keywords, None, &[]);
 
