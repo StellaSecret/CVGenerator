@@ -192,45 +192,64 @@ pub struct Experience {
 
 // ── Skills ────────────────────────────────────────────────────────────────────
 
+// Deliberately 6 categories, not the original 9: `Tool` and `Other` were
+// vague catch-alls with no real boundary against the more specific
+// categories (almost anything could be "a tool"), and `Framework`/`Soft`
+// didn't earn their own bucket often enough to justify the ambiguity they
+// added elsewhere. `Middleware` is new — app servers and message brokers
+// (JBoss, WebLogic, CICS, Solace) were previously forced into
+// `CloudInfrastructure` alongside the actual compute/OS/cloud layer they
+// run on top of, which is a different concern.
+//
+// Rule of thumb for the two categories people most often confuse:
+// `Middleware` is software that runs your application/business logic
+// *on top of* a platform (app servers, message brokers, ESBs).
+// `PlatformsInfrastructure` is the compute/OS/virtualization/cloud/
+// container layer everything else sits on (Mainframe, VMware, Linux,
+// Kubernetes, Docker, AWS/GCP/etc).
+//
+// `#[serde(alias = ...)]` lets a CV saved under the old 9-category scheme
+// load directly under the new one without a migration pass or any risk of
+// a deserialize error on an old file: the removed categories fold into
+// their closest surviving neighbor (`Framework`/`Soft` → `Programming`,
+// `Tool`/`Other` → `AutomationDevOps`), and the renamed one
+// (`CloudInfrastructure` → `PlatformsInfrastructure`) keeps working under
+// its old name too. This is a best-effort approximation for the merged
+// categories, not a claim that e.g. every old `Tool` entry truly belonged
+// in DevOps — worth a skim of your skills list after upgrading.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SkillCategory {
     #[default]
+    #[serde(alias = "Framework", alias = "Soft")]
     Programming,
-    Framework,
-    Tool,
-    CloudInfrastructure,
-    Database,
-    Monitoring,
+    #[serde(alias = "CloudInfrastructure")]
+    PlatformsInfrastructure,
+    #[serde(alias = "Tool", alias = "Other")]
     AutomationDevOps,
-    Soft,
-    Other,
+    Monitoring,
+    Middleware,
+    Database,
 }
 
 impl SkillCategory {
     pub fn label(&self) -> &str {
         match self {
             Self::Programming => "Programming",
-            Self::Framework => "Framework",
-            Self::Tool => "Tool",
-            Self::CloudInfrastructure => "Cloud & Infrastructure",
-            Self::Database => "Database",
-            Self::Monitoring => "Monitoring",
+            Self::PlatformsInfrastructure => "Platforms & Infrastructure",
             Self::AutomationDevOps => "Automation & DevOps",
-            Self::Soft => "Soft Skill",
-            Self::Other => "Other Skills",
+            Self::Monitoring => "Monitoring",
+            Self::Middleware => "Middleware",
+            Self::Database => "Database",
         }
     }
     pub fn all() -> Vec<Self> {
         vec![
             Self::Programming,
-            Self::Framework,
-            Self::Tool,
-            Self::CloudInfrastructure,
-            Self::Database,
-            Self::Monitoring,
+            Self::PlatformsInfrastructure,
             Self::AutomationDevOps,
-            Self::Soft,
-            Self::Other,
+            Self::Monitoring,
+            Self::Middleware,
+            Self::Database,
         ]
     }
 }
@@ -668,7 +687,7 @@ mod tests {
                 Skill {
                     id: "2".to_string(),
                     name: "Tokio".to_string(),
-                    category: SkillCategory::Framework,
+                    category: SkillCategory::Programming,
                     level: SkillLevel::Advanced,
                 },
             ],
@@ -748,20 +767,17 @@ mod tests {
     #[test]
     fn skill_category_labels_are_correct() {
         assert_eq!(SkillCategory::Programming.label(), "Programming");
-        assert_eq!(SkillCategory::Framework.label(), "Framework");
-        assert_eq!(SkillCategory::Tool.label(), "Tool");
         assert_eq!(
-            SkillCategory::CloudInfrastructure.label(),
-            "Cloud & Infrastructure"
+            SkillCategory::PlatformsInfrastructure.label(),
+            "Platforms & Infrastructure"
         );
-        assert_eq!(SkillCategory::Database.label(), "Database");
-        assert_eq!(SkillCategory::Monitoring.label(), "Monitoring");
         assert_eq!(
             SkillCategory::AutomationDevOps.label(),
             "Automation & DevOps"
         );
-        assert_eq!(SkillCategory::Soft.label(), "Soft Skill");
-        assert_eq!(SkillCategory::Other.label(), "Other Skills");
+        assert_eq!(SkillCategory::Monitoring.label(), "Monitoring");
+        assert_eq!(SkillCategory::Middleware.label(), "Middleware");
+        assert_eq!(SkillCategory::Database.label(), "Database");
     }
 
     #[test]
@@ -769,14 +785,42 @@ mod tests {
         let all = SkillCategory::all();
         assert_eq!(
             all.len(),
-            9,
-            "SkillCategory::all() should return all 9 variants"
+            6,
+            "SkillCategory::all() should return all 6 variants"
         );
         assert!(all.contains(&SkillCategory::Programming));
-        assert!(all.contains(&SkillCategory::CloudInfrastructure));
-        assert!(all.contains(&SkillCategory::Database));
-        assert!(all.contains(&SkillCategory::Monitoring));
+        assert!(all.contains(&SkillCategory::PlatformsInfrastructure));
         assert!(all.contains(&SkillCategory::AutomationDevOps));
+        assert!(all.contains(&SkillCategory::Monitoring));
+        assert!(all.contains(&SkillCategory::Middleware));
+        assert!(all.contains(&SkillCategory::Database));
+    }
+
+    // Regression coverage for the 9→6 category migration: a CV saved under
+    // the old scheme must still deserialize correctly under the new one,
+    // via `#[serde(alias = ...)]` on the surviving variants — see
+    // SkillCategory's doc comment for the full mapping and rationale.
+    #[test]
+    fn skill_category_old_names_deserialize_via_alias() {
+        let cases = [
+            (r#""Programming""#, SkillCategory::Programming),
+            (r#""Framework""#, SkillCategory::Programming),
+            (r#""Soft""#, SkillCategory::Programming),
+            (
+                r#""CloudInfrastructure""#,
+                SkillCategory::PlatformsInfrastructure,
+            ),
+            (r#""Tool""#, SkillCategory::AutomationDevOps),
+            (r#""Other""#, SkillCategory::AutomationDevOps),
+            (r#""AutomationDevOps""#, SkillCategory::AutomationDevOps),
+            (r#""Monitoring""#, SkillCategory::Monitoring),
+            (r#""Database""#, SkillCategory::Database),
+        ];
+        for (json, expected) in cases {
+            let got: SkillCategory = serde_json::from_str(json)
+                .unwrap_or_else(|e| panic!("failed to deserialize {json}: {e}"));
+            assert_eq!(got, expected, "deserializing {json}");
+        }
     }
 
     // ── SkillLevel ────────────────────────────────────────────────────────────

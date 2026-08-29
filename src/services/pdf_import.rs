@@ -2955,7 +2955,7 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
                 harvested_skills.push(Skill {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: seg,
-                    category: SkillCategory::Other,
+                    category: SkillCategory::default(),
                     level: SkillLevel::Intermediate,
                 });
             }
@@ -2963,7 +2963,7 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
                 harvested_skills.push(Skill {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: format!("{} {}", trimmed, next_trimmed.unwrap()),
-                    category: SkillCategory::Other,
+                    category: SkillCategory::default(),
                     level: SkillLevel::Intermediate,
                 });
                 // Also consume the marker line itself on the next
@@ -3963,18 +3963,34 @@ fn parse_education(lines: &[String]) -> Vec<Education> {
 /// Category labels this app's own renderer prefixes a skills line with
 /// (see `SkillCategory::label` in models/cv.rs and `render_skills` in
 /// renderer.rs, which emits `"{label}: skill, skill, …"` per category).
-/// Longest-first so e.g. "Other Skills" is tried before a hypothetical
-/// shorter prefix that could partially match it.
+/// Longest-first so e.g. "platforms & infrastructure" is tried before a
+/// hypothetical shorter prefix that could partially match it.
+///
+/// Includes the pre-6-category label strings too (same rationale as
+/// `SkillCategory`'s `#[serde(alias = ...)]`, see its doc comment): a PDF
+/// exported before that migration still literally has "Framework:",
+/// "Tool:", "Cloud & Infrastructure:", "Soft Skill:", "Other Skills:"
+/// printed as section headers, and re-importing it should still recognize
+/// those, mapped onto their closest surviving category, rather than
+/// failing to categorize that skill at all.
 const SKILL_CATEGORY_LABELS: &[(&str, SkillCategory)] = &[
-    ("other skills", SkillCategory::Other),
-    ("soft skill", SkillCategory::Soft),
-    ("programming", SkillCategory::Programming),
-    ("framework", SkillCategory::Framework),
-    ("database", SkillCategory::Database),
-    ("cloud & infrastructure", SkillCategory::CloudInfrastructure),
-    ("monitoring", SkillCategory::Monitoring),
+    (
+        "platforms & infrastructure",
+        SkillCategory::PlatformsInfrastructure,
+    ),
+    (
+        "cloud & infrastructure", // pre-migration label
+        SkillCategory::PlatformsInfrastructure,
+    ),
     ("automation & devops", SkillCategory::AutomationDevOps),
-    ("tool", SkillCategory::Tool),
+    ("other skills", SkillCategory::AutomationDevOps), // pre-migration label
+    ("programming", SkillCategory::Programming),
+    ("soft skill", SkillCategory::Programming), // pre-migration label
+    ("monitoring", SkillCategory::Monitoring),
+    ("middleware", SkillCategory::Middleware),
+    ("framework", SkillCategory::Programming), // pre-migration label
+    ("database", SkillCategory::Database),
+    ("tool", SkillCategory::AutomationDevOps), // pre-migration label
 ];
 
 pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {
@@ -4131,10 +4147,10 @@ fn push_whole_skill_line(line: &str, skills: &mut Vec<Skill>) {
 /// Strips this app's own "{Category}: " prefix, if present, and returns
 /// the matched category alongside the remaining text — without this,
 /// re-importing our own exported PDF bakes the category label into the
-/// FIRST skill's name (e.g. "Other Skills: CI/CD"), and the next export
-/// prepends the category label again on top of that, compounding into
-/// "Other Skills: Other Skills: …" a little further with every
-/// import/export round trip.
+/// FIRST skill's name (e.g. "Automation & DevOps: CI/CD"), and the next
+/// export prepends the category label again on top of that, compounding
+/// into "Automation & DevOps: Automation & DevOps: …" a little further
+/// with every import/export round trip.
 fn strip_skill_category_prefix(line: &str) -> (SkillCategory, &str) {
     let lower = line.to_lowercase();
     for (label, cat) in SKILL_CATEGORY_LABELS {
@@ -4143,7 +4159,7 @@ fn strip_skill_category_prefix(line: &str) -> (SkillCategory, &str) {
             return (cat.clone(), line[prefix.len()..].trim_start());
         }
     }
-    (SkillCategory::Other, line)
+    (SkillCategory::default(), line)
 }
 
 fn push_skill_entry(item: &str, category: SkillCategory, skills: &mut Vec<Skill>) {
@@ -4947,7 +4963,7 @@ fn harvest_skills_from_experiences(experiences: &mut [Experience]) -> Vec<Skill>
                         harvested.push(Skill {
                             id: uuid::Uuid::new_v4().to_string(),
                             name: seg,
-                            category: SkillCategory::Other,
+                            category: SkillCategory::default(),
                             level: SkillLevel::Intermediate,
                         });
                     }

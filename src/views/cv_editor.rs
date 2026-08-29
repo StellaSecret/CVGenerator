@@ -618,14 +618,11 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                         select { class: "input select",
                             onchange: move |e| {
                                 e_category.set(match e.value().as_str() {
-                                    "Framework" => SkillCategory::Framework,
-                                    "Tool"      => SkillCategory::Tool,
-                                    "Cloud & Infrastructure" => SkillCategory::CloudInfrastructure,
+                                    "Platforms & Infrastructure" => SkillCategory::PlatformsInfrastructure,
                                     "Database"  => SkillCategory::Database,
                                     "Monitoring" => SkillCategory::Monitoring,
                                     "Automation & DevOps" => SkillCategory::AutomationDevOps,
-                                    "Soft Skill"=> SkillCategory::Soft,
-                                    "Other Skills" => SkillCategory::Other,
+                                    "Middleware" => SkillCategory::Middleware,
                                     _           => SkillCategory::Programming,
                                 });
                             },
@@ -1782,14 +1779,11 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                         select { class: "input select",
                             onchange: move |e| {
                                 new_category.set(match e.value().as_str() {
-                                    "Framework" => SkillCategory::Framework,
-                                    "Tool"      => SkillCategory::Tool,
-                                    "Cloud & Infrastructure" => SkillCategory::CloudInfrastructure,
+                                    "Platforms & Infrastructure" => SkillCategory::PlatformsInfrastructure,
                                     "Database"  => SkillCategory::Database,
                                     "Monitoring" => SkillCategory::Monitoring,
                                     "Automation & DevOps" => SkillCategory::AutomationDevOps,
-                                    "Soft Skill"=> SkillCategory::Soft,
-                                    "Other Skills" => SkillCategory::Other,
+                                    "Middleware" => SkillCategory::Middleware,
                                     _           => SkillCategory::Programming,
                                 });
                             },

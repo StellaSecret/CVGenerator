@@ -117,7 +117,7 @@ fn tag(href: &str, label: &str) -> String {
 
 /// Renders a set of skill references (`skill_ids`, resolved via
 /// `all_skills`) grouped by `SkillCategory`, the same
-/// "Programming: A, B · Cloud & Infrastructure: C, D" format used for an
+/// "Programming: A, B · Platforms & Infrastructure: C, D" format used for an
 /// `Experience`'s own skills line — shared so a `ExperienceProject`'s tools
 /// (also `skill_ids` now, not free text) render identically instead of as a
 /// flat, uncategorized "Techs: A, B, C" chip row.
@@ -1124,7 +1124,7 @@ mod tests {
             crate::models::Skill {
                 id: "s2".to_string(),
                 name: "Kubernetes".to_string(),
-                category: SkillCategory::CloudInfrastructure,
+                category: SkillCategory::PlatformsInfrastructure,
                 ..Default::default()
             },
             crate::models::Skill {
