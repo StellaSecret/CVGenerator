@@ -242,6 +242,16 @@ impl SkillCategory {
             Self::Database => "Database",
         }
     }
+    pub fn label_fr(&self) -> &str {
+        match self {
+            Self::Programming => "Programmation",
+            Self::PlatformsInfrastructure => "Plateformes & Infrastructure",
+            Self::AutomationDevOps => "Automatisation & DevOps",
+            Self::Monitoring => "Supervision",
+            Self::Middleware => "Middleware",
+            Self::Database => "Bases de données",
+        }
+    }
     pub fn all() -> Vec<Self> {
         vec![
             Self::Programming,
@@ -261,6 +271,7 @@ pub enum SkillLevel {
     Intermediate,
     Advanced,
     Expert,
+    Mastery,
 }
 
 impl SkillLevel {
@@ -270,6 +281,16 @@ impl SkillLevel {
             Self::Intermediate => "Intermediate",
             Self::Advanced => "Advanced",
             Self::Expert => "Expert",
+            Self::Mastery => "Mastery",
+        }
+    }
+    pub fn label_fr(&self) -> &str {
+        match self {
+            Self::Beginner => "Débutant",
+            Self::Intermediate => "Intermédiaire",
+            Self::Advanced => "Avancé",
+            Self::Expert => "Expert",
+            Self::Mastery => "Maîtrise",
         }
     }
     pub fn all() -> Vec<Self> {
@@ -278,6 +299,7 @@ impl SkillLevel {
             Self::Intermediate,
             Self::Advanced,
             Self::Expert,
+            Self::Mastery,
         ]
     }
 }
@@ -781,6 +803,22 @@ mod tests {
     }
 
     #[test]
+    fn skill_category_french_labels_are_correct() {
+        assert_eq!(SkillCategory::Programming.label_fr(), "Programmation");
+        assert_eq!(
+            SkillCategory::PlatformsInfrastructure.label_fr(),
+            "Plateformes & Infrastructure"
+        );
+        assert_eq!(
+            SkillCategory::AutomationDevOps.label_fr(),
+            "Automatisation & DevOps"
+        );
+        assert_eq!(SkillCategory::Monitoring.label_fr(), "Supervision");
+        assert_eq!(SkillCategory::Middleware.label_fr(), "Middleware");
+        assert_eq!(SkillCategory::Database.label_fr(), "Bases de données");
+    }
+
+    #[test]
     fn skill_category_all_covers_every_variant() {
         let all = SkillCategory::all();
         assert_eq!(
@@ -831,14 +869,25 @@ mod tests {
         assert_eq!(SkillLevel::Intermediate.label(), "Intermediate");
         assert_eq!(SkillLevel::Advanced.label(), "Advanced");
         assert_eq!(SkillLevel::Expert.label(), "Expert");
+        assert_eq!(SkillLevel::Mastery.label(), "Mastery");
+    }
+
+    #[test]
+    fn skill_level_french_labels_are_correct() {
+        assert_eq!(SkillLevel::Beginner.label_fr(), "Débutant");
+        assert_eq!(SkillLevel::Intermediate.label_fr(), "Intermédiaire");
+        assert_eq!(SkillLevel::Advanced.label_fr(), "Avancé");
+        assert_eq!(SkillLevel::Expert.label_fr(), "Expert");
+        assert_eq!(SkillLevel::Mastery.label_fr(), "Maîtrise");
     }
 
     #[test]
     fn skill_level_all_covers_every_variant() {
         let all = SkillLevel::all();
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 5);
         assert!(all.contains(&SkillLevel::Expert));
         assert!(all.contains(&SkillLevel::Beginner));
+        assert!(all.contains(&SkillLevel::Mastery));
     }
 
     // ── LanguageLevel ─────────────────────────────────────────────────────────

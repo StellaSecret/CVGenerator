@@ -125,6 +125,7 @@ fn categorized_skill_line(
     wrapper_class: &str,
     skill_ids: &[String],
     all_skills: &[crate::models::Skill],
+    lang: Lang,
 ) -> String {
     let matched: Vec<&crate::models::Skill> = skill_ids
         .iter()
@@ -141,10 +142,15 @@ fn categorized_skill_line(
         if cat_skills.is_empty() {
             continue;
         }
+        let cat_label = if lang == Lang::Fr {
+            cat.label_fr()
+        } else {
+            cat.label()
+        };
         let names: Vec<String> = cat_skills.iter().map(|s| esc(&s.name)).collect();
         blocks.push(format!(
             r#"<span class="exp-skill-category">{}:</span> <span class="exp-skill-list">{}</span>"#,
-            cat.label(),
+            cat_label,
             names.join(", "),
         ));
     }
@@ -269,10 +275,37 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-project-context li { font-style: italic; color: #64748b; font-size: 0.82rem; margin-bottom: 2px; padding-left: 1em; text-indent: -1em; }
 .cv-doc .exp-project-label { font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; display: block; margin: 6px 0 2px 0; }
 
-/* ── Skills ── */
-.cv-doc .skills-block { margin-bottom: 8px; }
-.cv-doc .skills-category { font-weight: 600; font-size: 0.82rem; color: #475569; display: inline; }
-.cv-doc .skills-list { display: inline; font-size: 0.88rem; color: #334155; }
+/* ── Skills ──
+   Chips (not the old inline comma-list) so a 40+ skill CV doesn't read as
+   a wall of parenthetical text. The level is conveyed by the colored dot
+   only — the word/abbreviation isn't printed inline — with a legend below
+   mapping color to level for anyone reading on screen or in print. The
+   full wording ("Advanced, 8 yrs") still lives in aria-label so screen
+   readers get it even without the legend or color perception. */
+.cv-doc .skills-block { display: grid; grid-template-columns: 118px 1fr; gap: 4px 14px; align-items: start; margin-bottom: 9px; }
+.cv-doc .skills-category { font-weight: 600; font-size: 0.8rem; color: #475569; padding-top: 5px; }
+.cv-doc .skills-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cv-doc .skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 0.78rem;
+  color: #1e293b;
+  white-space: nowrap;
+}
+.cv-doc .skill-chip-name { font-weight: 500; }
+.cv-doc .skill-chip-meta { color: #64748b; font-size: 0.72rem; }
+.cv-doc .skill-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.cv-doc .skill-dot.lvl-beginner { background: #94a3b8; }
+.cv-doc .skill-dot.lvl-intermediate { background: #f59e0b; }
+.cv-doc .skill-dot.lvl-advanced { background: #2563eb; }
+.cv-doc .skill-dot.lvl-expert { background: #16a34a; }
+.cv-doc .skill-dot.lvl-mastery { background: #7c3aed; }
+.cv-doc .skills-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
+.cv-doc .skills-legend .legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #64748b; }
 
 /* ── Projects ── */
 .cv-doc .proj-item { margin-bottom: 16px; }
@@ -370,6 +403,7 @@ const CV_CSS: &str = r#"
 .cv-doc .proj-item,
 .cv-doc .edu-item,
 .cv-doc .skills-block,
+.cv-doc .skills-legend,
 .cv-doc .gap-banner,
 .cv-doc .gap-section {
   break-inside: avoid;
@@ -609,7 +643,7 @@ fn render_experience(
                 .map(bullet_li)
                 .collect();
             let tools_div =
-                categorized_skill_line("exp-project-skills", &proj.skill_ids, all_skills);
+                categorized_skill_line("exp-project-skills", &proj.skill_ids, all_skills, lang);
             let project_dates_html = if proj.start_date.is_empty() && proj.end_date.is_empty() {
                 String::new()
             } else {
@@ -684,6 +718,19 @@ fn render_experience(
     wrap_section(i18n_core::tr("rs_experience", lang), items)
 }
 
+/// CSS class suffix (`lvl-advanced`, etc.) used by both the chips and the
+/// legend so the color mapping only lives in one place.
+fn skill_level_css_class(level: &crate::models::SkillLevel) -> &'static str {
+    use crate::models::SkillLevel::*;
+    match level {
+        Beginner => "lvl-beginner",
+        Intermediate => "lvl-intermediate",
+        Advanced => "lvl-advanced",
+        Expert => "lvl-expert",
+        Mastery => "lvl-mastery",
+    }
+}
+
 fn render_skills(
     skills: &[crate::models::Skill],
     experiences: &[crate::models::Experience],
@@ -703,7 +750,7 @@ fn render_skills(
         if cat_skills.is_empty() {
             continue;
         }
-        let names: Vec<String> = cat_skills
+        let chips: Vec<String> = cat_skills
             .iter()
             .map(|s| {
                 let months = crate::services::skill_duration::total_months_for_skill(
@@ -711,26 +758,74 @@ fn render_skills(
                     experiences,
                     now,
                 );
-                let years_suffix = crate::services::skill_duration::format_years(months);
-                // e.g. "Ansible (Expert, 3 yrs)" — years omitted entirely
-                // when it can't be derived (no experience/project tags
-                // that skill with parseable dates), rather than showing
-                // a misleading "0 yrs".
-                if years_suffix.is_empty() {
-                    format!("{} ({})", esc(&s.name), s.level.label())
+                let years_suffix = if lang == Lang::Fr {
+                    crate::services::skill_duration::format_years_fr(months)
                 } else {
-                    format!("{} ({}, {})", esc(&s.name), s.level.label(), years_suffix)
-                }
+                    crate::services::skill_duration::format_years(months)
+                };
+                let level_label = if lang == Lang::Fr {
+                    s.level.label_fr()
+                } else {
+                    s.level.label()
+                };
+                // Full wording ("Advanced, 8 yrs") lives in aria-label so
+                // screen readers, and anyone scanning the raw HTML/print
+                // source, still get the level even though the visible
+                // chip only shows the color dot (see skill_level_css_class)
+                // plus the years — the dot alone isn't reliable for a
+                // colorblind reader or a black-and-white printout, but
+                // the legend below covers that on-screen, and aria-label
+                // covers it everywhere else.
+                let full_desc = if years_suffix.is_empty() {
+                    format!("{}: {}", esc(&s.name), level_label)
+                } else {
+                    format!("{}: {}, {}", esc(&s.name), level_label, years_suffix)
+                };
+                let meta = if years_suffix.is_empty() {
+                    String::new()
+                } else {
+                    format!(r#"<span class="skill-chip-meta">{years_suffix}</span>"#)
+                };
+                format!(
+                    r#"<span class="skill-chip" aria-label="{full_desc}"><span class="skill-dot {lvl_class}"></span><span class="skill-chip-name">{name}</span>{meta}</span>"#,
+                    full_desc = full_desc,
+                    lvl_class = skill_level_css_class(&s.level),
+                    name = esc(&s.name),
+                    meta = meta,
+                )
             })
             .collect();
+        let cat_label = if lang == Lang::Fr {
+            cat.label_fr()
+        } else {
+            cat.label()
+        };
         blocks.push(format!(
             r#"<div class="skills-block">
-  <span class="skills-category">{cat}: </span>
-  <span class="skills-list">{list}</span>
+  <div class="skills-category">{cat}</div>
+  <div class="skills-chips">{chips}</div>
 </div>"#,
-            cat = cat.label(),
-            list = names.join(", "),
+            cat = cat_label,
+            chips = chips.join(""),
         ));
+    }
+    if !blocks.is_empty() {
+        let legend: String = crate::models::SkillLevel::all()
+            .iter()
+            .map(|lvl| {
+                let label = if lang == Lang::Fr {
+                    lvl.label_fr()
+                } else {
+                    lvl.label()
+                };
+                format!(
+                    r#"<span class="legend-item"><span class="skill-dot {lvl_class}"></span>{label}</span>"#,
+                    lvl_class = skill_level_css_class(lvl),
+                    label = label,
+                )
+            })
+            .collect();
+        blocks.push(format!(r#"<div class="skills-legend">{legend}</div>"#));
     }
     wrap_section(i18n_core::tr("rs_skills", lang), blocks)
 }
@@ -1112,6 +1207,55 @@ mod tests {
     }
 
     #[test]
+    fn render_skills_uses_french_level_labels_when_lang_is_fr() {
+        let skills = vec![Skill {
+            id: "s1".to_string(),
+            name: "Ansible".to_string(),
+            category: SkillCategory::AutomationDevOps,
+            level: SkillLevel::Mastery,
+        }];
+        let html = render_skills(&skills, &[], Lang::Fr);
+        assert!(html.contains("Ansible"));
+        assert!(
+            html.contains("Maîtrise"),
+            "french level label should be shown, got: {html}"
+        );
+        assert!(
+            !html.contains("Mastery"),
+            "english level label should not leak into a french render, got: {html}"
+        );
+        assert!(
+            html.contains("Automatisation & DevOps"),
+            "french category label should be shown, got: {html}"
+        );
+    }
+
+    #[test]
+    fn render_skills_chip_shows_no_level_abbreviation() {
+        // The visible chip only carries the color dot + name + years —
+        // the level word/abbreviation is deliberately not printed inline
+        // (it lives in aria-label and the legend instead), so a 40-skill
+        // section doesn't read as "Name (Level, X yrs)" repeated forever.
+        let skills = vec![Skill {
+            id: "s1".to_string(),
+            name: "Ansible".to_string(),
+            category: SkillCategory::AutomationDevOps,
+            level: SkillLevel::Advanced,
+        }];
+        let experiences = vec![Experience {
+            start_date: "Jan 2020".to_string(),
+            end_date: "Dec 2021".to_string(),
+            skill_ids: vec!["s1".to_string()],
+            ..Default::default()
+        }];
+        let html = render_skills(&skills, &experiences, Lang::En);
+        assert!(html.contains("skill-chip-meta\">2 yrs</span>"));
+        // The old inline abbreviation ("Adv · 2 yrs") must be gone.
+        assert!(!html.contains("Adv ·"));
+        assert!(!html.contains(">Adv<"));
+    }
+
+    #[test]
     fn render_skills_omits_years_when_undeterminable() {
         // A skill with no experience/project tagging it at all (e.g. one
         // only ever used in a personal portfolio project) has no dates to
@@ -1212,7 +1356,7 @@ mod tests {
 
     #[test]
     fn categorized_skill_line_empty_ids_renders_nothing() {
-        let out = categorized_skill_line("exp-project-skills", &[], &[]);
+        let out = categorized_skill_line("exp-project-skills", &[], &[], Lang::En);
         assert_eq!(out, "");
     }
 
@@ -1239,7 +1383,7 @@ mod tests {
             },
         ];
         let ids = vec!["s1".to_string(), "s2".to_string(), "s3".to_string()];
-        let out = categorized_skill_line("exp-project-skills", &ids, &skills);
+        let out = categorized_skill_line("exp-project-skills", &ids, &skills, Lang::En);
         // Same category's skills (Ansible, AWX) grouped into one segment,
         // not two separate "DevOps: Ansible" / "DevOps: AWX" segments.
         assert!(out.contains("Ansible, AWX") || out.contains("AWX, Ansible"));
@@ -1262,8 +1406,22 @@ mod tests {
             ..Default::default()
         }];
         let ids = vec!["s1".to_string(), "does-not-exist".to_string()];
-        let out = categorized_skill_line("exp-project-skills", &ids, &skills);
+        let out = categorized_skill_line("exp-project-skills", &ids, &skills, Lang::En);
         assert!(out.contains("Terraform"));
+    }
+
+    #[test]
+    fn categorized_skill_line_uses_french_category_label_when_lang_is_fr() {
+        let skills = vec![crate::models::Skill {
+            id: "s1".to_string(),
+            name: "Terraform".to_string(),
+            category: SkillCategory::AutomationDevOps,
+            ..Default::default()
+        }];
+        let ids = vec!["s1".to_string()];
+        let out = categorized_skill_line("exp-project-skills", &ids, &skills, Lang::Fr);
+        assert!(out.contains("Automatisation & DevOps"));
+        assert!(!out.contains("Automation & DevOps"));
     }
 
     fn minimal_cv() -> LifetimeCV {

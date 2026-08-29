@@ -638,11 +638,14 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                                     "Beginner"     => SkillLevel::Beginner,
                                     "Advanced"     => SkillLevel::Advanced,
                                     "Expert"       => SkillLevel::Expert,
+                                    "Mastery"      => SkillLevel::Mastery,
                                     _              => SkillLevel::Intermediate,
                                 });
                             },
                             for lvl in SkillLevel::all() {
-                                option { value: lvl.label(), selected: e_level.read().label() == lvl.label(), "{lvl.label()}" }
+                                option { value: lvl.label(), selected: e_level.read().label() == lvl.label(),
+                                    if l == i18n::Lang::Fr { "{lvl.label_fr()}" } else { "{lvl.label()}" }
+                                }
                             }
                         }
                     }
@@ -1799,11 +1802,14 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     "Beginner"     => SkillLevel::Beginner,
                                     "Advanced"     => SkillLevel::Advanced,
                                     "Expert"       => SkillLevel::Expert,
+                                    "Mastery"      => SkillLevel::Mastery,
                                     _              => SkillLevel::Intermediate,
                                 });
                             },
                             for lvl in SkillLevel::all() {
-                                option { value: lvl.label(), "{lvl.label()}" }
+                                option { value: lvl.label(),
+                                    if l == i18n::Lang::Fr { "{lvl.label_fr()}" } else { "{lvl.label()}" }
+                                }
                             }
                         }
                     }

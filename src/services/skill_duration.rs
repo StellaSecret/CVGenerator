@@ -180,17 +180,27 @@ pub fn total_months_for_skill(skill_id: &str, experiences: &[Experience], now: Y
 /// couple months of exposure). 12+ months round to the nearest whole
 /// year — 11.6 years reads as "12 yrs" to a human, not "11 yrs".
 pub fn format_years(months: i64) -> String {
+    format_years_with(months, "< 1 yr", "1 yr", "yrs")
+}
+
+/// French counterpart of `format_years` — same bucketing rules ("< 1 an",
+/// "1 an", "N ans"), just localized wording.
+pub fn format_years_fr(months: i64) -> String {
+    format_years_with(months, "< 1 an", "1 an", "ans")
+}
+
+fn format_years_with(months: i64, under_one: &str, exactly_one: &str, plural_unit: &str) -> String {
     if months <= 0 {
         return String::new();
     }
     if months < 12 {
-        return "< 1 yr".to_string();
+        return under_one.to_string();
     }
     let years = ((months as f64) / 12.0).round() as i64;
     if years <= 1 {
-        "1 yr".to_string()
+        exactly_one.to_string()
     } else {
-        format!("{years} yrs")
+        format!("{years} {plural_unit}")
     }
 }
 
@@ -335,5 +345,15 @@ mod tests {
         assert_eq!(format_years(18), "2 yrs"); // rounds up from 1.5
         assert_eq!(format_years(24), "2 yrs");
         assert_eq!(format_years(139), "12 yrs"); // 11.58 rounds to 12
+    }
+
+    #[test]
+    fn format_years_fr_buckets_correctly() {
+        assert_eq!(format_years_fr(0), "");
+        assert_eq!(format_years_fr(6), "< 1 an");
+        assert_eq!(format_years_fr(12), "1 an");
+        assert_eq!(format_years_fr(18), "2 ans");
+        assert_eq!(format_years_fr(24), "2 ans");
+        assert_eq!(format_years_fr(139), "12 ans");
     }
 }
