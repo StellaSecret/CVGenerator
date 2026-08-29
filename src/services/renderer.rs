@@ -684,10 +684,15 @@ fn render_experience(
     wrap_section(i18n_core::tr("rs_experience", lang), items)
 }
 
-fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
+fn render_skills(
+    skills: &[crate::models::Skill],
+    experiences: &[crate::models::Experience],
+    lang: Lang,
+) -> String {
     if skills.is_empty() {
         return String::new();
     }
+    let now = current_year_month();
 
     // Group by category
     let categories = SkillCategory::all();
@@ -698,7 +703,26 @@ fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
         if cat_skills.is_empty() {
             continue;
         }
-        let names: Vec<String> = cat_skills.iter().map(|s| esc(&s.name)).collect();
+        let names: Vec<String> = cat_skills
+            .iter()
+            .map(|s| {
+                let months = crate::services::skill_duration::total_months_for_skill(
+                    &s.id,
+                    experiences,
+                    now,
+                );
+                let years_suffix = crate::services::skill_duration::format_years(months);
+                // e.g. "Ansible (Expert, 3 yrs)" — years omitted entirely
+                // when it can't be derived (no experience/project tags
+                // that skill with parseable dates), rather than showing
+                // a misleading "0 yrs".
+                if years_suffix.is_empty() {
+                    format!("{} ({})", esc(&s.name), s.level.label())
+                } else {
+                    format!("{} ({}, {})", esc(&s.name), s.level.label(), years_suffix)
+                }
+            })
+            .collect();
         blocks.push(format!(
             r#"<div class="skills-block">
   <span class="skills-category">{cat}: </span>
@@ -709,6 +733,37 @@ fn render_skills(skills: &[crate::models::Skill], lang: Lang) -> String {
         ));
     }
     wrap_section(i18n_core::tr("rs_skills", lang), blocks)
+}
+
+/// Current (year, month) — `month` is 1-12, calendar convention (NOT the
+/// 0-indexed convention JS `Date.getMonth()` uses; converted below). Used
+/// only to resolve "Present"/"Actuel" when deriving a skill's years of
+/// experience (see skill_duration.rs) — all the actual date-math logic is
+/// pure and platform-independent; this is the one real call to an actual
+/// clock, isolated here the same way `drive.rs`'s `now_ms()` isolates its
+/// own clock access.
+fn current_year_month() -> crate::services::skill_duration::YearMonth {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let d = js_sys::Date::new_0();
+        (d.get_full_year() as i32, d.get_month() as u32 + 1)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Native builds only exist for `cargo test`/`clippy` in this
+        // project — nothing here ever renders a real CV outside wasm, so
+        // exact accuracy doesn't matter, only that it compiles and is in
+        // the right ballpark (tests inject their own fixed `now` and
+        // never call this). A rough days-since-epoch/365.25 estimate is
+        // enough for that.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86400)
+            .unwrap_or(0) as f64;
+        let year = 1970 + (days / 365.25) as i32;
+        (year, 6) // mid-year placeholder month
+    }
 }
 
 fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
@@ -919,7 +974,7 @@ pub fn render_lifetime_cv(cv: &LifetimeCV, lang: Lang) -> String {
     let body = format!(
         "{header}{skills}{exp}{projects}{edu}{lang}{certs}",
         header = render_header(&cv.personal, lang),
-        skills = render_skills(&cv.skills, lang),
+        skills = render_skills(&cv.skills, &cv.experiences, lang),
         exp = render_experience(&cv.experiences, &cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
@@ -1002,7 +1057,7 @@ pub fn render_tailored_cv(cv: &TailoredCV, job_title: &str, lang: Lang) -> Strin
         "{banner}{header}{skills}{exp}{projects}{edu}{lang}{certs}",
         banner = gap_banner,
         header = render_header(&cv.personal, lang),
-        skills = render_skills(&cv.skills, lang),
+        skills = render_skills(&cv.skills, &cv.experiences, lang),
         exp = render_experience(&cv.experiences, &cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
@@ -1024,6 +1079,55 @@ pub fn render_tailored_cv(cv: &TailoredCV, job_title: &str, lang: Lang) -> Strin
 mod tests {
     use super::*;
     use crate::models::*;
+
+    // ── Skill level + derived years display ─────────────────────────────────
+    // Regression coverage for the bug where `Skill.level` was captured in
+    // the editor but never actually rendered anywhere in the output CV —
+    // see render_skills's call sites for the fix.
+
+    #[test]
+    fn render_skills_includes_level_and_derived_years() {
+        let skills = vec![Skill {
+            id: "s1".to_string(),
+            name: "Ansible".to_string(),
+            category: SkillCategory::AutomationDevOps,
+            level: SkillLevel::Expert,
+        }];
+        let experiences = vec![Experience {
+            start_date: "Jan 2020".to_string(),
+            end_date: "Dec 2021".to_string(),
+            skill_ids: vec!["s1".to_string()],
+            ..Default::default()
+        }];
+        let html = render_skills(&skills, &experiences, Lang::En);
+        assert!(html.contains("Ansible"));
+        assert!(
+            html.contains("Expert"),
+            "level should be shown, got: {html}"
+        );
+        assert!(
+            html.contains("2 yrs"),
+            "derived years should be shown, got: {html}"
+        );
+    }
+
+    #[test]
+    fn render_skills_omits_years_when_undeterminable() {
+        // A skill with no experience/project tagging it at all (e.g. one
+        // only ever used in a personal portfolio project) has no dates to
+        // derive years from — must show level without a misleading "0 yrs".
+        let skills = vec![Skill {
+            id: "s1".to_string(),
+            name: "Rust".to_string(),
+            category: SkillCategory::Programming,
+            level: SkillLevel::Intermediate,
+        }];
+        let html = render_skills(&skills, &[], Lang::En);
+        assert!(html.contains("Rust"));
+        assert!(html.contains("Intermediate"));
+        assert!(!html.contains("0 yrs"));
+        assert!(!html.contains("yrs") && !html.contains("yr"));
+    }
 
     // ── Ligature handling ────────────────────────────────────────────────────
     // Regression coverage for the idempotence bug where a precomposed

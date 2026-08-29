@@ -6,5 +6,6 @@ pub mod matcher;
 pub mod pdf_import;
 pub mod renderer;
 pub mod score;
+pub mod skill_duration;
 pub mod storage;
 pub mod worker;
