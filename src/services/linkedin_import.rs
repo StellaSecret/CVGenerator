@@ -689,6 +689,18 @@ mod tests {
     }
 
     #[test]
+    fn is_linkedin_export_requires_contact_first_and_top_skills() {
+        // First line is Contact but no Top Skills line anywhere → NOT an
+        // export (the second condition must still be required).
+        assert!(!is_linkedin_export("Contact\njane@example.com"));
+        // Has a Top Skills line but doesn't start with Contact → NOT one.
+        assert!(!is_linkedin_export(
+            "Experience\nAcme\nTop Skills\nKubernetes"
+        ));
+        assert!(!is_linkedin_export("Summary\nBio"));
+    }
+
+    #[test]
     fn parses_personal_info() {
         let cv = parse_linkedin_cv(&sample_linkedin_text());
         assert_eq!(cv.personal.name, "Jane Smith");
@@ -765,6 +777,39 @@ mod tests {
         assert_eq!(cv.education[0].end_year, "2018");
     }
 
+    /// Regression test: a line that carries no alphanumeric characters at
+    /// all (a dropped-context-label shell, e.g. just ":" or "& :") must be
+    /// dropped from a role body rather than folded into a bullet — it is
+    /// punctuation-only noise, not narrative.
+    #[test]
+    fn parse_linkedin_role_body_drops_artifact_only_line() {
+        let (bullets, _sub) = parse_linkedin_role_body(&[
+            "– Real bullet".to_string(),
+            ":".to_string(),
+            "– Another bullet".to_string(),
+        ]);
+        let texts: Vec<&str> = bullets.iter().map(|b| b.en.as_str()).collect();
+        assert_eq!(texts, vec!["Real bullet", "Another bullet"]);
+    }
+
+    /// Regression test: a sub-project adopts its date range once, and a
+    /// stray SECOND date line after that must be ignored — it would
+    /// otherwise (incorrectly) overwrite the project's already-captured
+    /// dates. (An equivalent `||`-flip of the guard re-assigns the dates and
+    /// must be caught.)
+    #[test]
+    fn parse_linkedin_role_body_does_not_take_date_after_bullet() {
+        let (_default, sub_projects) = parse_linkedin_role_body(&[
+            "Project 1: Q1 Stability".to_string(),
+            "February 2025 - January 2026".to_string(),
+            "March 2026 - April 2026".to_string(),
+        ]);
+        assert_eq!(sub_projects.len(), 1);
+        let proj = &sub_projects[0];
+        assert_eq!(proj.start_date, "February 2025");
+        assert_eq!(proj.end_date, "January 2026");
+    }
+
     #[test]
     fn strips_page_footer_mid_bullet() {
         let lines: Vec<String> = [
@@ -786,6 +831,28 @@ mod tests {
                 "gets split by a page footer.".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn strip_page_footers_preserves_partial_footer_patterns() {
+        // Only the exact "Page <num> of <num>" quad-line pattern is a
+        // footer. Anything a single line short, with a non-numeric field,
+        // or in the wrong order must pass through untouched — a weakened
+        // matcher would silently eat real resume content.
+        for lines in [
+            vec!["bullet text", "Page"],
+            vec!["Page", "3", "of"],
+            vec!["of", "14"],
+            vec!["Page", "three", "of", "14"],
+            vec!["14", "of", "Page", "3"],
+        ] {
+            let input: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                strip_page_footers(input.clone()),
+                input,
+                "partial footer pattern must be preserved untouched: {lines:?}"
+            );
+        }
     }
 
     #[test]

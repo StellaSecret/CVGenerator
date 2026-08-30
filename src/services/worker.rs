@@ -368,4 +368,53 @@ mod tests {
             "worker must still own its engine after tailor_with_embeddings"
         );
     }
+
+    #[test]
+    fn fetch_model_bytes_cached_unavailable_on_native() {
+        let res = block_on(fetch_model_bytes_cached());
+        assert!(
+            res.is_err(),
+            "native stub must report model fetching as web-only, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn worker_starts_without_engine() {
+        let mut worker = EmbeddingWorker::new();
+        assert!(!worker.is_ready());
+        assert!(worker.engine().is_none());
+        assert!(worker.engine_mut().is_none());
+    }
+
+    #[test]
+    fn worker_exposes_engine_after_injection() {
+        let mut worker = EmbeddingWorker::new();
+        worker.inject_engine_for_test(crate::services::embeddings::tiny_test_engine());
+        assert!(worker.is_ready());
+        assert!(worker.engine().is_some());
+        assert!(worker.engine_mut().is_some());
+    }
+
+    #[test]
+    fn embed_texts_forwards_engine_output() {
+        let mut engine = crate::services::embeddings::tiny_test_engine();
+        let expected = engine.embed(&["hello world".to_string()]).unwrap();
+        let mut worker = EmbeddingWorker::new();
+        worker.inject_engine_for_test(crate::services::embeddings::tiny_test_engine());
+        let got = worker.embed_texts(&["hello world".to_string()]).unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn embed_jd_forwards_engine_output() {
+        let mut engine = crate::services::embeddings::tiny_test_engine();
+        let expected = engine
+            .embed(&["job description".to_string()])
+            .unwrap()
+            .remove(0);
+        let mut worker = EmbeddingWorker::new();
+        worker.inject_engine_for_test(crate::services::embeddings::tiny_test_engine());
+        let got = worker.embed_jd("job description").unwrap();
+        assert_eq!(got, expected);
+    }
 }

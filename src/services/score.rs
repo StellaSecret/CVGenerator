@@ -395,6 +395,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn keyword_score_all_keywords_matched_is_one() {
+        // When every keyword appears in the text, matched_weight == total_weight,
+        // so the ratio must be exactly 1.0. This kills mutations to the *,
+        // /, + operators in the total_weight / matched_weight formulas.
+        let mut scorer = Scorer::new(ScoreMode::Keyword);
+        scorer.idf = make_idf();
+        let keywords = make_keywords();
+        let score = scorer.score_text("rust wasm linux", &keywords, None);
+        assert!((score - 1.0).abs() < 1e-5, "expected 1.0, got {score}");
+    }
+
+    #[test]
+    fn score_experience_keyword_uses_skill_names() {
+        // Verifies that skill_ids on a project cause the corresponding skill
+        // names to be appended to the search text. Kills mutations to the
+        // score_experience body (→ 1.0), score_experience_keyword body
+        // (→ 0.0/1.0/-1.0), and the ==→!= mutation in the skill_ids filter.
+        let mut scorer = Scorer::new(ScoreMode::Keyword);
+        scorer.idf = make_idf();
+        let keywords = make_keywords();
+        let skills = vec![
+            Skill {
+                id: "s1".into(),
+                name: "linux".into(),
+                ..Default::default()
+            },
+            Skill {
+                id: "s2".into(),
+                name: "cobol".into(),
+                ..Default::default()
+            },
+        ];
+        let exp = Experience {
+            role: crate::models::cv::LocalizedText::same(""),
+            company: String::new(),
+            projects: vec![ExperienceProject {
+                name: crate::models::cv::LocalizedText::same(""),
+                bullets: vec![],
+                skill_ids: vec!["s1".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let score = scorer.score_experience(&exp, &keywords, None, &skills);
+        // Only "linux" from skill name matches — score = 3*idf(linux)/total
+        let idf_linux = ((4.0_f32) / 2.0).ln() + 1.0;
+        let idf_rust = ((4.0_f32) / 3.0).ln() + 1.0;
+        let idf_wasm = idf_rust;
+        let total = 2.0 * idf_rust + 1.0 * idf_wasm + 3.0 * idf_linux;
+        let expected = 3.0 * idf_linux / total;
+        assert!(
+            (score - expected).abs() < 1e-5,
+            "expected ~{expected}, got {score}"
+        );
+        assert!(
+            score > 0.0 && score < 1.0,
+            "score must not be 0/1/-1, got {score}"
+        );
+    }
+
+    #[test]
+    fn score_skill_keyword_exact_value() {
+        let mut scorer = Scorer::new(ScoreMode::Keyword);
+        scorer.idf = make_idf();
+        let keywords = make_keywords();
+        let skill = Skill {
+            id: "s1".into(),
+            name: "linux".into(),
+            ..Default::default()
+        };
+        let score = scorer.score_skill(&skill, &keywords, None);
+        let idf_linux = ((4.0_f32) / 2.0).ln() + 1.0;
+        let idf_rust = ((4.0_f32) / 3.0).ln() + 1.0;
+        let total = 2.0 * idf_rust + 1.0 * idf_rust + 3.0 * idf_linux;
+        let expected = 3.0 * idf_linux / total;
+        assert!(
+            (score - expected).abs() < 1e-5,
+            "expected ~{expected}, got {score}"
+        );
+    }
+
+    #[test]
+    fn score_project_keyword_exact_value() {
+        let mut scorer = Scorer::new(ScoreMode::Keyword);
+        scorer.idf = make_idf();
+        let keywords = make_keywords();
+        let proj = Project {
+            name: "linux".into(),
+            ..Default::default()
+        };
+        let score = scorer.score_project(&proj, &keywords, None);
+        let idf_linux = ((4.0_f32) / 2.0).ln() + 1.0;
+        let idf_rust = ((4.0_f32) / 3.0).ln() + 1.0;
+        let total = 2.0 * idf_rust + 1.0 * idf_rust + 3.0 * idf_linux;
+        let expected = 3.0 * idf_linux / total;
+        assert!(
+            (score - expected).abs() < 1e-5,
+            "expected ~{expected}, got {score}"
+        );
+    }
+
     // Regression test for a real bug: `score_text`'s Embedding/Hybrid
     // branches used to build every `EmbedItem` with `id: String::new()`.
     // Since `embed_with_cache` only re-embeds ids it hasn't seen, every

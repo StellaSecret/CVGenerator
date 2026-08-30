@@ -1,0 +1,6 @@
+# cargo-mutants configuration (used by .github/workflows/mutants.yml)
+#
+# Pin the test command to the pure-Rust library only (src/lib.rs has zero
+# Dioxus/WASM deps by design), so each mutated build never compiles the bin
+# target's Dioxus tree.
+additional_cargo_test_args = ["--lib"]

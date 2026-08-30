@@ -265,6 +265,29 @@ mod tests {
         }
     }
 
+    /// Minimal, dependency-free executor for the native `drive_*` stubs in
+    /// this module during tests (they return an error immediately on first
+    /// poll — no real async I/O — so a no-op waker is sufficient). Mirrors
+    /// the same helper in worker.rs.
+    fn block_on<F: std::future::Future>(mut fut: F) -> F::Output {
+        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        fn noop(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+        let raw_waker = RawWaker::new(std::ptr::null(), &VTABLE);
+        let waker = unsafe { Waker::from_raw(raw_waker) };
+        let mut cx = Context::from_waker(&waker);
+        // Safety: `fut` is a local, not moved after this point.
+        let mut fut = unsafe { std::pin::Pin::new_unchecked(&mut fut) };
+        loop {
+            if let Poll::Ready(out) = fut.as_mut().poll(&mut cx) {
+                return out;
+            }
+        }
+    }
+
     #[test]
     fn backup_roundtrip() {
         let cv = sample_cv();
@@ -312,5 +335,32 @@ mod tests {
         let json = build_backup(&cv);
         let data: BackupData = serde_json::from_str(&json).unwrap();
         assert!(data.exported_at >= 0);
+    }
+
+    #[test]
+    fn drive_backup_unavailable_on_native() {
+        let res = block_on(drive_backup(&sample_cv(), "fake-token"));
+        assert!(
+            res.is_err(),
+            "native stub must report Drive backup as web-only, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn drive_restore_unavailable_on_native() {
+        let res = block_on(drive_restore("fake-token"));
+        assert!(
+            res.is_err(),
+            "native stub must report Drive restore as web-only, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn now_ms_is_ms_since_epoch() {
+        let now = now_ms();
+        assert!(
+            now > 60_000,
+            "now_ms must return real epoch milliseconds, got {now}"
+        );
     }
 }

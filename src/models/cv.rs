@@ -579,6 +579,44 @@ mod tests {
     }
 
     #[test]
+    fn backfill_project_ids_backfills_empty_but_keeps_existing() {
+        let cv = LifetimeCV {
+            personal: PersonalInfo {
+                summary: LocalizedText::same("An engineer"),
+                ..Default::default()
+            },
+            experiences: vec![Experience {
+                role: LocalizedText::same("Engineer"),
+                projects: vec![
+                    ExperienceProject {
+                        id: String::new(), // legacy CV: id missing
+                        name: LocalizedText::same("App"),
+                        ..Default::default()
+                    },
+                    ExperienceProject {
+                        id: "existing-id".to_string(),
+                        name: LocalizedText::same("Site"),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut cv = cv;
+        cv.backfill_project_ids();
+        let id0 = &cv.experiences[0].projects[0].id;
+        assert!(!id0.is_empty(), "empty id should get a fresh backfill");
+        assert_eq!(
+            cv.experiences[0].projects[1].id, "existing-id",
+            "an existing id must not be replaced"
+        );
+        let before = cv.experiences[0].projects[0].id.clone();
+        cv.backfill_project_ids();
+        assert_eq!(&cv.experiences[0].projects[0].id, &before);
+    }
+
+    #[test]
     fn seed_missing_translations_fills_cv_without_overwriting() {
         let mut cv = LifetimeCV {
             personal: PersonalInfo {
@@ -1010,6 +1048,116 @@ mod tests {
         let proj: ExperienceProject =
             serde_json::from_str(json).expect("missing context field should default");
         assert!(proj.context.is_empty());
+    }
+
+    #[test]
+    fn is_empty_requires_both_languages_empty() {
+        // is_empty is true only when BOTH en and fr are empty. A text with
+        // content in one language but not the other is NOT empty (an
+        // `||` mutation here would wrongly report it as empty).
+        assert!(LocalizedText {
+            en: String::new(),
+            fr: String::new()
+        }
+        .is_empty());
+        assert!(!LocalizedText {
+            en: "x".into(),
+            fr: String::new()
+        }
+        .is_empty());
+        assert!(!LocalizedText {
+            en: String::new(),
+            fr: "x".into()
+        }
+        .is_empty());
+        assert!(!LocalizedText {
+            en: "x".into(),
+            fr: "y".into()
+        }
+        .is_empty());
+    }
+
+    #[test]
+    fn all_text_resolves_skill_ids_to_names_by_exact_id() {
+        // all_text must append a skill's name only for the skill whose id
+        // EXACTLY matches the project's skill_ids entry. If the id-comparison
+        // were inverted (==→!=), a project referencing "s2" would pull in the
+        // wrong skill's name ("Rust" here) and never "OnlyHere".
+        let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s1".to_string(),
+                    name: "Rust".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s2".to_string(),
+                    name: "OnlyHere".to_string(),
+                    ..Default::default()
+                },
+            ],
+            experiences: vec![Experience {
+                projects: vec![ExperienceProject {
+                    skill_ids: vec!["s2".to_string()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let text = cv.all_text();
+        assert!(text.contains("OnlyHere"), "got: {text:?}");
+        // "Rust" is the name of the NON-referenced skill. It legitimately
+        // appears once (in the skills listing). If the id-comparison were
+        // inverted (==→!=), the `find` would wrongly resolve "s2" to the
+        // first skill whose id != "s2" (i.e. "Rust"), pulling "Rust" in a
+        // second time. Counting occurrences therefore kills that mutant.
+        assert_eq!(text.matches("Rust").count(), 1, "got: {text:?}");
+    }
+
+    #[test]
+    fn apply_import_fills_empty_personal_fields_and_keeps_filled_ones() {
+        let mut cv = LifetimeCV {
+            personal: PersonalInfo {
+                name: "Keep Me".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let imported = LifetimeCV {
+            personal: PersonalInfo {
+                name: "Imported Name".to_string(),
+                email: "x@y.z".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        cv.apply_import(imported.clone());
+        assert_eq!(cv.personal.name, "Keep Me");
+        assert_eq!(cv.personal.email, "x@y.z");
+    }
+
+    #[test]
+    fn apply_import_imports_lists_only_when_currently_empty() {
+        let mut cv = LifetimeCV {
+            skills: vec![Skill {
+                id: "s1".to_string(),
+                name: "Existing".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let imported = LifetimeCV {
+            skills: vec![Skill {
+                id: "s2".to_string(),
+                name: "Imported".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        cv.apply_import(imported);
+        assert_eq!(cv.skills.len(), 1, "filled list must not be overwritten");
+        assert_eq!(cv.skills[0].name, "Existing");
     }
 }
 

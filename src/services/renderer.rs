@@ -1274,6 +1274,224 @@ mod tests {
         assert!(!html.contains("yrs") && !html.contains("yr"));
     }
 
+    #[test]
+    fn render_skills_legend_and_level_css_classes() {
+        let levels = [
+            (SkillLevel::Beginner, "lvl-beginner", "Beginner"),
+            (SkillLevel::Intermediate, "lvl-intermediate", "Intermediate"),
+            (SkillLevel::Advanced, "lvl-advanced", "Advanced"),
+            (SkillLevel::Expert, "lvl-expert", "Expert"),
+            (SkillLevel::Mastery, "lvl-mastery", "Mastery"),
+        ];
+        let skills: Vec<Skill> = levels
+            .iter()
+            .enumerate()
+            .map(|(i, (level, _, _))| Skill {
+                id: format!("s{i}"),
+                name: format!("Skill {i}"),
+                category: SkillCategory::Programming,
+                level: level.clone(),
+            })
+            .collect();
+        let html = render_skills(&skills, &[], Lang::En);
+        assert!(
+            html.contains("skills-legend"),
+            "legend must be rendered whenever there are skills, got: {html}"
+        );
+        assert!(html.contains("legend-item"));
+        for (_, class, label) in &levels {
+            assert!(
+                html.contains(&format!("skill-dot {class}")),
+                "missing css class {class}, got: {html}"
+            );
+            assert!(
+                html.contains(label),
+                "missing legend label {label}, got: {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_rich_text_splits_paragraphs_and_preserves_line_breaks() {
+        assert_eq!(
+            render_rich_text("Line one\nLine two\n\nNext para"),
+            "<p>Line one<br>Line two</p>\n<p>Next para</p>"
+        );
+    }
+
+    #[test]
+    fn render_rich_text_bolds_and_escapes() {
+        assert_eq!(
+            render_rich_text("**Bold** & <tag>"),
+            "<p><strong>Bold</strong> &amp; &lt;tag&gt;</p>"
+        );
+    }
+
+    #[test]
+    fn render_header_hides_empty_contact_and_summary() {
+        let p = PersonalInfo {
+            name: "Ada".to_string(),
+            title: LocalizedText::same("Engineer"),
+            ..Default::default()
+        };
+        let html = render_header(&p, Lang::En);
+        assert!(html.contains("Ada"));
+        assert!(
+            !html.contains("contact-item"),
+            "empty contact fields must not render, got: {html}"
+        );
+        assert!(
+            !html.contains("class=\"summary\""),
+            "empty summary must not render, got: {html}"
+        );
+    }
+
+    #[test]
+    fn render_education_only_lists_non_empty_achievements() {
+        let mut cv = minimal_cv();
+        cv.education.push(Education {
+            id: "e1".to_string(),
+            institution: "MIT".to_string(),
+            degree: LocalizedText::same("MSc"),
+            field: LocalizedText::same("CS"),
+            start_year: "2017".to_string(),
+            end_year: "2019".to_string(),
+            achievements: vec![LocalizedText::same("Graduated **cum laude**")],
+        });
+        cv.education.push(Education {
+            id: "e2".to_string(),
+            institution: "UCLA".to_string(),
+            degree: LocalizedText::same("BA"),
+            field: LocalizedText::same("History"),
+            start_year: String::new(),
+            end_year: String::new(),
+            achievements: vec![],
+        });
+        let html = render_lifetime_cv(&cv, Lang::En);
+        assert!(
+            html.contains(r#"<ul class="edu-achievements">"#),
+            "education with achievements must render the list, got: {html}"
+        );
+        assert!(html.contains("Graduated <strong>cum laude</strong>"));
+        assert_eq!(
+            html.matches(r#"<ul class="edu-achievements">"#).count(),
+            1,
+            "an education with empty achievements must not render an (empty) list"
+        );
+    }
+
+    #[test]
+    fn render_languages_shows_items_and_localized_level() {
+        let mut cv = minimal_cv();
+        cv.languages.push(Language {
+            id: "l1".to_string(),
+            name: "English".to_string(),
+            level: LanguageLevel::Professional,
+        });
+        let en = render_lifetime_cv(&cv, Lang::En);
+        assert!(en.contains("lang-item"));
+        assert!(en.contains("English"));
+        assert!(en.contains("Professional"));
+        let fr = render_lifetime_cv(&cv, Lang::Fr);
+        assert!(
+            fr.contains("Professionnel"),
+            "french level label expected, got: {fr}"
+        );
+        assert!(!en.contains("Professionnel"));
+    }
+
+    #[test]
+    fn render_certifications_shows_issuer_and_date_suffix() {
+        let mut cv = minimal_cv();
+        cv.certifications.push(Certification {
+            id: "c1".to_string(),
+            name: "AWS Certified".to_string(),
+            issuer: "Amazon".to_string(),
+            date: "2024".to_string(),
+            url: String::new(),
+        });
+        let html = render_lifetime_cv(&cv, Lang::En);
+        assert!(html.contains("AWS Certified"));
+        assert!(
+            html.contains("Amazon, 2024"),
+            "issuer/date suffix expected, got: {html}"
+        );
+    }
+
+    #[test]
+    fn render_certifications_omits_dangling_separator_and_links_url() {
+        let mut cv = minimal_cv();
+        cv.certifications.push(Certification {
+            id: "c1".to_string(),
+            name: "K8s CKA".to_string(),
+            issuer: String::new(),
+            date: String::new(),
+            url: "https://example.com/cred".to_string(),
+        });
+        let html = render_lifetime_cv(&cv, Lang::En);
+        assert!(html.contains("K8s CKA"));
+        assert!(html.contains(r#"class="proj-url""#));
+        assert!(!html.contains("· ,"), "no dangling separator expected");
+    }
+
+    #[test]
+    fn render_experience_project_shows_dates_span_with_single_date() {
+        let mut cv = minimal_cv();
+        cv.experiences.push(Experience {
+            id: "e1".to_string(),
+            company: "Acme".to_string(),
+            role: LocalizedText::same("Eng"),
+            location: String::new(),
+            start_date: "Jan 2020".to_string(),
+            end_date: "Dec 2020".to_string(),
+            projects: vec![ExperienceProject {
+                name: LocalizedText::same("Project X"),
+                context: vec![],
+                bullets: vec![],
+                skill_ids: vec![],
+                start_date: "Jan 2021".to_string(),
+                end_date: String::new(),
+            }],
+            skill_ids: vec![],
+        });
+        let html = render_lifetime_cv(&cv, Lang::En);
+        assert!(
+            html.contains(r#"<span class="exp-project-dates">Jan 2021 – </span>"#),
+            "a project with only a start date must still render its dates span, got: {html}"
+        );
+    }
+
+    #[test]
+    fn render_experience_project_header_when_name_empty_but_dates_present() {
+        let mut cv = minimal_cv();
+        cv.experiences.push(Experience {
+            id: "e1".to_string(),
+            company: "Acme".to_string(),
+            role: LocalizedText::same("Eng"),
+            location: String::new(),
+            start_date: "Jan 2020".to_string(),
+            end_date: "Dec 2020".to_string(),
+            projects: vec![ExperienceProject {
+                name: LocalizedText::same(""),
+                context: vec![],
+                bullets: vec![],
+                skill_ids: vec![],
+                start_date: "Jan 2021".to_string(),
+                end_date: "Mar 2021".to_string(),
+            }],
+            skill_ids: vec![],
+        });
+        let html = render_lifetime_cv(&cv, Lang::En);
+        assert!(
+            html.contains(r#"class="exp-project-header""#),
+            "an empty-name project with dates must still render its header block, got: {html}"
+        );
+        assert!(
+            html.contains(r#"<span class="exp-project-dates">Jan 2021 – Mar 2021</span>"#),
+            "dates must appear in the header, got: {html}"
+        );
+    }
+
     // ── Ligature handling ────────────────────────────────────────────────────
     // Regression coverage for the idempotence bug where a precomposed
     // ligature character (e.g. "ﬀ" U+FB00, decoded verbatim from a source
@@ -1721,6 +1939,36 @@ mod tests {
         assert_eq!(
             render_inline("**<script>**"),
             "<strong>&lt;script&gt;</strong>"
+        );
+    }
+
+    #[test]
+    fn apply_bold_single_star_not_treated_as_bold_opening() {
+        // A lone '*' not followed by a second '*' must be left as-is, not
+        // consumed as the opening of a **bold** span.
+        assert_eq!(apply_bold("a *b c"), "a *b c");
+    }
+
+    #[test]
+    fn apply_bold_lone_star_inside_bold_does_not_close_span() {
+        // A single '*' *inside* an open bold span must not count as its
+        // closing "**": closure requires the guard peek == '*'. If that
+        // guard were dropped (mutated to always-true), "a * b" would close
+        // at the lone star, producing "<strong>a</strong> b**" instead.
+        assert_eq!(apply_bold("**a * b**"), "<strong>a * b</strong>");
+    }
+
+    #[test]
+    fn current_year_month_native_returns_plausible_year() {
+        // The native branch is only compiled for `cargo test`/`clippy`, but
+        // its date arithmetic still has mutants (divisor, year base, etc.).
+        // A rough plausibility window catches them all: a broken divisor or
+        // operator would push the year far outside [2020, 2100].
+        let (year, month) = current_year_month();
+        assert!((2020..=2100).contains(&year), "year {year} implausible");
+        assert_eq!(
+            month, 6,
+            "native branch reports the fixed mid-year placeholder"
         );
     }
 

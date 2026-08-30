@@ -1837,6 +1837,187 @@ mod tests {
         assert_eq!(score_text("RUST Engineer", &kws, &no_idf()), 1.0);
     }
 
+    // ── Idf exact values ──────────────────────────────────────────────────────
+
+    fn three_doc_idf() -> Idf {
+        Idf::build(&[
+            vec!["rust".into(), "wasm".into()],
+            vec!["python".into(), "wasm".into()],
+            vec!["rust".into(), "linux".into()],
+        ])
+    }
+
+    #[test]
+    fn idf_correct_smoothed_weights() {
+        // n = 3 docs. idf = ln((n+1)/(df+1)) + 1.
+        // rust: df=2 → ln(4/3)+1; linux: df=1 → ln(4/2)+1 = ln(2)+1.
+        let idf = three_doc_idf();
+        let rust_expected = (4.0_f32 / 3.0).ln() + 1.0;
+        let linux_expected = (4.0_f32 / 2.0).ln() + 1.0;
+        assert!(
+            (idf.get("rust") - rust_expected).abs() < 1e-5,
+            "rust idf wrong"
+        );
+        assert!(
+            (idf.get("linux") - linux_expected).abs() < 1e-5,
+            "linux idf wrong"
+        );
+        // get() must NOT always return the default 1.0 for a known term.
+        assert!(
+            (idf.get("rust") - 1.0).abs() > 1e-5,
+            "known term got default weight"
+        );
+    }
+
+    #[test]
+    fn idf_adds_doc_frequencies_across_unique_terms() {
+        // Exercising different df values makes the `+=` (df increment) and the
+        // idf formula operator mutations observable: with only single-doc terms
+        // every idf would be identical and those mutants couldn't be told apart.
+        let idf = three_doc_idf();
+        // "rust" appears in 2 docs (df=2), "linux" in 1 (df=1) — different idf.
+        assert!(
+            (idf.get("rust") - idf.get("linux")).abs() > 1e-4,
+            "different df must produce different idf: {:?} vs {:?}",
+            idf.get("rust"),
+            idf.get("linux")
+        );
+    }
+
+    #[test]
+    fn score_text_partial_with_weighted_idf() {
+        // With real (non-unit) idf, the freq*idf products and the matched/total
+        // ratio are exact fractions — this discriminates the *→/ operator
+        // mutations in both total and matched weights (they collapse to the
+        // same value only when idf == 1.0, which no_idf() would hide).
+        let idf = three_doc_idf();
+        let keywords = vec![
+            ("rust".to_string(), 2),
+            ("wasm".to_string(), 1),
+            ("linux".to_string(), 3),
+        ];
+        let score = score_text("rust wasm", &keywords, &idf);
+        let a = (4.0_f32 / 3.0).ln() + 1.0; // rust & wasm idf
+        let b = (4.0_f32 / 2.0).ln() + 1.0; // linux idf
+        let matched = 2.0 * a + 1.0 * a;
+        let total = 2.0 * a + 1.0 * a + 3.0 * b;
+        let expected = matched / total;
+        assert!(
+            (score - expected).abs() < 1e-5,
+            "expected ~{expected}, got {score}"
+        );
+    }
+
+    // ── fuzzy_eq edge cases ───────────────────────────────────────────────────
+
+    #[test]
+    fn fuzzy_eq_multiword_never_fuzzy_matches() {
+        // Any whitespace in either operand means "multi-word phrase" → must
+        // NEVER fuzzy match (fuzzy only ever applies to single words). This
+        // catches the ||→&& mutation which would wrongly allow fuzziness.
+        assert!(!fuzzy_eq("hardning", "hardening "));
+        assert!(!fuzzy_eq("hardening", "hardning "));
+        assert!(!fuzzy_eq("two words", "hardening"));
+    }
+
+    #[test]
+    fn fuzzy_eq_long_word_tolerates_distance_two() {
+        // max_len >= 8 grants tolerance 2, so a 2-edit typo is allowed. This
+        // pins the max_len >= 8 boundary (a >=→< mutation drops this case).
+        assert!(fuzzy_eq("aaaaaaaa", "aaaaaa"));
+    }
+
+    #[test]
+    fn fuzzy_eq_five_char_word_tolerates_single_edit() {
+        // max_len >= 5 (but < 8) grants tolerance 1. A 1-edit typo is allowed
+        // for a 5-char word (>=→< here would wrongly disallow it).
+        assert!(fuzzy_eq("aaaaa", "aaaa"));
+        assert!(!fuzzy_eq("abc", "abd")); // < 5 chars → no fuzziness, exact only
+    }
+
+    // ── score_experience / score_skill / score_project / display ─────────────
+
+    #[test]
+    fn score_experience_resolves_skill_into_text_for_scoring() {
+        // The experience's text is built from role/company/projects AND the
+        // resolved skill names. Here the ONLY match comes from the skill name
+        // itself, so scoring depends on the ==→!= id filter and the function
+        // must return a strict fraction (never a flat 0/1/-1).
+        let skills = vec![Skill {
+            id: "s1".to_string(),
+            name: "rust".to_string(),
+            ..Default::default()
+        }];
+        let exp = Experience {
+            projects: vec![ExperienceProject {
+                skill_ids: vec!["s1".to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let keywords = vec![("rust".to_string(), 1), ("zz".to_string(), 1)];
+        let score = score_experience(&exp, &keywords, &no_idf(), &skills);
+        let expected = 0.5; // only "rust" matches out of two keywords
+        assert!(
+            (score - expected).abs() < 1e-5,
+            "expected {expected}, got {score} — must be a strict fraction"
+        );
+    }
+
+    #[test]
+    fn score_skill_scored_by_name() {
+        let skill = Skill {
+            name: "rust".to_string(),
+            ..Default::default()
+        };
+        let keywords = vec![("rust".to_string(), 1), ("zz".to_string(), 1)];
+        let score = score_skill(&skill, &keywords, &no_idf());
+        assert!((score - 0.5).abs() < 1e-5, "expected 0.5, got {score}");
+    }
+
+    #[test]
+    fn score_project_builds_text_from_project_fields() {
+        let proj = Project {
+            name: "rust".to_string(),
+            ..Default::default()
+        };
+        let keywords = vec![("rust".to_string(), 1), ("zz".to_string(), 1)];
+        let score = score_project(&proj, &keywords, &no_idf());
+        // project_text includes the name (and empty desc/tools/bullets), so
+        // "rust" matches exactly one of the two keywords.
+        assert!((score - 0.5).abs() < 1e-5, "expected 0.5, got {score}");
+    }
+
+    #[test]
+    fn display_prefers_french_when_present() {
+        use crate::models::LocalizedText;
+        let role = LocalizedText {
+            en: "Engineer".into(),
+            fr: "Ingénieur".into(),
+        };
+        assert_eq!(display_role(&role), "Ingénieur");
+        let name = LocalizedText {
+            en: "Project".into(),
+            fr: "Projet".into(),
+        };
+        assert_eq!(display_name(&name), "Projet");
+    }
+
+    #[test]
+    fn display_falls_back_to_english_when_french_absent() {
+        use crate::models::LocalizedText;
+        let role = LocalizedText {
+            en: "Engineer".into(),
+            fr: String::new(),
+        };
+        assert_eq!(display_role(&role), "Engineer");
+        let name = LocalizedText {
+            en: "Project".into(),
+            fr: String::new(),
+        };
+        assert_eq!(display_name(&name), "Project");
+    }
+
     // ── stemming / synonyms / fuzzy matching ────────────────────────────────
 
     #[test]
@@ -1860,6 +2041,38 @@ mod tests {
         assert!(fuzzy_eq("hardening", "hardning")); // dropped letter, len>=8 → tolerance 2
         assert!(!fuzzy_eq("cis", "sql")); // short words, no fuzziness allowed
         assert!(!fuzzy_eq("hardening", "monitoring")); // unrelated words, too far apart
+    }
+
+    #[test]
+    fn fuzzy_eq_eight_char_boundary_tolerance_is_exactly_two() {
+        // Pins the len>=8 → tolerance 2 boundary. An 8-char word at exactly
+        // distance 2 must pass; at distance 3 must fail. If the `>=8`
+        // comparison were off-by-one (say it only granted tolerance up to 7
+        // chars, or the tolerance were 1), these flip.
+        assert!(fuzzy_eq("abcdefgh", "abcdefXY")); // distance 2 → allowed
+        assert!(!fuzzy_eq("abcdefgh", "abcdeXYZ")); // distance 3 → too far
+    }
+
+    #[test]
+    fn score_text_counts_a_keyword_matched_fuzzily() {
+        // Pins that score_text matches terms through terms_contain, i.e. the
+        // fuzzy_eq path, not just exact token equality. Here the keyword
+        // "hardning" (typo of "hardening") never appears in the text, but
+        // "hardening" is a len>=8 word within the fuzzy tolerance, so the
+        // keyword should still be credited — returning the same score as an
+        // exact match of the typo would.
+        let exact = score_text(
+            "hardening measures",
+            &[("hardning".to_string(), 1)],
+            &no_idf(),
+        );
+        let unrelated = score_text(
+            "hardening measures",
+            &[("zzzzzzz".to_string(), 1)], // 7 chars, no typo relationship
+            &no_idf(),
+        );
+        assert_eq!(exact, 1.0, "fuzzy-matching keyword should count as matched");
+        assert_eq!(unrelated, 0.0, "unrelated keyword should not fuzzy-match");
     }
 
     #[test]
@@ -2032,5 +2245,478 @@ mod tests {
             "top_keywords should be capped at 30, got {}",
             result.top_keywords.len()
         );
+    }
+
+    // ── tailor_cv_with_scorer ─────────────────────────────────────────────────
+
+    fn scorer_keyword() -> crate::services::score::Scorer {
+        crate::services::score::Scorer::new(crate::services::score::ScoreMode::Keyword)
+    }
+
+    // One experience that matches the JD's only keyword, one that doesn't,
+    // plus two skills (one relevant, one not). Used to exercise the
+    // match_score weighted blend and the experience/skill selection.
+    fn scorer_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-rust".to_string(),
+                    name: "rust".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-zz".to_string(),
+                    name: "zz".to_string(),
+                    ..Default::default()
+                },
+            ],
+            experiences: vec![
+                Experience {
+                    id: "e-strong".to_string(),
+                    company: "Alpha".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("rust systems")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-weak".to_string(),
+                    company: "Beta".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("accounting")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_scorer_match_score_mixes_relevant_experience_and_skill() {
+        let cv = scorer_fixture();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        // exp_scores = [1.0, 0.0] → mean 0.5 (experience component)
+        // skill_scores = [1.0, 0.0] → only >0 included → mean_skill 1.0
+        // weighted: (0.5*0.85 + 1.0*0.15) / 1.0 = 0.575
+        let expected = 0.5 * 0.85 + 1.0 * 0.15;
+        assert!(
+            (result.tailored.match_score - expected).abs() < 1e-5,
+            "expected {expected}, got {}",
+            result.tailored.match_score
+        );
+    }
+
+    #[test]
+    fn tailor_scorer_match_score_excludes_zero_scored_skills_from_skill_mean() {
+        // The mean-skill component must average only the skills that scored
+        // > 0. With a zero-scoring sibling skill present (s-zz), including it
+        // in the mean would halve that component (1.0 → 0.5).
+        let cv = scorer_fixture();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        // If the zero skill leaked into the skill mean: 0.5*0.85 + 0.5*0.15 = 0.5
+        assert!(
+            (result.tailored.match_score - 0.575).abs() < 1e-5,
+            "got {}",
+            result.tailored.match_score
+        );
+    }
+
+    #[test]
+    fn tailor_scorer_empty_cv_has_zero_match_score() {
+        // No experiences and no skills → nothing to weight → must be a clean
+        // 0.0 (never NaN from a 0/0 division, never a phantom nonzero).
+        let cv = LifetimeCV::default();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        assert_eq!(result.tailored.match_score, 0.0);
+        assert!(result.tailored.experiences.is_empty());
+        assert!(result.tailored.skills.is_empty());
+    }
+
+    #[test]
+    fn tailor_scorer_selects_relevant_experiences_and_marks_debug_scores() {
+        let cv = scorer_fixture();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        // Both experiences are necessarily kept by the "at least 2" rule, but
+        // the debug scores must reflect the real relevance (strong=1.0 kept by
+        // cutoff; weak=0.0 kept only via the minimum-2 fallback).
+        let ids: Vec<&str> = result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        assert!(ids.contains(&"e-strong"));
+        assert!(
+            ids.contains(&"e-weak"),
+            "at least 2 experiences kept, got {ids:?}"
+        );
+        let strong = result
+            .debug_scores
+            .iter()
+            .find(|d| d.experience_id == "e-strong")
+            .expect("strong debug entry");
+        let weak = result
+            .debug_scores
+            .iter()
+            .find(|d| d.experience_id == "e-weak")
+            .expect("weak debug entry");
+        assert!(strong.selected);
+        assert!(
+            weak.selected,
+            "weak kept via minimum-2 fallback, not via cutoff"
+        );
+        assert!(strong.score > weak.score);
+    }
+
+    // ── project filtering (tailor_cv) ────────────────────────────────────────
+    //
+    // One experience with projects of mixed relevance (so the fixed-fraction
+    // cutoff actually trims), plus one experience whose projects all score 0
+    // (to exercise the all-zero corner where the `> 0.0` guard is the thing
+    // being tested). Both experiences are kept: the relevant one by the score
+    // cutoff, the zero one via the minimum-2 fallback.
+    fn project_filter_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            experiences: vec![
+                Experience {
+                    id: "exp-mixed".to_string(),
+                    company: "Alpha".to_string(),
+                    projects: vec![
+                        ExperienceProject {
+                            bullets: vec![LT::same("rust systems")],
+                            ..Default::default()
+                        },
+                        ExperienceProject {
+                            bullets: vec![LT::same("rust embedded code")],
+                            ..Default::default()
+                        },
+                        ExperienceProject {
+                            bullets: vec![LT::same("accounting reports")],
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "exp-zero".to_string(),
+                    company: "Beta".to_string(),
+                    projects: vec![
+                        ExperienceProject {
+                            bullets: vec![LT::same("accounting")],
+                            ..Default::default()
+                        },
+                        ExperienceProject {
+                            bullets: vec![LT::same("bookkeeping")],
+                            ..Default::default()
+                        },
+                        ExperienceProject {
+                            bullets: vec![LT::same("taxes")],
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_project_filtering_trims_neutral_and_collapses_all_zero() {
+        let cv = project_filter_fixture();
+        let result = tailor_cv(&cv, "rust");
+        let by_id = |id: &str| {
+            result
+                .tailored
+                .experiences
+                .iter()
+                .find(|e| e.id == id)
+                .unwrap_or_else(|| panic!("missing experience {id}"))
+        };
+        let mixed = by_id("exp-mixed");
+        assert_eq!(mixed.projects.len(), 2, "neutral project must be trimmed");
+        let mixed_text: Vec<String> = mixed
+            .projects
+            .iter()
+            .map(|p| {
+                p.bullets
+                    .iter()
+                    .map(|b| b.en.clone())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .collect();
+        assert!(
+            mixed_text.iter().all(|t| t.contains("rust")),
+            "only rust-relevant projects may survive, got {mixed_text:?}"
+        );
+        let zero = by_id("exp-zero");
+        assert_eq!(
+            zero.projects.len(),
+            1,
+            "all-zero-scoring projects must collapse to the single best (keep-best fallback)"
+        );
+    }
+
+    #[test]
+    fn tailor_scorer_project_filtering_trims_neutral_and_collapses_all_zero() {
+        let cv = project_filter_fixture();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        let by_id = |id: &str| {
+            result
+                .tailored
+                .experiences
+                .iter()
+                .find(|e| e.id == id)
+                .unwrap_or_else(|| panic!("missing experience {id}"))
+        };
+        let mixed = by_id("exp-mixed");
+        assert_eq!(mixed.projects.len(), 2, "neutral project must be trimmed");
+        let zero = by_id("exp-zero");
+        assert_eq!(
+            zero.projects.len(),
+            1,
+            "all-zero projects must collapse to one"
+        );
+    }
+
+    // ── experience-level boundary (tailor_cv / tailor_cv_with_scorer) ───────
+    //
+    // Three experiences of strictly decreasing relevance to the "rust" JD:
+    // a strong one, a mid one, and a zero one. With exactly two passing the
+    // cutoff, the `selected_ids.len() < 2` minimum-two fallback must NOT fire
+    // (flipping `< 2` to `<= 2` would wrongly add the zero-scoring third).
+    fn three_tier_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            skills: vec![Skill {
+                id: "s-rust".to_string(),
+                name: "rust".to_string(),
+                ..Default::default()
+            }],
+            experiences: vec![
+                Experience {
+                    id: "e-strong".to_string(),
+                    company: "Alpha".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![
+                            LT::same("rust systems concurrency performance"),
+                            LT::same("rust architecture"),
+                        ],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-mid".to_string(),
+                    company: "Beta".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("built rust tooling")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-zero".to_string(),
+                    company: "Gamma".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("accounting bookkeeping taxes")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn assert_exactly_two_without_fallback(result: &TailorResult) {
+        let ids: Vec<&str> = result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        assert_eq!(
+            ids.len(),
+            2,
+            "exactly the strong and mid experiences must be kept, got {ids:?}"
+        );
+        assert!(
+            ids.contains(&"e-strong") && ids.contains(&"e-mid"),
+            "strong and mid must both be kept, got {ids:?}"
+        );
+        assert!(
+            !ids.contains(&"e-zero"),
+            "zero-scoring experience must be excluded once 2 clear the cutoff, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn tailor_exactly_two_selected_does_not_trigger_min_two_fallback() {
+        let cv = three_tier_fixture();
+        let result = tailor_cv(&cv, "rust");
+        assert_exactly_two_without_fallback(&result);
+    }
+
+    #[test]
+    fn tailor_scorer_exactly_two_selected_does_not_trigger_min_two_fallback() {
+        let cv = three_tier_fixture();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        assert_exactly_two_without_fallback(&result);
+    }
+
+    // A skills-only CV drives `match_score` through the single-category branch
+    // where the weighting denominators are < 1.0, so a `sum / ratio` is
+    // distinguishable from a `sum * ratio` (they coincide only when the weight
+    // total is exactly 1.0). Two zero-scoring skills are also present to force
+    // the `> 0.0` skill guard to exclude them from the mean.
+    fn skills_only_fixture() -> LifetimeCV {
+        LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-rust".to_string(),
+                    name: "rust engineer".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-zz1".to_string(),
+                    name: "accounting".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-zz2".to_string(),
+                    name: "bookkeeping".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_scorer_skills_only_match_score_uses_fractional_weight_denominator() {
+        let cv = skills_only_fixture();
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        // Only the rust skill scores > 0, and it scores 1.0 (its single term
+        // is the only keyword term in the CV corpus). skill-only path:
+        // mean_skill = 1.0, weight_total = 0.15 (skill weight).
+        // match_score = 1.0 * 0.15 / 0.15 = 1.0.
+        // A `*`/`%` flip of the division (1.0*0.15 vs 1.0%0.15) would NOT
+        // equal 1.0, so asserting the exact 1.0 discriminates the division
+        // mutant (whose result would be clamped/blended differently).
+        assert_eq!(
+            result.tailored.match_score, 1.0,
+            "skills-only score must be 1.0, got {}",
+            result.tailored.match_score
+        );
+        // The zero-scoring skills stay present (appended after matched ones)
+        // but must NOT be selected as the leading/matched skill.
+        let names: Vec<&str> = result
+            .tailored
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names.first().copied(), Some("rust engineer"));
+    }
+
+    // Keyword mode applies NO mean floor to the experience cutoff, so a
+    // mid-scoring experience survives; the same CV under Hybrid mode (which
+    // applies the mean floor) trims it. This discriminates the
+    // `scorer.mode != Keyword` gating from an unconditional application.
+    fn cluster_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-rust".to_string(),
+                    name: "rust".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-zz".to_string(),
+                    name: "accounting".to_string(),
+                    ..Default::default()
+                },
+            ],
+            experiences: vec![
+                Experience {
+                    id: "e-top".to_string(),
+                    company: "Alpha".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same(
+                            "rust systems concurrency performance architecture",
+                        )],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-mid".to_string(),
+                    company: "Beta".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("rust services")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-low".to_string(),
+                    company: "Gamma".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("rust")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_scorer_mean_floor_only_applies_outside_keyword_mode() {
+        use crate::services::score::{ScoreMode, Scorer};
+        let cv = cluster_fixture();
+        let mut kw = Scorer::new(ScoreMode::Keyword);
+        let mut hybrid = Scorer::new(ScoreMode::Hybrid);
+        let kw_result = tailor_cv_with_scorer(&cv, "rust", &mut kw, None);
+        let hy_result = tailor_cv_with_scorer(&cv, "rust", &mut hybrid, None);
+        let kw_ids: Vec<&str> = kw_result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        let hy_ids: Vec<&str> = hy_result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        assert!(
+            kw_ids.len() >= hy_ids.len(),
+            "Keyword mode must keep at least as many experiences as Hybrid: kw={kw_ids:?} hy={hy_ids:?}"
+        );
+    }
+
+    #[test]
+    fn tailor_plain_zero_scoring_experience_excluded_when_two_pass() {
+        let cv = three_tier_fixture();
+        let result = tailor_cv(&cv, "rust");
+        assert_exactly_two_without_fallback(&result);
     }
 }

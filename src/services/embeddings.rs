@@ -419,6 +419,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dim_reports_embedding_dimension() {
+        let engine = tiny_test_engine();
+        // The documented embedding dimension for the real model. A bug that
+        // returns 0/1 (or any wrong value) must not silently pass.
+        assert_eq!(engine.dim(), EMBEDDING_DIM);
+    }
+
+    #[test]
     fn masked_mean_pool_ignores_padding() {
         // Two "real" tokens with hidden values [1,1] and [3,3], then one
         // padding position with a huge value that must NOT affect the mean.
@@ -511,6 +519,27 @@ mod tests {
         let mut engine = tiny_test_engine();
         let result = engine.embed(&[]).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn embed_single_returns_the_engine_embedding_not_default() {
+        let mut engine = tiny_test_engine();
+        let v = engine
+            .embed_single("hello world")
+            .expect("embed_single should not error on the synthetic model");
+        // The tiny synthetic model's hidden_size is 8 — a bug that skips
+        // the engine (or returns a default) would come back as an empty
+        // or wrong-length vector instead.
+        assert_eq!(v.len(), 8, "expected the engine's embedding, got {v:?}");
+        let direct = engine
+            .embed(&["hello world".to_string()])
+            .expect("embed should not error")
+            .pop()
+            .expect("one embedding expected");
+        assert_eq!(
+            v, direct,
+            "embed_single must forward the engine's embedding, not fabricate one"
+        );
     }
 
     #[test]

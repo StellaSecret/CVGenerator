@@ -3115,8 +3115,6 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
                     .to_string();
                 let exp = Experience {
                     id: uuid::Uuid::new_v4().to_string(),
-                    role: LocalizedText::same(""),
-                    company: String::new(),
                     location,
                     start_date: start,
                     end_date: end,
@@ -5636,7 +5634,31 @@ English - Professional
         ];
         let (exps, _skills) = parse_experiences(&lines);
         assert_eq!(exps.len(), 2);
+        assert_eq!(exps[0].role.en, "Software Engineer");
         assert_eq!(exps[0].company, "Acme");
+        assert_eq!(exps[0].start_date, "Jan 2021");
+        assert_eq!(exps[0].end_date, "Present");
+        assert!(!exps[0].id.is_empty());
+    }
+
+    /// Regression test: layout (b) — "Company · Location - Start - End" on
+    /// one line with the role on its OWN following line. The location picked
+    /// up by `split_company_and_location` must survive onto the Experience
+    /// (covers the `location` field of the populated struct literal).
+    #[test]
+    fn parse_experiences_layout_b_location_from_company_line() {
+        let lines = vec![
+            "Acme Corp · Paris, France - Jan 2021 - Present".to_string(),
+            "Software Engineer".to_string(),
+            "• Built APIs".to_string(),
+        ];
+        let (exps, _skills) = parse_experiences(&lines);
+        assert_eq!(exps.len(), 1);
+        assert_eq!(exps[0].role.en, "Software Engineer");
+        assert_eq!(exps[0].company, "Acme Corp");
+        assert_eq!(exps[0].location, "Paris, France");
+        assert_eq!(exps[0].start_date, "Jan 2021");
+        assert_eq!(exps[0].end_date, "Present");
     }
 
     /// Regression test: a common CV layout puts role, company, and dates on
@@ -5661,8 +5683,10 @@ English - Professional
         assert_eq!(exps[0].company, "DTNUM/SDAN/BFO");
         assert_eq!(exps[0].start_date, "December 2024");
         assert_eq!(exps[0].end_date, "February 2026");
+        assert!(!exps[0].id.is_empty(), "experience id must be non-empty");
         assert_eq!(exps[1].role.en, "Site Reliability Engineer");
         assert_eq!(exps[1].company, "DTNUM/SDAN/BFO");
+        assert!(!exps[1].id.is_empty(), "experience id must be non-empty");
     }
 
     /// Regression test: a "Project N: ..." sub-entry inside a job may have its
@@ -6347,6 +6371,1287 @@ English - Professional
         assert_eq!(exps[1].role.en, "DevOps Engineer, Database Developer");
         assert_eq!(exps[1].company, "BRED IT (Thailand) Ltd");
     }
+
+    // ── extract_email ─────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_email_returns_none_when_no_dot_after_filter() {
+        assert_eq!(extract_email("user@com"), None);
+    }
+
+    #[test]
+    fn extract_email_filters_trailing_dot_leaving_no_dot() {
+        assert_eq!(extract_email("user@."), None);
+    }
+
+    #[test]
+    fn extract_email_rejects_leading_at() {
+        assert_eq!(extract_email("@example.com"), None);
+    }
+
+    #[test]
+    fn extract_email_rejects_trailing_dot() {
+        assert_eq!(extract_email("user@example.com."), None);
+    }
+
+    #[test]
+    fn extract_email_strips_angle_brackets_and_semicolons() {
+        assert_eq!(
+            extract_email("<user@host.com>;"),
+            Some("user@host.com".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_email_preserves_plus_and_dash_and_underscore() {
+        assert_eq!(
+            extract_email("a+b-c_d@host.com"),
+            Some("a+b-c_d@host.com".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_email_none_when_only_at_sign() {
+        assert_eq!(extract_email("@"), None);
+    }
+
+    #[test]
+    fn extract_email_returns_none_for_empty_input() {
+        assert_eq!(extract_email(""), None);
+    }
+
+    // ── extract_phone ─────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_phone_6_digits_returns_none() {
+        assert_eq!(extract_phone("123456"), None);
+    }
+
+    #[test]
+    fn extract_phone_16_digits_returns_none() {
+        assert_eq!(extract_phone("1234567890123456"), None);
+    }
+
+    #[test]
+    fn extract_phone_exactly_15_digits_with_plus() {
+        assert_eq!(
+            extract_phone("+123456789012345"),
+            Some("+123456789012345".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_phone_no_plus_returns_digits_without_prefix() {
+        assert_eq!(
+            extract_phone("call 1234567890"),
+            Some("1234567890".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_phone_empty_returns_none() {
+        assert_eq!(extract_phone(""), None);
+    }
+
+    #[test]
+    fn extract_phone_exactly_7_digits() {
+        assert_eq!(extract_phone("1234567"), Some("1234567".to_string()));
+    }
+
+    // ── extract_urls ──────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_urls_linkedin_dot_only_sets_linkedin() {
+        let (li, _gh, _web) = extract_urls("linkedin.com/in/john");
+        assert_eq!(li, Some("linkedin.com/in/john".to_string()));
+    }
+
+    #[test]
+    fn extract_urls_github_with_profile_path_sets_github() {
+        let (_li, gh, _web) = extract_urls("github.com/john");
+        assert_eq!(gh, Some("github.com/john".to_string()));
+    }
+
+    #[test]
+    fn extract_urls_name_github_io_does_not_set_github() {
+        let (_li, gh, web) = extract_urls("name.github.io");
+        assert!(gh.is_none());
+        assert!(web.is_some());
+    }
+
+    #[test]
+    fn extract_urls_bare_domain_sets_website() {
+        let (_li, _gh, web) = extract_urls("falltrades.github.io/path");
+        assert_eq!(web, Some("falltrades.github.io/path".to_string()));
+    }
+
+    #[test]
+    fn extract_urls_http_prefix_sets_website() {
+        let (_li, _gh, web) = extract_urls("http://example.com");
+        assert_eq!(web, Some("http://example.com".to_string()));
+    }
+
+    #[test]
+    fn extract_urls_www_prefix_sets_website() {
+        let (_li, _gh, web) = extract_urls("www.example.com");
+        assert_eq!(web, Some("www.example.com".to_string()));
+    }
+
+    #[test]
+    fn extract_urls_duplicate_linkedin_not_added_to_website() {
+        let (_li, _gh, web) = extract_urls("linkedin.com/in/john linkedin.com/in/john");
+        assert!(web.is_none());
+    }
+
+    #[test]
+    fn extract_urls_all_none_for_empty() {
+        let (li, gh, web) = extract_urls("");
+        assert!(li.is_none());
+        assert!(gh.is_none());
+        assert!(web.is_none());
+    }
+
+    // ── looks_like_bare_domain ────────────────────────────────────────────
+
+    #[test]
+    fn looks_like_bare_domain_host_without_dot_false() {
+        assert!(!looks_like_bare_domain("nodotcom"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_starts_with_dot_false() {
+        assert!(!looks_like_bare_domain(".example.com"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_ends_with_dot_false() {
+        assert!(!looks_like_bare_domain("example.com."));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_contains_at_false() {
+        assert!(!looks_like_bare_domain("user@host.com"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_valid_io() {
+        assert!(looks_like_bare_domain("example.io"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_valid_fr() {
+        assert!(looks_like_bare_domain("example.fr"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_unknown_tld_false() {
+        assert!(!looks_like_bare_domain("example.xyz123"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_with_path() {
+        assert!(looks_like_bare_domain("example.com/foo"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_hyphen_allowed() {
+        assert!(looks_like_bare_domain("my-site.dev"));
+    }
+
+    #[test]
+    fn looks_like_bare_domain_non_alnum_hyphen_dot_false() {
+        assert!(!looks_like_bare_domain("my site.com"));
+    }
+
+    // ── looks_like_bare_role_line ─────────────────────────────────────────
+
+    #[test]
+    fn looks_like_bare_role_line_empty_false() {
+        assert!(!looks_like_bare_role_line(""));
+        assert!(!looks_like_bare_role_line("   "));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_over_100_chars_false() {
+        let line = "A".repeat(101);
+        assert!(!looks_like_bare_role_line(&line));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_starts_with_bullet_false() {
+        assert!(!looks_like_bare_role_line("• Engineer"));
+        assert!(!looks_like_bare_role_line("- Developer"));
+        assert!(!looks_like_bare_role_line("* Architect"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_starts_with_project_false() {
+        assert!(!looks_like_bare_role_line("Project 1: something"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_starts_with_tasks_false() {
+        assert!(!looks_like_bare_role_line("Tasks: did stuff"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_starts_with_tools_false() {
+        assert!(!looks_like_bare_role_line("Tools: Rust, Go"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_contains_dot_space_false() {
+        assert!(!looks_like_bare_role_line("Engineer. Did things"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_lowercase_first_false() {
+        assert!(!looks_like_bare_role_line("engineer"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_with_date_range_at_end_false() {
+        assert!(!looks_like_bare_role_line("Engineer Jan 2021 - Feb 2022"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_clean_title_true() {
+        assert!(looks_like_bare_role_line("Architecte DevOps"));
+    }
+
+    #[test]
+    fn looks_like_bare_role_line_single_word_title_true() {
+        assert!(looks_like_bare_role_line("Engineer"));
+    }
+
+    // ── split_company_and_location ────────────────────────────────────────
+
+    #[test]
+    fn split_company_and_location_middle_dot() {
+        let (c, l) = split_company_and_location("Acme · Paris");
+        assert_eq!(c, "Acme");
+        assert_eq!(l, "Paris");
+    }
+
+    #[test]
+    fn split_company_and_location_pipe() {
+        let (c, l) = split_company_and_location("Acme | London");
+        assert_eq!(c, "Acme");
+        assert_eq!(l, "London");
+    }
+
+    #[test]
+    fn split_company_and_location_comma() {
+        let (c, l) = split_company_and_location("Acme, Berlin");
+        assert_eq!(c, "Acme");
+        assert_eq!(l, "Berlin");
+    }
+
+    #[test]
+    fn split_company_and_location_no_sep() {
+        let (c, l) = split_company_and_location("Acme");
+        assert_eq!(c, "Acme");
+        assert_eq!(l, "");
+    }
+
+    #[test]
+    fn split_company_and_location_first_sep_wins() {
+        let (c, l) = split_company_and_location("X · Y, Z");
+        assert_eq!(c, "X");
+        assert_eq!(l, "Y, Z");
+    }
+
+    // ── extract_date_range_from_end ───────────────────────────────────────
+
+    #[test]
+    fn extract_date_range_from_end_acme_present() {
+        assert_eq!(
+            extract_date_range_from_end("Acme - Jan 2021 - Present"),
+            Some(("Jan 2021".to_string(), "Present".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_from_end_two_dates() {
+        assert_eq!(
+            extract_date_range_from_end("Acme - Jan 2021 - Feb 2022"),
+            Some(("Jan 2021".to_string(), "Feb 2022".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_from_end_whitespace_sep() {
+        assert_eq!(
+            extract_date_range_from_end("Company France December 2024 - February 2026"),
+            Some(("December 2024".to_string(), "February 2026".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_from_end_bare_year() {
+        assert_eq!(
+            extract_date_range_from_end("Acme Corp - 2021 - 2024"),
+            Some(("2021".to_string(), "2024".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_from_end_end_over_3_words_skips() {
+        assert_eq!(
+            extract_date_range_from_end("Acme - Jan 2021 ABCD - Feb 2022"),
+            Some(("Jan 2021 ABCD".to_string(), "Feb 2022".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_from_end_no_date() {
+        assert!(extract_date_range_from_end("Just a plain line").is_none());
+    }
+
+    #[test]
+    fn extract_date_range_from_end_en_dash_separator() {
+        assert_eq!(
+            extract_date_range_from_end("Acme – Jan 2021 – Feb 2022"),
+            Some(("Jan 2021".to_string(), "Feb 2022".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_from_end_actuel_present() {
+        assert_eq!(
+            extract_date_range_from_end("Acme - Jan 2021 - actuel"),
+            Some(("Jan 2021".to_string(), "Present".to_string()))
+        );
+    }
+
+    // ── tokenize_with_spans ───────────────────────────────────────────────
+
+    #[test]
+    fn tokenize_with_spans_empty() {
+        assert_eq!(tokenize_with_spans(""), vec![]);
+    }
+
+    #[test]
+    fn tokenize_with_spans_whitespace_only() {
+        assert_eq!(tokenize_with_spans("   "), vec![]);
+    }
+
+    #[test]
+    fn tokenize_with_spans_leading_trailing_ws() {
+        let result = tokenize_with_spans("  hello world  ");
+        assert_eq!(result, vec![(2, 7, "hello"), (8, 13, "world")]);
+    }
+
+    #[test]
+    fn tokenize_with_spans_single_token() {
+        let result = tokenize_with_spans("hello");
+        assert_eq!(result, vec![(0, 5, "hello")]);
+    }
+
+    #[test]
+    fn tokenize_with_spans_preserves_byte_spans() {
+        let line = "Jan 2021 - Feb 2022";
+        let result = tokenize_with_spans(line);
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], (0, 3, "Jan"));
+        assert_eq!(result[1], (4, 8, "2021"));
+        assert_eq!(result[2], (9, 10, "-"));
+        assert_eq!(result[3], (11, 14, "Feb"));
+        assert_eq!(result[4], (15, 19, "2022"));
+    }
+
+    // ── find_date_range_span ──────────────────────────────────────────────
+
+    #[test]
+    fn find_date_range_span_since_month_year() {
+        let r = find_date_range_span("Role at Acme Since January 2020");
+        assert!(r.is_some());
+        let (start, end, s, e) = r.unwrap();
+        assert_eq!(s, "January 2020");
+        assert_eq!(e, "Present");
+        assert_eq!(
+            &"Role at Acme Since January 2020"[start..end],
+            "Since January 2020"
+        );
+    }
+
+    #[test]
+    fn find_date_range_span_depuis_bare_year() {
+        let r = find_date_range_span("Depuis 2019");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "2019");
+        assert_eq!(e, "Present");
+    }
+
+    #[test]
+    fn find_date_range_span_month_year_dash_month_year() {
+        let r = find_date_range_span("January 2021 - February 2022");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "January 2021");
+        assert_eq!(e, "February 2022");
+    }
+
+    #[test]
+    fn find_date_range_span_bare_year_dash_bare_year() {
+        let r = find_date_range_span("2020 – 2024");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "2020");
+        assert_eq!(e, "2024");
+    }
+
+    #[test]
+    fn find_date_range_span_bare_year_dash_present() {
+        let r = find_date_range_span("2020 - Present");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "2020");
+        assert_eq!(e, "Present");
+    }
+
+    #[test]
+    fn find_date_range_span_au_separator() {
+        let r = find_date_range_span("January 2021 au February 2022");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "January 2021");
+        assert_eq!(e, "February 2022");
+    }
+
+    #[test]
+    fn find_date_range_span_to_separator() {
+        let r = find_date_range_span("January 2021 to February 2022");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "January 2021");
+        assert_eq!(e, "February 2022");
+    }
+
+    #[test]
+    fn find_date_range_span_a_separator() {
+        let r = find_date_range_span("January 2021 à February 2022");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "January 2021");
+        assert_eq!(e, "February 2022");
+    }
+
+    #[test]
+    fn find_date_range_span_month_year_sep_present() {
+        let r = find_date_range_span("January 2021 – Present");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "January 2021");
+        assert_eq!(e, "Present");
+    }
+
+    #[test]
+    fn find_date_range_span_month_year_sep_bare_year() {
+        let r = find_date_range_span("January 2021 - 2022");
+        assert!(r.is_some());
+        let (_, _, s, e) = r.unwrap();
+        assert_eq!(s, "January 2021");
+        assert_eq!(e, "2022");
+    }
+
+    #[test]
+    fn find_date_range_span_no_date_none() {
+        assert!(find_date_range_span("Just a plain line").is_none());
+    }
+
+    // ── extract_trailing_date_range_from_title ────────────────────────────
+
+    #[test]
+    fn extract_trailing_date_range_from_title_month_year_present() {
+        assert_eq!(
+            extract_trailing_date_range_from_title(
+                "Project 1: Title – Subtitle  January 2021 – Present"
+            ),
+            Some((
+                "Project 1: Title – Subtitle".to_string(),
+                "January 2021".to_string(),
+                "Present".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn extract_trailing_date_range_from_title_bare_year() {
+        assert_eq!(
+            extract_trailing_date_range_from_title("My Project 2020 - 2024"),
+            Some((
+                "My Project".to_string(),
+                "2020".to_string(),
+                "2024".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn extract_trailing_date_range_from_title_two_dates() {
+        assert_eq!(
+            extract_trailing_date_range_from_title("Tool X – Sub  January 2021 - February 2022"),
+            Some((
+                "Tool X – Sub".to_string(),
+                "January 2021".to_string(),
+                "February 2022".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn extract_trailing_date_range_from_title_empty_name_none() {
+        assert!(extract_trailing_date_range_from_title("2021-2024").is_none());
+    }
+
+    #[test]
+    fn extract_trailing_date_range_from_title_no_date_none() {
+        assert!(extract_trailing_date_range_from_title("Just a title").is_none());
+    }
+
+    #[test]
+    fn extract_trailing_date_range_from_title_end_with_three_words() {
+        // `end.split_whitespace().count() > 3` must accept an end part of
+        // exactly 3 words; flipping `>` to `>=` would skip it.
+        assert_eq!(
+            extract_trailing_date_range_from_title("My Tool 2021 - Dec 31 2022"),
+            Some((
+                "My Tool".to_string(),
+                "2021".to_string(),
+                "Dec 31 2022".to_string()
+            ))
+        );
+    }
+
+    // ── find_date_range_span end-of-token boundary ─────────────────────────
+    //
+    // These pin the `<` guards that keep a date range from indexing past the
+    // last token. Each line ends its date pattern exactly at the last token
+    // (no trailing token), so:
+    //   - "<" correctly declines (None) — never an out-of-bounds panic;
+    //   - mutating "<" to "<=" lets the guard pass and then panics on the
+    //     out-of-range token read, killing the mutant.
+    #[test]
+    fn find_date_range_span_since_month_at_end_is_none() {
+        // "Since <Month>" with no following year and no trailing token.
+        assert!(find_date_range_span("Since January").is_none());
+        assert!(find_date_range_span("Depuis Janvier").is_none());
+    }
+
+    #[test]
+    fn find_date_range_span_since_bare_word_at_end_is_none() {
+        // A bare "Since"/"Depuis" as the very last token: the `t + 1 < len`
+        // guard must decline (None), not index past the last token.
+        assert!(find_date_range_span("Depuis").is_none());
+        assert!(find_date_range_span("Since").is_none());
+        // Non-year token right after "Since" is not a date either.
+        assert!(find_date_range_span("Depuis quelques").is_none());
+    }
+
+    #[test]
+    fn find_date_range_span_month_year_sep_at_end_is_none() {
+        // Month-Year separator with the month exactly at the last token.
+        assert!(find_date_range_span("January – ").is_none());
+        // Month at end, separator at end (no second date).
+        assert!(find_date_range_span("January 2021 – ").is_none());
+        assert!(find_date_range_span("January 2021 – February").is_none());
+    }
+
+    #[test]
+    fn find_date_range_span_bare_year_sep_at_end_is_none() {
+        // Bare-year separator with the year at the very last token.
+        assert!(find_date_range_span("2020 – ").is_none());
+        // Year at end (a single date).
+        assert!(find_date_range_span("2020").is_none());
+    }
+
+    #[test]
+    fn find_date_range_span_since_non_date_is_none() {
+        // A "since"/"depuis" word followed by non-date tokens must not be
+        // parsed as a range (mutating the range's inner `&&` to `||` would
+        // wrongly accept it).
+        assert!(find_date_range_span("Role Depuis Acme Corp").is_none());
+        assert!(find_date_range_span("Since Acme").is_none());
+    }
+
+    // ── guess_title ────────────────────────────────────────────────────────
+
+    #[test]
+    fn guess_title_uses_line_after_first_non_header_contact() {
+        // The title must be scanned starting on the line right after the
+        // detected name/contact, not from the top, and must not mistake the
+        // first contact/URL line for the boundary.
+        assert_eq!(
+            guess_title(&[
+                "john@test.com",
+                "http://example.com",
+                "Jane Doe",
+                "Senior Engineer",
+                "Anything"
+            ]),
+            Some("Senior Engineer".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_title_scans_up_to_four_lines_after_name() {
+        assert_eq!(
+            guess_title(&[
+                "Jane Doe",
+                "line one",
+                "line two",
+                "line three",
+                "engineering manager",
+            ]),
+            Some("engineering manager".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_title_name_line_is_not_itself_a_title() {
+        // A name line that happens to contain a title keyword must not be
+        // reported as the title when a following line carries the real one.
+        assert_eq!(
+            guess_title(&["Alice Engineer", "Architect"]),
+            Some("Architect".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_date_range_present() {
+        assert_eq!(
+            extract_date_range("Jan 2021 - Present"),
+            Some(("Jan 2021".to_string(), "Present".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_bare_years() {
+        assert_eq!(
+            extract_date_range("2020 - 2024"),
+            Some(("2020".to_string(), "2024".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_left_too_short() {
+        assert!(extract_date_range("A - B").is_none());
+    }
+
+    #[test]
+    fn extract_date_range_left_exactly_three_chars() {
+        // `left.len() < 3` must accept a left of exactly 3 chars; flipping
+        // `<` to `<=` would reject it.
+        assert_eq!(
+            extract_date_range("Jan - Feb"),
+            Some(("Jan".to_string(), "Feb".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_to_separator() {
+        assert_eq!(
+            extract_date_range("Jan 2021 to Dec 2022"),
+            Some(("Jan 2021".to_string(), "Dec 2022".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_a_separator() {
+        assert_eq!(
+            extract_date_range("Jan 2021 à Dec 2022"),
+            Some(("Jan 2021".to_string(), "Dec 2022".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_au_separator() {
+        assert_eq!(
+            extract_date_range("Jan 2021 au Dec 2022"),
+            Some(("Jan 2021".to_string(), "Dec 2022".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_date_range_fr_present_words() {
+        assert_eq!(
+            extract_date_range("Jan 2021 - actuel"),
+            Some(("Jan 2021".to_string(), "Present".to_string()))
+        );
+        assert_eq!(
+            extract_date_range("Jan 2021 - aujourd'hui"),
+            Some(("Jan 2021".to_string(), "Present".to_string()))
+        );
+        assert_eq!(
+            extract_date_range("Jan 2021 - current"),
+            Some(("Jan 2021".to_string(), "Present".to_string()))
+        );
+    }
+
+    // ── guess_name ────────────────────────────────────────────────────────
+
+    #[test]
+    fn guess_name_picks_first_plausible_line() {
+        assert_eq!(
+            guess_name(&["Alice Bob", "Engineer", "alice@test.com"]),
+            Some("Alice Bob".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_empty() {
+        assert_eq!(
+            guess_name(&["", "  ", "Charlie D"]),
+            Some("Charlie D".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_section_header() {
+        assert_eq!(
+            guess_name(&["Experience", "Dana F"]),
+            Some("Dana F".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_email() {
+        assert_eq!(
+            guess_name(&["bob@test.com", "Eve G"]),
+            Some("Eve G".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_phone() {
+        assert_eq!(
+            guess_name(&["+33 6 12 34 56 78", "Frank H"]),
+            Some("Frank H".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_http() {
+        assert_eq!(
+            guess_name(&["http://example.com", "Grace I"]),
+            Some("Grace I".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_www() {
+        assert_eq!(
+            guess_name(&["www.example.com", "Hank J"]),
+            Some("Hank J".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_skips_linkedin() {
+        assert_eq!(
+            guess_name(&["linkedin.com/in/john", "Iris K"]),
+            Some("Iris K".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_too_many_words_none() {
+        assert!(guess_name(&["One Two Three Four Five Six"]).is_none());
+    }
+
+    #[test]
+    fn guess_name_one_word_none() {
+        assert!(guess_name(&["Engineer"]).is_none());
+    }
+
+    #[test]
+    fn guess_name_accented_chars_allowed() {
+        assert_eq!(
+            guess_name(&["Jean-Luc François"]),
+            Some("Jean-Luc François".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_name_control_chars_cleaned() {
+        assert_eq!(
+            guess_name(&["John\u{0003} Smith"]),
+            Some("John Smith".to_string())
+        );
+    }
+
+    // ── guess_title ───────────────────────────────────────────────────────
+
+    #[test]
+    fn guess_title_finds_keyword_after_name() {
+        assert_eq!(
+            guess_title(&["John Smith", "Senior Engineer"]),
+            Some("Senior Engineer".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_title_finds_french_keyword() {
+        assert_eq!(
+            guess_title(&["Jean Dupont", "Développeur Rust"]),
+            Some("Développeur Rust".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_title_none_when_no_keyword() {
+        assert!(guess_title(&["John Smith", "Nothing here"]).is_none());
+    }
+
+    #[test]
+    fn guess_title_skips_email_before_name() {
+        assert_eq!(
+            guess_title(&["john@test.com", "Jane Doe", "Architect"]),
+            Some("Architect".to_string())
+        );
+    }
+
+    // ── looks_like_date_token ─────────────────────────────────────────────
+
+    #[test]
+    fn looks_like_date_token_month() {
+        assert!(looks_like_date_token("January"));
+        assert!(looks_like_date_token("janvier"));
+        assert!(looks_like_date_token("août"));
+    }
+
+    #[test]
+    fn looks_like_date_token_bare_year() {
+        assert!(looks_like_date_token("2021"));
+    }
+
+    #[test]
+    fn looks_like_date_token_present_word() {
+        assert!(looks_like_date_token("Present"));
+        assert!(looks_like_date_token("actuel"));
+    }
+
+    #[test]
+    fn looks_like_date_token_leading_icon_glyph() {
+        assert!(looks_like_date_token("\u{11}January"));
+    }
+
+    #[test]
+    fn looks_like_date_token_non_date_false() {
+        assert!(!looks_like_date_token("hello"));
+    }
+
+    #[test]
+    fn looks_like_date_token_empty_after_strip_false() {
+        assert!(!looks_like_date_token("!."));
+    }
+
+    #[test]
+    fn looks_like_date_token_abbreviated_month_not_recognized() {
+        assert!(!looks_like_date_token("Jan"));
+    }
+
+    // ── looks_like_date_token_loose ───────────────────────────────────────
+
+    #[test]
+    fn looks_like_date_token_loose_full_month_passthrough() {
+        assert!(looks_like_date_token_loose("January"));
+    }
+
+    #[test]
+    fn looks_like_date_token_loose_abbreviated_month() {
+        assert!(looks_like_date_token_loose("Sept"));
+        assert!(looks_like_date_token_loose("janv"));
+    }
+
+    #[test]
+    fn looks_like_date_token_loose_with_leading_icon() {
+        assert!(looks_like_date_token_loose("\u{11}Sept"));
+    }
+
+    #[test]
+    fn looks_like_date_token_loose_non_date_false() {
+        assert!(!looks_like_date_token_loose("hello"));
+    }
+
+    // ── looks_like_institution_line ───────────────────────────────────────
+
+    #[test]
+    fn looks_like_institution_line_iut_space() {
+        assert!(looks_like_institution_line("IUT Informatique"));
+    }
+
+    #[test]
+    fn looks_like_institution_line_iut_exact() {
+        assert!(looks_like_institution_line("IUT"));
+    }
+
+    #[test]
+    fn looks_like_institution_line_iut_lowercase() {
+        assert!(looks_like_institution_line("iut paris"));
+    }
+
+    #[test]
+    fn looks_like_institution_line_university_of() {
+        assert!(looks_like_institution_line("University of Cambridge"));
+    }
+
+    #[test]
+    fn looks_like_institution_line_ecole() {
+        assert!(looks_like_institution_line("École Supérieure"));
+    }
+
+    #[test]
+    fn looks_like_institution_line_college() {
+        assert!(looks_like_institution_line("Community College"));
+    }
+
+    #[test]
+    fn looks_like_institution_line_non_institution_false() {
+        assert!(!looks_like_institution_line("Computer Science"));
+    }
+
+    // ── looks_like_degree_line ────────────────────────────────────────────
+
+    #[test]
+    fn looks_like_degree_line_licence() {
+        assert!(looks_like_degree_line(
+            "Licence Professionnelle Informatique"
+        ));
+    }
+
+    #[test]
+    fn looks_like_degree_line_master_of_science() {
+        assert!(looks_like_degree_line("Master of Science in AI"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_bts() {
+        assert!(looks_like_degree_line("BTS Services Informatiques"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_mba() {
+        assert!(looks_like_degree_line("MBA Finance"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_phd() {
+        assert!(looks_like_degree_line("PhD in Physics"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_doctorat() {
+        assert!(looks_like_degree_line("Doctorat Informatique"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_diplome() {
+        assert!(looks_like_degree_line("Diplôme d'ingénieur"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_certificat() {
+        assert!(looks_like_degree_line("Certificat AWS"));
+    }
+
+    #[test]
+    fn looks_like_degree_line_non_degree_false() {
+        assert!(!looks_like_degree_line("University of Paris"));
+    }
+
+    // ── is_context_label ──────────────────────────────────────────────────
+
+    #[test]
+    fn is_context_label_with_situation_prefix() {
+        assert!(is_context_label("Situation: The project needed help."));
+    }
+
+    #[test]
+    fn is_context_label_with_techs_prefix() {
+        assert!(is_context_label("Techs: Rust, Go, Docker."));
+    }
+
+    #[test]
+    fn is_context_label_with_context_prefix() {
+        assert!(is_context_label("Context: Cloud migration project."));
+    }
+
+    #[test]
+    fn is_context_label_no_colon_false() {
+        assert!(!is_context_label("No colon here"));
+    }
+
+    #[test]
+    fn is_context_label_prefix_too_long_false() {
+        assert!(!is_context_label(
+            "A very long prefix that exceeds thirty chars: value"
+        ));
+    }
+
+    #[test]
+    fn is_context_label_unknown_prefix_false() {
+        assert!(!is_context_label("RandomWord: value"));
+    }
+
+    #[test]
+    fn is_context_label_lowercase_situation() {
+        assert!(is_context_label("situation: details"));
+    }
+
+    // ── looks_like_tool_bleed_line ────────────────────────────────────────
+
+    #[test]
+    fn looks_like_tool_bleed_line_bullet_true() {
+        assert!(looks_like_tool_bleed_line("• Docker 3+ yrs"));
+    }
+
+    #[test]
+    fn looks_like_tool_bleed_line_harvestable_skill_true() {
+        assert!(looks_like_tool_bleed_line("Rust 5+ yrs Go 3+ yrs"));
+    }
+
+    #[test]
+    fn looks_like_tool_bleed_line_bare_years_true() {
+        assert!(looks_like_tool_bleed_line("2+yrs"));
+    }
+
+    #[test]
+    fn looks_like_tool_bleed_line_clean_role_false() {
+        assert!(!looks_like_tool_bleed_line("Architecte DevOps"));
+    }
+
+    #[test]
+    fn looks_like_tool_bleed_line_en_dash_bullet_true() {
+        assert!(looks_like_tool_bleed_line("– Docker"));
+    }
+
+    // ── is_bare_years_marker ──────────────────────────────────────────────
+
+    #[test]
+    fn is_bare_years_marker_fused_two_token() {
+        assert!(is_bare_years_marker("2+ yrs"));
+        assert!(is_bare_years_marker("10+ years"));
+        assert!(is_bare_years_marker("1+ yr"));
+        assert!(is_bare_years_marker("5+ year"));
+    }
+
+    #[test]
+    fn is_bare_years_marker_single_token_fused() {
+        assert!(is_bare_years_marker("2+yrs"));
+        assert!(is_bare_years_marker("10+years"));
+    }
+
+    #[test]
+    fn is_bare_years_marker_no_digits_false() {
+        assert!(!is_bare_years_marker("+yrs"));
+    }
+
+    #[test]
+    fn is_bare_years_marker_empty_false() {
+        assert!(!is_bare_years_marker(""));
+    }
+
+    #[test]
+    fn is_bare_years_marker_three_tokens_false() {
+        assert!(!is_bare_years_marker("2+ yrs extra"));
+    }
+
+    #[test]
+    fn is_bare_years_marker_name_with_marker_false() {
+        assert!(!is_bare_years_marker("Kustomize 2+yrs"));
+    }
+
+    // ── is_project_header ─────────────────────────────────────────────────
+
+    #[test]
+    fn is_project_header_english() {
+        assert!(is_project_header("Project 1: Cloud Migration"));
+    }
+
+    #[test]
+    fn is_project_header_french() {
+        assert!(is_project_header("Projet 2: Migración"));
+    }
+
+    #[test]
+    fn is_project_header_non_project() {
+        assert!(!is_project_header("Just a regular line"));
+    }
+
+    // ── parse_projects (delete-field mutants) ─────────────────────────────
+
+    #[test]
+    fn parse_projects_name_with_description() {
+        let projects = parse_projects(&[
+            "My App: A tool for tracking things".to_string(),
+            "• helps you stay organised".to_string(),
+        ]);
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "My App");
+        assert_eq!(projects[0].description.en, "A tool for tracking things");
+        assert_eq!(projects[0].bullets.len(), 1);
+        assert!(!projects[0].id.is_empty(), "project id must be populated");
+    }
+
+    #[test]
+    fn parse_projects_bare_name() {
+        let projects = parse_projects(&["Side Project".to_string()]);
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "Side Project");
+        assert!(projects[0].description.en.is_empty());
+        assert!(!projects[0].id.is_empty(), "project id must be populated");
+    }
+
+    #[test]
+    fn parse_projects_multiple_and_bullet_context() {
+        let projects = parse_projects(&[
+            "Alpha: first".to_string(),
+            "• bullet one".to_string(),
+            "Beta".to_string(),
+            "• bullet two".to_string(),
+        ]);
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].name, "Alpha");
+        assert_eq!(projects[0].bullets.len(), 1);
+        assert_eq!(projects[0].bullets[0].en, "bullet one");
+        assert_eq!(projects[1].name, "Beta");
+        assert_eq!(projects[1].bullets.len(), 1);
+    }
+
+    // ── build_education_institution_first (delete-field mutants) ──────────
+
+    #[test]
+    fn build_education_institution_first_all_fields() {
+        let edu = build_education_institution_first(
+            "Université Paris-Sud |".to_string(),
+            "Sept 2014".to_string(),
+            "Oct 2017".to_string(),
+            &[
+                "Master of Science in Computer Science".to_string(),
+                "Algorithm Design".to_string(),
+            ],
+        )
+        .expect("education should build");
+        assert!(!edu.id.is_empty(), "education id must be populated");
+        assert_eq!(edu.institution, "Université Paris-Sud");
+        assert_eq!(edu.degree.en, "Master of Science");
+        assert_eq!(edu.field.en, "Computer Science Algorithm Design");
+        assert_eq!(edu.start_year, "Sept 2014");
+        assert_eq!(edu.end_year, "Oct 2017");
+    }
+
+    #[test]
+    fn build_education_institution_first_embedded_field_en() {
+        let edu = build_education_institution_first(
+            "MIT".to_string(),
+            "2015".to_string(),
+            "2019".to_string(),
+            &["Bachelor of Arts in Economics".to_string()],
+        )
+        .expect("education should build");
+        assert_eq!(edu.degree.en, "Bachelor of Arts");
+        assert_eq!(edu.field.en, "Economics");
+    }
+
+    #[test]
+    fn build_education_institution_first_embedded_field_fr_and_none() {
+        let edu = build_education_institution_first(
+            "ENS".to_string(),
+            "2010".to_string(),
+            "2013".to_string(),
+            &["Licence en Mathématiques".to_string()],
+        )
+        .expect("education should build");
+        assert_eq!(edu.degree.en, "Licence");
+        assert_eq!(edu.field.en, "Mathématiques");
+
+        let bare = build_education_institution_first(
+            "College".to_string(),
+            "2000".to_string(),
+            "2004".to_string(),
+            &["Diploma".to_string()],
+        )
+        .expect("education should build");
+        assert_eq!(bare.degree.en, "Diploma");
+        assert!(bare.field.en.is_empty());
+    }
+
+    #[test]
+    fn build_education_institution_first_empty_returns_none() {
+        assert!(build_education_institution_first(
+            String::new(),
+            String::new(),
+            String::new(),
+            &[],
+        )
+        .is_none());
+    }
+
+    // ── build_certification_from_buffer (delete-field mutants) ────────────
+
+    #[test]
+    fn build_certification_from_buffer_all_fields() {
+        let cert = build_certification_from_buffer(
+            &[
+                "AWS Solutions Architect".to_string(),
+                "2021".to_string(),
+                "Amazon".to_string(),
+                "Coursera".to_string(),
+            ],
+            Some(("Aug 2021".to_string(), "Aug 2023".to_string())),
+        )
+        .expect("certification should build");
+        assert!(!cert.id.is_empty(), "certification id must be populated");
+        assert_eq!(cert.name, "AWS Solutions Architect (2021)");
+        assert_eq!(cert.issuer, "Amazon · Coursera");
+        assert_eq!(cert.date, "Aug 2021 – Aug 2023");
+    }
+
+    /// Layout (c) of `parse_experiences`: a date-range row that carries
+    /// only a leading separator and a location before the dates, e.g.
+    /// "· Paris, France Jan 2024 – Nov 2024". The resulting experience has
+    /// a non-empty location and start/end dates; deleting any of those
+    /// struct fields must be caught.
+    #[test]
+    fn parse_experiences_layout_c_location_and_dates() {
+        let (exps, _skills) = parse_experiences(&[
+            "Software Engineer".to_string(),
+            "ACME Corp".to_string(),
+            "· Paris, France Jan 2024 – Nov 2024".to_string(),
+        ]);
+        assert_eq!(exps.len(), 1);
+        assert_eq!(exps[0].location, "Paris, France");
+        assert_eq!(exps[0].start_date, "Jan 2024");
+        assert_eq!(exps[0].end_date, "Nov 2024");
+        assert!(!exps[0].id.is_empty(), "experience id must be populated");
+    }
+
+    // ── id-population across builders (delete id-field mutants) ───────────
+
+    #[test]
+    fn built_structs_populate_ids() {
+        let (exps, _skills) = parse_experiences(&[
+            "Platform Engineer (contractual)".to_string(),
+            "DTNUM/SDAN/BFO".to_string(),
+            "Dec 2024 – Feb 2026".to_string(),
+        ]);
+        assert!(!exps[0].id.is_empty(), "experience id must be populated");
+
+        let edu = build_education_from_buffer(
+            &[
+                "BSc".to_string(),
+                "in Mathematics".to_string(),
+                "Univ".to_string(),
+            ],
+            "2017".to_string(),
+            "2020".to_string(),
+        )
+        .expect("education should build");
+        assert!(!edu.id.is_empty(), "education id must be populated");
+    }
 }
 
 /// Regression corpus: full-pipeline tests against fixture documents, each
@@ -6686,6 +7991,139 @@ mod regression_corpus {
             decoded.is_none() || decoded.as_deref() == Some(""),
             "an unmapped control byte should decode to nothing, got: {decoded:?}"
         );
+    }
+
+    // ── ToUnicodeMap::decode / byte helpers ───────────────────────────────────
+
+    #[test]
+    fn tounicode_decode_with_unset_code_bytes_returns_none() {
+        // `code_bytes == 0 || bytes.is_empty()` guards the loop; flipping
+        // the `||` to `&&` would let a non-empty input fall through and
+        // panic on `chunks(0)`. Asserting None kills that mutant.
+        let map = ToUnicodeMap {
+            code_bytes: 0,
+            map: std::collections::HashMap::new(),
+        };
+        assert_eq!(map.decode(b"abc"), None);
+    }
+
+    #[test]
+    fn tounicode_decode_stops_at_incomplete_trailing_chunk() {
+        // code_bytes = 2; the input has a full 2-byte chunk followed by a
+        // single trailing byte. `chunk.len() < code_bytes` must break so
+        // the trailing byte is dropped (not fallback-decoded). Flipping the
+        // `<` to `>` would never break and would append the trailing byte.
+        let mut map = std::collections::HashMap::new();
+        map.insert(0x4142, "AB".to_string());
+        let map = ToUnicodeMap { code_bytes: 2, map };
+        assert_eq!(map.decode(&[0x41, 0x42, 0x43]), Some("AB".to_string()));
+    }
+
+    #[test]
+    fn tounicode_decode_does_not_latin1_fallback_on_full_unmapped_chunk() {
+        // A full 2-byte chunk with no map entry must NOT fall into the
+        // single-byte Latin-1 fallback (that is gated on `chunk.len() == 1`).
+        let map = ToUnicodeMap {
+            code_bytes: 2,
+            map: std::collections::HashMap::new(),
+        };
+        // Correct: no matching 2-byte code, not a 1-byte chunk → None.
+        // If `== 1` were flipped to `!= 1`, it would fallback on byte 'A'.
+        assert_eq!(map.decode(&[0x41, 0x42]), None);
+    }
+
+    #[test]
+    fn tounicode_decode_resolves_mapped_one_byte_codes() {
+        let mut map = std::collections::HashMap::new();
+        map.insert(0x41, "A".to_string());
+        map.insert(0x42, "B".to_string());
+        let map = ToUnicodeMap { code_bytes: 1, map };
+        assert_eq!(map.decode(&[0x41, 0x42, 0x41]), Some("ABA".to_string()));
+    }
+
+    #[test]
+    fn bytes_to_u32_big_endian_concat() {
+        assert_eq!(bytes_to_u32(&[0x12, 0x34, 0x56, 0x78]), 0x12345678);
+        assert_eq!(bytes_to_u32(&[0x01, 0x02]), 0x0102);
+        assert_eq!(bytes_to_u32(&[0xFF]), 0xFF);
+    }
+
+    #[test]
+    fn utf16be_bytes_to_string_decodes_pairs() {
+        assert_eq!(utf16be_bytes_to_string(&[0x00, 0x41, 0x00, 0x42]), "AB");
+        assert_eq!(
+            utf16be_bytes_to_string(&[0x20, 0x1E, 0x00, 0x41]),
+            "\u{201E}A"
+        );
+        assert_eq!(utf16be_bytes_to_string(&[]), "");
+        // An odd trailing byte is dropped.
+        assert_eq!(utf16be_bytes_to_string(&[0x00, 0x41, 0x00]), "A");
+    }
+
+    #[test]
+    fn parse_hex_token_variants() {
+        assert_eq!(parse_hex_token("<4142>"), Some(vec![0x41, 0x42]));
+        assert_eq!(parse_hex_token(" <0042> "), Some(vec![0x00, 0x42]));
+        // Odd / empty / unterminated forms are rejected.
+        assert_eq!(parse_hex_token("<414>"), None);
+        assert_eq!(parse_hex_token("<>"), None);
+        assert_eq!(parse_hex_token("4142"), None);
+        assert_eq!(parse_hex_token("<zz>"), None);
+        // A trailing ']' (from a bfrange array) is not a valid closing '>'.
+        assert_eq!(parse_hex_token("<4142>]"), None);
+    }
+
+    #[test]
+    fn parse_tounicode_cmap_bfchar_and_bfrange() {
+        let cmap_text = r"
+            /CIDInit /ProcSet findresource begin
+            12 dict begin
+            begincmap
+            /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+            /CMapName /Adobe-Identity-UCS def
+            /CMapType 2 def
+            1 begincodespacerange <00> <ff> endcodespacerange
+            2 beginbfchar
+            <41> <0041>
+            <42> <0042>
+            endbfchar
+            1 beginbfrange
+            <61> <63> <0061>
+            endbfrange
+            endcmap
+            CMapName currentdict /CMap defineresource pop
+            end
+            end
+        ";
+        let cmap = parse_tounicode_cmap(cmap_text).expect("cmap should parse");
+        assert_eq!(cmap.code_bytes, 1);
+        assert_eq!(cmap.map.get(&0x41).map(String::as_str), Some("A"));
+        assert_eq!(cmap.map.get(&0x42).map(String::as_str), Some("B"));
+        // range 0x61..=0x63 -> a, b, c
+        assert_eq!(cmap.map.get(&0x61).map(String::as_str), Some("a"));
+        assert_eq!(cmap.map.get(&0x62).map(String::as_str), Some("b"));
+        assert_eq!(cmap.map.get(&0x63).map(String::as_str), Some("c"));
+    }
+
+    #[test]
+    fn parse_tounicode_cmap_bfrange_array_form() {
+        let cmap_text = r"
+            begincmap
+            begincodespacerange <00> <ff> endcodespacerange
+            1 beginbfrange
+            <61> <63> [ <0041> <0042> <0043> ]
+            endbfrange
+            endcmap
+        ";
+        let cmap = parse_tounicode_cmap(cmap_text).expect("cmap should parse");
+        assert_eq!(cmap.map.get(&0x61).map(String::as_str), Some("A"));
+        assert_eq!(cmap.map.get(&0x62).map(String::as_str), Some("B"));
+        assert_eq!(cmap.map.get(&0x63).map(String::as_str), Some("C"));
+    }
+
+    #[test]
+    fn parse_tounicode_cmap_empty_returns_none() {
+        assert!(parse_tounicode_cmap("no cmap constructs here").is_none());
     }
 
     /// Smoke test against real PDFs, if any are present locally. This

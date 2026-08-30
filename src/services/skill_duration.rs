@@ -222,6 +222,48 @@ mod tests {
     }
 
     #[test]
+    fn parses_every_month_arm() {
+        // Full names and common abbreviations for every month except the
+        // four already covered by parses_common_formats (Jan/Feb/Mar/Dec) —
+        // each arm of month_from_name must be reachable and return its own
+        // month number.
+        assert_eq!(parse_month_year("Apr 2021", NOW), Some((2021, 4)));
+        assert_eq!(parse_month_year("April 2021", NOW), Some((2021, 4)));
+        assert_eq!(parse_month_year("Avril 2021", NOW), Some((2021, 4)));
+        assert_eq!(parse_month_year("May 2021", NOW), Some((2021, 5)));
+        assert_eq!(parse_month_year("Mai 2021", NOW), Some((2021, 5)));
+        assert_eq!(parse_month_year("Jun 2021", NOW), Some((2021, 6)));
+        assert_eq!(parse_month_year("June 2021", NOW), Some((2021, 6)));
+        assert_eq!(parse_month_year("Juin 2021", NOW), Some((2021, 6)));
+        assert_eq!(parse_month_year("Jul 2021", NOW), Some((2021, 7)));
+        assert_eq!(parse_month_year("July 2021", NOW), Some((2021, 7)));
+        assert_eq!(parse_month_year("Juillet 2021", NOW), Some((2021, 7)));
+        assert_eq!(parse_month_year("Aug 2021", NOW), Some((2021, 8)));
+        assert_eq!(parse_month_year("August 2021", NOW), Some((2021, 8)));
+        assert_eq!(parse_month_year("Août 2021", NOW), Some((2021, 8)));
+        assert_eq!(parse_month_year("Sep 2021", NOW), Some((2021, 9)));
+        assert_eq!(parse_month_year("September 2021", NOW), Some((2021, 9)));
+        assert_eq!(parse_month_year("Septembre 2021", NOW), Some((2021, 9)));
+        assert_eq!(parse_month_year("Oct 2021", NOW), Some((2021, 10)));
+        assert_eq!(parse_month_year("October 2021", NOW), Some((2021, 10)));
+        assert_eq!(parse_month_year("Octobre 2021", NOW), Some((2021, 10)));
+        assert_eq!(parse_month_year("Nov 2021", NOW), Some((2021, 11)));
+        assert_eq!(parse_month_year("November 2021", NOW), Some((2021, 11)));
+        assert_eq!(parse_month_year("Novembre 2021", NOW), Some((2021, 11)));
+    }
+
+    #[test]
+    fn month_from_name_jan_variants() {
+        // Deleting the "jan" | "january" | "janv" | "janvier" arm is
+        // invisible through parse_month_year because the default month is
+        // also 1 (January). Test month_from_name directly to catch that.
+        assert_eq!(month_from_name("jan"), Some(1));
+        assert_eq!(month_from_name("january"), Some(1));
+        assert_eq!(month_from_name("janv"), Some(1));
+        assert_eq!(month_from_name("janvier"), Some(1));
+    }
+
+    #[test]
     fn parses_ongoing_tokens_as_now() {
         assert_eq!(parse_month_year("Present", NOW), Some(NOW));
         assert_eq!(parse_month_year("Actuel", NOW), Some(NOW));

@@ -197,6 +197,13 @@ mod tests {
     }
 
     #[test]
+    fn mask_token_len_eight_is_fully_masked() {
+        // Masking only kicks in for lengths strictly greater than 8 — an
+        // 8-char token must not be partially revealed.
+        assert_eq!(mask_token("abcdefgh"), "••••");
+    }
+
+    #[test]
     fn get_set_clear_token_native_stubs() {
         set_token("test");
         assert!(get_token().is_none());
