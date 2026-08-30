@@ -258,7 +258,7 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-item { margin-bottom: 18px; }
 .cv-doc .exp-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
 .cv-doc .exp-company { font-weight: 700; color: #0f172a; }
-.cv-doc .exp-role { font-style: italic; color: #475569; font-size: 0.9rem; margin-top: 1px; }
+.cv-doc .exp-role { font-weight: 600; color: #334155; font-size: 0.9rem; margin-top: 1px; }
 .cv-doc .exp-dates { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; }
 .cv-doc .exp-location { font-size: 0.8rem; color: #94a3b8; }
 .cv-doc .exp-bullets { margin: 8px 0 0 18px; list-style: none; padding: 0; }
@@ -267,7 +267,8 @@ const CV_CSS: &str = r#"
 .cv-doc .exp-project-skills { margin-top: 6px; font-size: 0.78rem; color: #64748b; line-height: 1.45; }
 .cv-doc .exp-skill-category { font-weight: 600; color: #1e293b; }
 .cv-doc .exp-skill-list { color: #475569; }
-.cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
+.cv-doc .exp-project { margin-top: 8px; padding-left: 12px; border-left: 2px solid #cbd5e1; }
+.cv-doc .exp-project + .exp-project { margin-top: 16px; }
 .cv-doc .exp-project-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px; }
 .cv-doc .exp-project-name { font-weight: 600; color: #1e293b; font-size: 0.88rem; margin-bottom: 2px; }
 .cv-doc .exp-project-dates { font-size: 0.78rem; color: #94a3b8; white-space: nowrap; }
