@@ -794,9 +794,62 @@ pub struct ExperienceScoreDebug {
 
 #[derive(Debug, Clone)]
 pub struct ProjectScoreDebug {
+    pub id: String,
     pub name: String,
     pub score: f32,
     pub selected: bool,
+}
+
+/// Rebuilds the final experience list from the person's own manual
+/// tick/untick choices, overriding whatever the automatic scoring
+/// selected. `checked_project_ids` is the full set of `ExperienceProject`
+/// ids the person wants kept, across every experience — not just the ones
+/// the algorithm originally picked.
+///
+/// An experience's presence in the result is *derived*, not itself a
+/// separate checkbox: it's kept if and only if at least one of its
+/// projects is in `checked_project_ids`, and shows only those checked
+/// projects (an experience with zero checked projects simply doesn't
+/// appear at all, same as the automatic path already behaves for a
+/// zero-relevance experience).
+///
+/// Iterates `cv.experiences` in its own stored order — deliberately NOT
+/// score order, matching exactly how the automatic path itself builds its
+/// final experience list (see the "Rebuild the selection in the CV's
+/// original (reverse-chronological) order" comment above): a CV reads as
+/// a timeline, not a relevance ranking, and a person's stored experience
+/// order already IS that timeline. An earlier version of this function
+/// took an explicit `experience_order` parameter seeded from
+/// `debug_scores` (which IS score-sorted) — that silently reordered the
+/// whole CV to relevance order on every manual apply, e.g. shoving the
+/// most recent role to the middle of the document. Reading order
+/// directly from `cv.experiences` instead of from any derived/sorted
+/// list can't drift out of sync with it, by construction.
+///
+/// Reads from `cv` (the full, untailored CV) rather than an
+/// already-filtered `TailoredCV`, since a project the algorithm excluded
+/// — and that the person now wants to manually re-include — isn't present
+/// in the filtered version at all.
+pub fn apply_manual_project_selection(
+    cv: &LifetimeCV,
+    checked_project_ids: &HashSet<String>,
+) -> Vec<Experience> {
+    let mut result = Vec::new();
+    for exp in &cv.experiences {
+        let kept_projects: Vec<ExperienceProject> = exp
+            .projects
+            .iter()
+            .filter(|p| checked_project_ids.contains(&p.id))
+            .cloned()
+            .collect();
+        if kept_projects.is_empty() {
+            continue;
+        }
+        let mut kept_exp = exp.clone();
+        kept_exp.projects = kept_projects;
+        result.push(kept_exp);
+    }
+    result
 }
 
 fn display_role(role: &crate::models::LocalizedText) -> String {
@@ -1059,6 +1112,21 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
 
     // Raw scores for every experience/project, independent of the
     // selection above — see `ExperienceScoreDebug`'s doc comment.
+    //
+    // `selected` here is derived from `tailored.experiences` itself
+    // (which project ids actually survived), NOT recomputed from
+    // `pscore` — a project can score above zero (almost everything does,
+    // especially in Keyword mode where shared common words alone give
+    // some nonzero overlap) without clearing the relative cutoff that
+    // actually determines inclusion. Using `pscore > 0.0` here previously
+    // made nearly everything show as "selected" regardless of what the
+    // real tailored result contained.
+    let kept_project_ids: HashSet<String> = tailored
+        .experiences
+        .iter()
+        .flat_map(|e| e.projects.iter())
+        .map(|p| p.id.clone())
+        .collect();
     let debug_scores: Vec<ExperienceScoreDebug> = scored_exp
         .iter()
         .map(|(score, exp)| {
@@ -1069,9 +1137,10 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
                 .map(|p| {
                     let pscore = score_experience_project(p, &top_keywords, &idf, &shared_tools);
                     ProjectScoreDebug {
+                        id: p.id.clone(),
                         name: display_name(&p.name),
                         score: pscore,
-                        selected: pscore > 0.0,
+                        selected: kept_project_ids.contains(&p.id),
                     }
                 })
                 .collect();
@@ -1381,6 +1450,17 @@ pub fn tailor_cv_with_scorer(
     // lets you see whether e.g. KAIMAN scored low (an embedding-quality
     // problem) or scored fine but still lost the cutoff (a selection-logic
     // problem) instead of only ever seeing the final in/out list.
+    //
+    // `selected` is derived from `tailored.experiences` itself (which
+    // project ids actually survived), not recomputed from `pscore` — see
+    // the identical comment in `tailor_cv`'s debug_scores construction for
+    // why `pscore > 0.0` was wrong here too.
+    let kept_project_ids: HashSet<String> = tailored
+        .experiences
+        .iter()
+        .flat_map(|e| e.projects.iter())
+        .map(|p| p.id.clone())
+        .collect();
     let debug_scores: Vec<ExperienceScoreDebug> = scored_exp
         .iter()
         .map(|(score, exp)| {
@@ -1396,9 +1476,10 @@ pub fn tailor_cv_with_scorer(
                         &shared_tools,
                     );
                     ProjectScoreDebug {
+                        id: p.id.clone(),
                         name: display_name(&p.name),
                         score: pscore,
-                        selected: pscore > 0.0,
+                        selected: kept_project_ids.contains(&p.id),
                     }
                 })
                 .collect();
@@ -1426,6 +1507,96 @@ pub fn tailor_cv_with_scorer(
 mod tests {
     use super::*;
     use crate::models::*;
+
+    // ── apply_manual_project_selection ──────────────────────────────────────
+
+    fn exp_with_projects(id: &str, company: &str, project_ids: &[&str]) -> Experience {
+        Experience {
+            id: id.to_string(),
+            company: company.to_string(),
+            projects: project_ids
+                .iter()
+                .map(|pid| ExperienceProject {
+                    id: pid.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn apply_manual_selection_keeps_only_checked_projects() {
+        let cv = LifetimeCV {
+            experiences: vec![exp_with_projects("e1", "Acme", &["p1", "p2", "p3"])],
+            ..Default::default()
+        };
+        let checked: HashSet<String> = ["p1", "p3"].iter().map(|s| s.to_string()).collect();
+        let result = apply_manual_project_selection(&cv, &checked);
+        assert_eq!(result.len(), 1);
+        let ids: Vec<&str> = result[0].projects.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["p1", "p3"]);
+    }
+
+    #[test]
+    fn apply_manual_selection_drops_experience_with_zero_checked_projects() {
+        let cv = LifetimeCV {
+            experiences: vec![exp_with_projects("e1", "Acme", &["p1", "p2"])],
+            ..Default::default()
+        };
+        // Neither p1 nor p2 is checked — the whole experience should
+        // disappear, not appear with an empty projects list.
+        let checked: HashSet<String> = HashSet::new();
+        let result = apply_manual_project_selection(&cv, &checked);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn apply_manual_selection_can_reinclude_an_experience_the_algorithm_excluded() {
+        // The whole point of the feature: a project id can be checked even
+        // if the automatic pass never selected that experience at all —
+        // reading from `cv` (not an already-filtered TailoredCV) is what
+        // makes this possible.
+        let cv = LifetimeCV {
+            experiences: vec![
+                exp_with_projects("e1", "Kept", &["p1"]),
+                exp_with_projects("e2", "ManuallyReincluded", &["p2"]),
+            ],
+            ..Default::default()
+        };
+        let checked: HashSet<String> = ["p1", "p2"].iter().map(|s| s.to_string()).collect();
+        let result = apply_manual_project_selection(&cv, &checked);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[1].company, "ManuallyReincluded");
+    }
+
+    // Regression test for a real bug: an earlier version of this function
+    // took an explicit `experience_order` parameter seeded from
+    // `debug_scores` (score-sorted order). Applying a manual selection
+    // then silently reordered the whole CV to relevance order — e.g. the
+    // most recent role (which should stay at the top, reverse-
+    // chronological, matching the automatic path's own output) got
+    // shoved down to wherever it happened to rank by raw keyword score.
+    // The fix: always follow `cv.experiences`' own stored order, exactly
+    // like the automatic path's "Rebuild the selection in the CV's
+    // original order" step does — never an externally-supplied order.
+    #[test]
+    fn apply_manual_selection_always_follows_cv_storage_order_not_an_external_order() {
+        let cv = LifetimeCV {
+            experiences: vec![
+                exp_with_projects("e1", "First", &["p1"]),
+                exp_with_projects("e2", "Second", &["p2"]),
+            ],
+            ..Default::default()
+        };
+        let checked: HashSet<String> = ["p1", "p2"].iter().map(|s| s.to_string()).collect();
+        let result = apply_manual_project_selection(&cv, &checked);
+        assert_eq!(
+            result[0].company, "First",
+            "output order must match cv.experiences' own order"
+        );
+        assert_eq!(result[1].company, "Second");
+    }
 
     // ── Fixture ───────────────────────────────────────────────────────────────
 
@@ -2143,6 +2314,87 @@ mod tests {
         assert!(
             r_good.tailored.match_score > r_bad.tailored.match_score,
             "Relevant JD should score higher than unrelated one"
+        );
+    }
+
+    // Regression test for a real bug: `ProjectScoreDebug.selected` used to
+    // be `pscore > 0.0` — "scored anything at all" — instead of reflecting
+    // whether the project actually survived the relative-cutoff selection
+    // into `tailored.experiences`. In Keyword mode especially, almost
+    // every project shares at least one common word with the JD, so
+    // nearly everything showed as "selected" in the debug/manual-selection
+    // UI regardless of what the real tailored result contained.
+    #[test]
+    fn debug_scores_selected_matches_what_actually_survived_into_tailored_result() {
+        let cv = LifetimeCV {
+            experiences: vec![Experience {
+                id: "e1".to_string(),
+                company: "Acme".to_string(),
+                projects: vec![
+                    ExperienceProject {
+                        id: "strong".to_string(),
+                        name: LocalizedText::same("Kubernetes Platform"),
+                        bullets: vec![LocalizedText::same(
+                            "built kubernetes rust postgresql platform",
+                        )],
+                        ..Default::default()
+                    },
+                    ExperienceProject {
+                        id: "weak".to_string(),
+                        // Shares only the word "platform" with the JD/strong
+                        // project — nonzero score, but should not clear the
+                        // relative cutoff against the strong project.
+                        name: LocalizedText::same("Unrelated Platform Work"),
+                        bullets: vec![LocalizedText::same(
+                            "unrelated legacy mainframe cobol batch platform",
+                        )],
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let jd = "Rust developer with Kubernetes and PostgreSQL platform experience";
+        let result = tailor_cv(&cv, jd);
+
+        let tailored_project_ids: HashSet<&str> = result
+            .tailored
+            .experiences
+            .iter()
+            .flat_map(|e| e.projects.iter())
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(
+            tailored_project_ids.contains("strong"),
+            "the clearly relevant project should survive into the tailored result"
+        );
+        assert!(
+            !tailored_project_ids.contains("weak"),
+            "the weakly-overlapping project should NOT survive the cutoff"
+        );
+
+        let debug_projects: Vec<&ProjectScoreDebug> = result
+            .debug_scores
+            .iter()
+            .flat_map(|e| e.projects.iter())
+            .collect();
+        let strong_debug = debug_projects.iter().find(|p| p.id == "strong").unwrap();
+        let weak_debug = debug_projects.iter().find(|p| p.id == "weak").unwrap();
+
+        assert!(
+            strong_debug.selected,
+            "strong project's debug flag should be true"
+        );
+        assert!(
+            weak_debug.score > 0.0,
+            "fixture sanity check: weak project must have SOME nonzero score \
+             for this test to actually exercise the bug"
+        );
+        assert!(
+            !weak_debug.selected,
+            "weak project scored > 0.0 but did not survive the cutoff — its \
+             debug `selected` flag must be false, not true"
         );
     }
 

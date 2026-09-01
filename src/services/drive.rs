@@ -36,7 +36,9 @@ pub fn build_backup(cv: &LifetimeCV) -> String {
 pub fn restore_from_json(json: &str) -> Result<LifetimeCV, String> {
     let data: BackupData =
         serde_json::from_str(json).map_err(|e| format!("Invalid backup: {e}"))?;
-    Ok(data.cv)
+    let mut cv = data.cv;
+    cv.backfill_project_ids();
+    Ok(cv)
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

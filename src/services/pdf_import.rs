@@ -1883,6 +1883,31 @@ fn extract_date_range_from_end(line: &str) -> Option<(String, String)> {
             // below and get misread as a brand new experience header,
             // duplicating the current one.
             let real_company_text = |s: &str| s.chars().filter(|c| c.is_alphabetic()).count() >= 2;
+            // Abbreviated-month start date, whitespace-separated from a
+            // real company/location on the same line, e.g. the layout-(c)
+            // row "· Paris, France Jan 2024 – Nov 2024". `looks_like_date_token`
+            // only recognizes full month names and bare years, so without
+            // this an abbreviated start month would fall through and the
+            // bare-year branch below would swallow only "2024", leaving
+            // "Jan" glued onto the location. This check runs *before* the
+            // strict month-name / bare-year `else if` chain below and is
+            // gated on there being real company text before the month —
+            // a bare 2-word date row like "Dec 2024 – Feb 2026" (the
+            // three-line layout, whose role/company live on *previous*
+            // lines) has no company text on this line, so it skips this
+            // branch and still falls through to the bare-year branch,
+            // preserving the pre-existing recovery path.
+            if words.len() >= 3
+                && looks_like_date_token_loose(words[words.len() - 2])
+                && words[words.len() - 1].chars().all(|c| c.is_ascii_digit())
+                && words[words.len() - 1].len() == 4
+            {
+                let start_part = format!("{} {}", words[words.len() - 2], words[words.len() - 1]);
+                let before_start = words[..words.len() - 2].join(" ");
+                if real_company_text(&before_start) {
+                    return Some((start_part, end));
+                }
+            }
             if words.len() >= 2 && looks_like_date_token(words[words.len() - 2]) {
                 let start_part = format!("{} {}", words[words.len() - 2], words[words.len() - 1]);
                 let before_start = words[..words.len() - 2].join(" ");
@@ -3580,6 +3605,7 @@ fn flush_project(
     };
 
     exp.projects.push(ExperienceProject {
+        id: uuid::Uuid::new_v4().to_string(),
         name: LocalizedText::same(name.take().unwrap_or_default()),
         context: context_items,
         // Interim staging, NOT final IDs: at this point in parsing, the

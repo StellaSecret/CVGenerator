@@ -862,6 +862,20 @@ a:hover { text-decoration: underline; }
 .kw-cloud { display: flex; flex-wrap: wrap; gap: 5px; }
 .output-actions { margin-bottom: 14px; }
 
+/* ── Manual project selection (tailor view) ─────────────────────────────────── */
+.manual-selection-panel {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: var(--bg-card);
+}
+.manual-selection-title { font-weight: 700; font-size: 0.92rem; margin: 0 0 10px; }
+.manual-selection-exp { margin-bottom: 10px; }
+.manual-selection-exp-header { font-weight: 600; font-size: 0.85rem; color: var(--text-2); margin-bottom: 4px; }
+.manual-selection-project { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 14px; font-size: 0.88rem; cursor: pointer; }
+.manual-selection-project input[type="checkbox"] { cursor: pointer; }
+
 /* ── Done screen ───────────────────────────────────────────────────────────── */
 .done-screen { text-align: center; padding: 56px 32px; }
 .done-icon { font-size: 3.5rem; margin-bottom: 18px; display: block; }

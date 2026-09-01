@@ -128,6 +128,22 @@ where
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ExperienceProject {
+    // `#[serde(default)]` handles a CV saved before this field existed —
+    // it deserializes as an empty string rather than failing the whole
+    // CV load (same reasoning as `context`'s migration above). An empty
+    // id is backfilled with a fresh one immediately after load — see
+    // `LifetimeCV::backfill_project_ids` — so nothing outside that one
+    // migration point ever has to treat "empty id" as a valid state to
+    // handle; every project has a real, stable id by the time any other
+    // code touches it.
+    //
+    // This exists specifically so the "tick projects in/out of the
+    // tailored result" UI (tailor.rs) has something reliable to key
+    // checkboxes on — every other model struct (`Experience`, `Skill`,
+    // `Education`, the standalone `Project`) already has an `id`;
+    // `ExperienceProject` was the one exception.
+    #[serde(default)]
+    pub id: String,
     pub name: LocalizedText,
     // A list, not one paragraph, matching `bullets`/`Education::achievements`
     // below — the same shape as everything else in this struct that's
@@ -401,6 +417,24 @@ pub struct LifetimeCV {
 }
 
 impl LifetimeCV {
+    /// Backfills a fresh id for any `ExperienceProject` missing one — i.e.
+    /// loaded from a CV saved before that field existed. Called at every
+    /// JSON deserialization entry point (`storage::load_cv`,
+    /// `drive::restore_from_json`) rather than relying on
+    /// `#[serde(default)]` alone: an empty string isn't a valid, stable
+    /// id, and downstream code (particularly the tailoring "tick projects
+    /// in/out" UI) needs every project to have a real one to key
+    /// checkboxes on reliably.
+    pub fn backfill_project_ids(&mut self) {
+        for exp in &mut self.experiences {
+            for proj in &mut exp.projects {
+                if proj.id.is_empty() {
+                    proj.id = uuid::Uuid::new_v4().to_string();
+                }
+            }
+        }
+    }
+
     /// All text in the CV concatenated — used by the matcher for gap analysis.
     /// Localized fields contribute both languages, so keyword matching works
     /// whichever language the job description happens to be in.

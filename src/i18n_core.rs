@@ -307,6 +307,8 @@ fn en(key: &'static str) -> &'static str {
         "tl_matched"        => "✓ Matched ({} keywords)",
         "tl_missing"        => "✗ Missing ({} keywords)",
         "tl_download"       => "⬇ Download PDF",
+        "tl_adjust_selection" => "Adjust your selection",
+        "tl_apply_selection"  => "Apply selection",
         "tl_placeholder"    => "Your tailored CV will appear here after you paste a job description and click Generate.",
 
         // Sync
@@ -491,6 +493,8 @@ fn fr(key: &'static str) -> &'static str {
         "tl_matched"        => "✓ Trouvés ({} mots-clés)",
         "tl_missing"        => "✗ Manquants ({} mots-clés)",
         "tl_download"       => "⬇ Télécharger PDF",
+        "tl_adjust_selection" => "Ajustez votre sélection",
+        "tl_apply_selection"  => "Appliquer la sélection",
         "tl_placeholder"    => "Votre CV adapté apparaîtra ici après avoir collé une fiche de poste et cliqué Générer.",
 
         // Sync
@@ -865,6 +869,8 @@ mod tests {
             ("tl_matched", "✓ Matched ({} keywords)"),
             ("tl_missing", "✗ Missing ({} keywords)"),
             ("tl_download", "⬇ Download PDF"),
+            ("tl_adjust_selection", "Adjust your selection"),
+            ("tl_apply_selection", "Apply selection"),
             ("tl_placeholder", "Your tailored CV will appear here after you paste a job description and click Generate."),
             ("sy_title", "Backup & Sync"),
             ("sy_subtitle", "Save your CV to Google Drive or export it locally."),
@@ -1030,6 +1036,8 @@ mod tests {
             ("tl_matched", "✓ Trouvés ({} mots-clés)"),
             ("tl_missing", "✗ Manquants ({} mots-clés)"),
             ("tl_download", "⬇ Télécharger PDF"),
+            ("tl_adjust_selection", "Ajustez votre sélection"),
+            ("tl_apply_selection", "Appliquer la sélection"),
             ("tl_placeholder", "Votre CV adapté apparaîtra ici après avoir collé une fiche de poste et cliqué Générer."),
             ("sy_title", "Sauvegarde et synchronisation"),
             ("sy_subtitle", "Sauvegardez votre CV sur Google Drive ou exportez-le localement."),

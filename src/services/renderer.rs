@@ -1445,6 +1445,7 @@ mod tests {
             start_date: "Jan 2020".to_string(),
             end_date: "Dec 2020".to_string(),
             projects: vec![ExperienceProject {
+                id: "p1".to_string(),
                 name: LocalizedText::same("Project X"),
                 context: vec![],
                 bullets: vec![],
@@ -1472,6 +1473,7 @@ mod tests {
             start_date: "Jan 2020".to_string(),
             end_date: "Dec 2020".to_string(),
             projects: vec![ExperienceProject {
+                id: "p1".to_string(),
                 name: LocalizedText::same(""),
                 context: vec![],
                 bullets: vec![],
@@ -1999,6 +2001,7 @@ mod tests {
             start_date: "2020".into(),
             end_date: "Present".into(),
             projects: vec![ExperienceProject {
+                id: "test-project".to_string(),
                 name: LocalizedText::same("Platform"),
                 context: vec![LocalizedText::same("Owned the **core** service")],
                 bullets: vec![LocalizedText::same("Shipped **key** feature")],

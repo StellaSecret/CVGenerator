@@ -1,10 +1,12 @@
 use crate::i18n;
 use crate::router::Route;
 use cv_generator::models::LifetimeCV;
+use cv_generator::services::matcher::apply_manual_project_selection;
 use cv_generator::services::renderer::render_tailored_cv;
 use cv_generator::services::score::ScoreMode;
 use cv_generator::services::worker::{fetch_model_bytes_cached, EmbeddingWorker, WorkerStatus};
 use dioxus::prelude::*;
+use std::collections::HashSet;
 
 #[cfg(target_arch = "wasm32")]
 fn download_pdf(iframe_id: &str, filename: &str) {
@@ -87,6 +89,26 @@ pub fn Tailor() -> Element {
         use_signal(Vec::<cv_generator::services::matcher::ExperienceScoreDebug>::new);
     let mut show_debug = use_signal(|| false);
 
+    // Manual project-selection override. `checked_project_ids` starts as
+    // whatever the automatic pass selected (initialized right after each
+    // "Générer" run), then the person can tick/untick individual projects
+    // — including re-including one the algorithm excluded entirely, since
+    // this reads from `cv` (the full CV), not the already-filtered result.
+    // Applied via an explicit "Apply selection" button rather than
+    // live-updating on every checkbox click, matching how the rest of
+    // this view already works (one explicit "Générer" action, not
+    // continuous re-render on every keystroke/change).
+    let mut checked_project_ids = use_signal(HashSet::<String>::new);
+    // The last full tailoring result (frozen at "Générer" time). Manual
+    // selection only ever overrides `.experiences` on a clone of this —
+    // `matched_keywords`/`missing_keywords`/`match_score` are deliberately
+    // NOT recomputed from the manually-adjusted experience list, since
+    // they're already defined (see matcher.rs) as being based on the
+    // CV's full text regardless of what got selected into the tailored
+    // output; recomputing them here would make this view inconsistent
+    // with what "Générer" itself reports.
+    let mut last_tailored = use_signal(|| Option::<cv_generator::models::TailoredCV>::None);
+
     let has_cv = !cv.read().personal.name.is_empty();
     let jd_empty = jd_text.read().trim().is_empty();
     let is_generated = *generated.read();
@@ -154,6 +176,8 @@ pub fn Tailor() -> Element {
     let t_match = i18n::tr("tl_match", l);
     let t_dl = i18n::tr("tl_download", l);
     let t_dl_hint = i18n::tr("pv_download_hint", l);
+    let t_adjust_selection = i18n::tr("tl_adjust_selection", l);
+    let t_apply_selection = i18n::tr("tl_apply_selection", l);
     let t_ph = i18n::tr("tl_placeholder", l);
 
     rsx! {
@@ -373,6 +397,20 @@ pub fn Tailor() -> Element {
                                     matched_kws.set(result.tailored.matched_keywords.clone());
                                     missing_kws.set(result.tailored.missing_keywords.clone());
                                     debug_scores.set(result.debug_scores.clone());
+                                    // Seed the manual override with exactly what the
+                                    // algorithm itself selected, in its own order — the
+                                    // person starts from the automatic result and adjusts
+                                    // from there, rather than from an empty checklist.
+                                    checked_project_ids.set(
+                                        result
+                                            .debug_scores
+                                            .iter()
+                                            .flat_map(|e| e.projects.iter())
+                                            .filter(|p| p.selected)
+                                            .map(|p| p.id.clone())
+                                            .collect(),
+                                    );
+                                    last_tailored.set(Some(result.tailored.clone()));
                                     result_html.set(html);
                                     generated.set(true);
                                 },
@@ -424,6 +462,65 @@ pub fn Tailor() -> Element {
                                     class: "btn btn-secondary",
                                     onclick: move |_| { let cur = *show_debug.read(); show_debug.set(!cur); },
                                     if *show_debug.read() { "Hide score debug" } else { "Show score debug" }
+                                }
+                            }
+
+                            // Manual project selection: lets the person tick/untick
+                            // individual projects in or out of the final result,
+                            // overriding the automatic scoring — the checklist starts
+                            // pre-checked to whatever the algorithm itself selected
+                            // (seeded above in the "Générer" handler). An experience's
+                            // presence is derived, not its own checkbox: it only
+                            // appears if at least one of its projects is checked.
+                            // Deliberately always visible once a result exists (not
+                            // hidden behind a toggle like the debug panel above) since
+                            // this is a real feature, not developer-facing debug info.
+                            div { class: "manual-selection-panel",
+                                p { class: "manual-selection-title", "{t_adjust_selection}" }
+                                for exp_dbg in debug_scores.read().iter() {
+                                    div { class: "manual-selection-exp",
+                                        div { class: "manual-selection-exp-header",
+                                            "{exp_dbg.company} — {exp_dbg.role}"
+                                        }
+                                        for proj_dbg in exp_dbg.projects.iter() {
+                                            {
+                                                let pid = proj_dbg.id.clone();
+                                                let is_checked = checked_project_ids.read().contains(&pid);
+                                                let proj_name = proj_dbg.name.clone();
+                                                rsx! {
+                                                    label { class: "manual-selection-project",
+                                                        input {
+                                                            r#type: "checkbox",
+                                                            checked: is_checked,
+                                                            onchange: move |e| {
+                                                                if e.checked() {
+                                                                    checked_project_ids.write().insert(pid.clone());
+                                                                } else {
+                                                                    checked_project_ids.write().remove(&pid);
+                                                                }
+                                                            },
+                                                        }
+                                                        span { "{proj_name}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                button {
+                                    class: "btn btn-primary",
+                                    onclick: move |_| {
+                                        if let Some(base) = last_tailored.read().clone() {
+                                            let mut tailored = base;
+                                            tailored.experiences = apply_manual_project_selection(
+                                                &cv.read(),
+                                                &checked_project_ids.read(),
+                                            );
+                                            let html = render_tailored_cv(&tailored, &job_title.read(), l);
+                                            result_html.set(html);
+                                        }
+                                    },
+                                    "{t_apply_selection}"
                                 }
                             }
 

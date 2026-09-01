@@ -449,6 +449,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                     button { class: "btn-text",
                         onclick: move |_| {
                             e_projects.write().push(ExperienceProject {
+                                id: new_id(),
                                 name: LocalizedText::default(),
                                 context: vec![LocalizedText::default()],
                                 bullets: vec![LocalizedText::default()],
@@ -475,6 +476,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             let id = cv.read().experiences[index].id.clone();
                             let projects: Vec<ExperienceProject> = e_projects.read().iter().map(|p| {
                                 ExperienceProject {
+                                    id: p.id.clone(),
                                     name: p.name.clone(),
                                     context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
                                     bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
@@ -568,7 +570,7 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             e_start.set(item.start_date);
                             e_end.set(item.end_date);
                             e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]
+                                vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]
                             } else {
                                 item.projects
                             });
@@ -1420,6 +1422,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_end = use_signal(|| t_present_s.to_string());
     let mut new_projects = use_signal(|| {
         vec![ExperienceProject {
+            id: new_id(),
             name: LocalizedText::default(),
             context: vec![LocalizedText::default()],
             bullets: vec![LocalizedText::default()],
@@ -1665,6 +1668,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             class: "btn-text",
                             onclick: move |_| {
                                 new_projects.write().push(ExperienceProject {
+                                    id: new_id(),
                                     name: LocalizedText::default(),
                                     context: vec![LocalizedText::default()],
                                     bullets: vec![LocalizedText::default()],
@@ -1692,6 +1696,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 if new_company.read().is_empty() || new_role.read().is_empty() { return; }
                                 let projects: Vec<ExperienceProject> = new_projects.read().iter().map(|p| {
                                     ExperienceProject {
+                                        id: p.id.clone(),
                                         name: p.name.clone(),
                                         context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
                                         bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
@@ -1710,7 +1715,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                 new_company.set(String::new()); new_role.set(LocalizedText::default());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
+                                new_projects.set(vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
                                 new_skill_ids.set(Vec::new());
                                 show_form.set(false);
                             },

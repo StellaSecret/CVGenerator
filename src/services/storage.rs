@@ -15,7 +15,9 @@ pub fn save_cv(cv: &LifetimeCV) {
 #[cfg(target_arch = "wasm32")]
 pub fn load_cv() -> Option<LifetimeCV> {
     use gloo_storage::{LocalStorage, Storage};
-    LocalStorage::get(CV_KEY).ok()
+    let mut cv: LifetimeCV = LocalStorage::get(CV_KEY).ok()?;
+    cv.backfill_project_ids();
+    Some(cv)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -47,7 +49,9 @@ pub fn save_cv(cv: &LifetimeCV) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_cv() -> Option<LifetimeCV> {
     let json = std::fs::read_to_string(data_path()).ok()?;
-    serde_json::from_str(&json).ok()
+    let mut cv: LifetimeCV = serde_json::from_str(&json).ok()?;
+    cv.backfill_project_ids();
+    Some(cv)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
