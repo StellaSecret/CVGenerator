@@ -122,6 +122,9 @@ pub fn Tailor() -> Element {
     // output; recomputing them here would make this view inconsistent
     // with what "Générer" itself reports.
     let mut last_tailored = use_signal(|| Option::<cv_generator::models::TailoredCV>::None);
+    // Set to true by "Apply selection" so the panel can show a brief
+    // confirmation that the manual selection was applied (Item #3).
+    let mut apply_confirmed = use_signal(|| false);
 
     let has_cv = !cv.read().personal.name.is_empty();
     let jd_empty = jd_text.read().trim().is_empty();
@@ -204,7 +207,19 @@ pub fn Tailor() -> Element {
     let t_dl_hint = i18n::tr("pv_download_hint", l);
     let t_adjust_selection = i18n::tr("tl_adjust_selection", l);
     let t_apply_selection = i18n::tr("tl_apply_selection", l);
+    let t_reset_algo = i18n::tr("tl_reset_algo", l);
+    let t_clear_all = i18n::tr("tl_clear_all", l);
+    let t_applied = i18n::tr("tl_applied", l);
+    let t_score_note = i18n::tr("tl_score_note", l);
     let t_ph = i18n::tr("tl_placeholder", l);
+
+    // Total number of projects across the whole CV — the denominator for the
+    // "N of M projects selected" count in the manual-selection panel.
+    let total_projects: usize = cv.read().experiences.iter().map(|e| e.projects.len()).sum();
+    let selected_count = checked_project_ids.read().len();
+    let t_n_selected = i18n::tr("tl_n_selected", l)
+        .replacen("{}", &selected_count.to_string(), 1)
+        .replacen("{}", &total_projects.to_string(), 1);
 
     rsx! {
         div { class: "page",
@@ -528,6 +543,8 @@ pub fn Tailor() -> Element {
                             // this is a real feature, not developer-facing debug info.
                             div { class: "manual-selection-panel",
                                 p { class: "manual-selection-title", "{t_adjust_selection}" }
+                                p { class: "manual-selection-count", "{t_n_selected}" }
+                                p { class: "hint", "{t_score_note}" }
                                 for exp in cv.read().experiences.iter() {
                                     div { class: "manual-selection-exp",
                                         div { class: "manual-selection-exp-header",
@@ -554,11 +571,17 @@ pub fn Tailor() -> Element {
                                                 } else {
                                                     "excluded"
                                                 };
-                                                let marker_label = match marker {
+                                                let marker_css = match marker {
                                                     "added" => "hand-added",
                                                     "removed" => "hand-removed",
-                                                    "excluded" => "not selected",
+                                                    "excluded" => "not-selected",
                                                     _ => "automatic",
+                                                };
+                                                let marker_label = match marker {
+                                                    "added" => i18n::tr("tl_marker_added", l),
+                                                    "removed" => i18n::tr("tl_marker_removed", l),
+                                                    "excluded" => i18n::tr("tl_marker_excluded", l),
+                                                    _ => i18n::tr("tl_marker_auto", l),
                                                 };
                                                 rsx! {
                                                     label {
@@ -575,7 +598,7 @@ pub fn Tailor() -> Element {
                                                             },
                                                         }
                                                         span { "{proj_name}" }
-                                                        span { class: "manual-selection-marker {marker_label}",
+                                                        span { class: "manual-selection-marker {marker_css}",
                                                             "{marker_label}"
                                                         }
                                                     }
@@ -584,20 +607,43 @@ pub fn Tailor() -> Element {
                                         }
                                     }
                                 }
-                                button {
-                                    class: "btn btn-primary",
-                                    onclick: move |_| {
-                                        if let Some(base) = last_tailored.read().clone() {
-                                            let mut tailored = base;
-                                            tailored.experiences = apply_manual_project_selection(
-                                                &cv.read(),
-                                                &checked_project_ids.read(),
-                                            );
-                                            let html = render_tailored_cv(&tailored, &job_title.read(), l);
-                                            result_html.set(html);
-                                        }
-                                    },
-                                    "{t_apply_selection}"
+                                div { class: "manual-selection-actions",
+                                    button {
+                                        class: "btn btn-secondary",
+                                        onclick: move |_| {
+                                            *checked_project_ids.write() =
+                                                last_algo_project_ids.read().clone();
+                                            apply_confirmed.set(false);
+                                        },
+                                        "{t_reset_algo}"
+                                    }
+                                    button {
+                                        class: "btn btn-secondary",
+                                        onclick: move |_| {
+                                            checked_project_ids.write().clear();
+                                            apply_confirmed.set(false);
+                                        },
+                                        "{t_clear_all}"
+                                    }
+                                    button {
+                                        class: "btn btn-primary",
+                                        onclick: move |_| {
+                                            if let Some(base) = last_tailored.read().clone() {
+                                                let mut tailored = base;
+                                                tailored.experiences = apply_manual_project_selection(
+                                                    &cv.read(),
+                                                    &checked_project_ids.read(),
+                                                );
+                                                let html = render_tailored_cv(&tailored, &job_title.read(), l);
+                                                result_html.set(html);
+                                            }
+                                            apply_confirmed.set(true);
+                                        },
+                                        "{t_apply_selection}"
+                                    }
+                                }
+                                if *apply_confirmed.read() {
+                                    p { class: "hint hint-success manual-selection-applied", "{t_applied}" }
                                 }
                             }
 
