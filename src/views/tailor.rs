@@ -6,7 +6,7 @@ use cv_generator::services::renderer::render_tailored_cv;
 use cv_generator::services::score::ScoreMode;
 use cv_generator::services::worker::{fetch_model_bytes_cached, EmbeddingWorker, WorkerStatus};
 use dioxus::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(target_arch = "wasm32")]
 fn download_pdf(iframe_id: &str, filename: &str) {
@@ -35,6 +35,14 @@ fn score_color(score: u32) -> &'static str {
         "#d97706"
     } else {
         "#dc2626"
+    }
+}
+
+fn localized(t: &cv_generator::models::LocalizedText) -> &str {
+    if !t.fr.is_empty() {
+        &t.fr
+    } else {
+        &t.en
     }
 }
 
@@ -99,6 +107,12 @@ pub fn Tailor() -> Element {
     // this view already works (one explicit "Générer" action, not
     // continuous re-render on every keystroke/change).
     let mut checked_project_ids = use_signal(HashSet::<String>::new);
+    // The algorithm's project selection from the last run, frozen at
+    // "Générer" time. Together with the live `checked_project_ids` it lets
+    // us tell apart "the algorithm picked this" from "the person changed
+    // it", and lets a later regeneration preserve the person's manual
+    // deviations instead of discarding them (Fix #2).
+    let mut last_algo_project_ids = use_signal(HashSet::<String>::new);
     // The last full tailoring result (frozen at "Générer" time). Manual
     // selection only ever overrides `.experiences` on a clone of this —
     // `matched_keywords`/`missing_keywords`/`match_score` are deliberately
@@ -163,6 +177,18 @@ pub fn Tailor() -> Element {
             }
         })
         .collect();
+
+    // Project-id → algorithm-selected lookup for the manual selection
+    // checklist. The checklist itself iterates `cv.experiences` in CV
+    // (chronological) order so its order always matches the final rendered
+    // document — not the score-sorted order `debug_scores` is stored in
+    // (Fix #1) — and this lookup supplies the per-project diff state (Fix #3).
+    let mut proj_selected: HashMap<String, bool> = HashMap::new();
+    for exp_dbg in debug_scores.read().iter() {
+        for p in &exp_dbg.projects {
+            proj_selected.insert(p.id.clone(), p.selected);
+        }
+    }
 
     let t_nav = i18n::tr("nav_back", l);
     let t_full = i18n::tr("tl_full_cv", l);
@@ -397,19 +423,39 @@ pub fn Tailor() -> Element {
                                     matched_kws.set(result.tailored.matched_keywords.clone());
                                     missing_kws.set(result.tailored.missing_keywords.clone());
                                     debug_scores.set(result.debug_scores.clone());
-                                    // Seed the manual override with exactly what the
-                                    // algorithm itself selected, in its own order — the
-                                    // person starts from the automatic result and adjusts
-                                    // from there, rather than from an empty checklist.
-                                    checked_project_ids.set(
-                                        result
-                                            .debug_scores
-                                            .iter()
-                                            .flat_map(|e| e.projects.iter())
-                                            .filter(|p| p.selected)
-                                            .map(|p| p.id.clone())
-                                            .collect(),
-                                    );
+                                    // Seed the manual override. Instead of blindly replacing
+                                    // the checklist with the new algorithm selection (which
+                                    // would silently discard the person's manual tweaks on
+                                    // every regeneration), merge: preserve the previous
+                                    // manual checked set, then fold in the new algorithm's
+                                    // picks for anything the person hadn't explicitly removed.
+                                    let new_algo: HashSet<String> = result
+                                        .debug_scores
+                                        .iter()
+                                        .flat_map(|e| e.projects.iter())
+                                        .filter(|p| p.selected)
+                                        .map(|p| p.id.clone())
+                                        .collect();
+                                    {
+                                        let prev_checked = checked_project_ids.read().clone();
+                                        let prev_algo = last_algo_project_ids.read();
+                                        // ids the person checked that the algorithm hadn't
+                                        // picked — keep them (they're deliberate additions)
+                                        // and ids the person unchecked that the algorithm
+                                        // had picked — don't re-add them on regeneration.
+                                        let user_removed: HashSet<String> = prev_algo
+                                            .difference(&prev_checked)
+                                            .cloned()
+                                            .collect();
+                                        let mut merged = prev_checked;
+                                        for id in &new_algo {
+                                            if !user_removed.contains(id) {
+                                                merged.insert(id.clone());
+                                            }
+                                        }
+                                        checked_project_ids.set(merged);
+                                    }
+                                    last_algo_project_ids.set(new_algo);
                                     last_tailored.set(Some(result.tailored.clone()));
                                     result_html.set(html);
                                     generated.set(true);
@@ -467,28 +513,56 @@ pub fn Tailor() -> Element {
 
                             // Manual project selection: lets the person tick/untick
                             // individual projects in or out of the final result,
-                            // overriding the automatic scoring — the checklist starts
-                            // pre-checked to whatever the algorithm itself selected
-                            // (seeded above in the "Générer" handler). An experience's
-                            // presence is derived, not its own checkbox: it only
-                            // appears if at least one of its projects is checked.
+                            // overriding the automatic scoring. The checklist is
+                            // built from `cv.experiences` (not `debug_scores`) so its
+                            // order always matches the final rendered document, which
+                            // reads chronologically — the score-ranked order would make
+                            // the checklist a misleading representation of the output
+                            // (Fix #1). An experience's presence is derived, not its own
+                            // checkbox: it only appears if at least one of its projects
+                            // is checked. Each project shows a small marker telling the
+                            // person whether it's an automatic pick, one they added by
+                            // hand, or one they removed (Fix #3).
                             // Deliberately always visible once a result exists (not
                             // hidden behind a toggle like the debug panel above) since
                             // this is a real feature, not developer-facing debug info.
                             div { class: "manual-selection-panel",
                                 p { class: "manual-selection-title", "{t_adjust_selection}" }
-                                for exp_dbg in debug_scores.read().iter() {
+                                for exp in cv.read().experiences.iter() {
                                     div { class: "manual-selection-exp",
                                         div { class: "manual-selection-exp-header",
-                                            "{exp_dbg.company} — {exp_dbg.role}"
+                                            "{exp.company} — {localized(&exp.role)}"
                                         }
-                                        for proj_dbg in exp_dbg.projects.iter() {
+                                        for proj in exp.projects.iter() {
                                             {
-                                                let pid = proj_dbg.id.clone();
+                                                let pid = proj.id.clone();
                                                 let is_checked = checked_project_ids.read().contains(&pid);
-                                                let proj_name = proj_dbg.name.clone();
+                                                let proj_name = localized(&proj.name).to_string();
+                                                // Algorithm decision for this project (score,
+                                                // whether the scorer selected it). Falls back to
+                                                // "not selected" when the project has no debug
+                                                // entry (defensive; every stored project has one).
+                                                let algo_selected = *proj_selected
+                                                    .get(&pid)
+                                                    .unwrap_or(&false);
+                                                let marker = if is_checked && algo_selected {
+                                                    "auto"
+                                                } else if is_checked {
+                                                    "added"
+                                                } else if algo_selected {
+                                                    "removed"
+                                                } else {
+                                                    "excluded"
+                                                };
+                                                let marker_label = match marker {
+                                                    "added" => "hand-added",
+                                                    "removed" => "hand-removed",
+                                                    "excluded" => "not selected",
+                                                    _ => "automatic",
+                                                };
                                                 rsx! {
-                                                    label { class: "manual-selection-project",
+                                                    label {
+                                                        class: "manual-selection-project manual-selection-project-{marker}",
                                                         input {
                                                             r#type: "checkbox",
                                                             checked: is_checked,
@@ -501,6 +575,9 @@ pub fn Tailor() -> Element {
                                                             },
                                                         }
                                                         span { "{proj_name}" }
+                                                        span { class: "manual-selection-marker {marker_label}",
+                                                            "{marker_label}"
+                                                        }
                                                     }
                                                 }
                                             }
