@@ -45,7 +45,27 @@ else
   echo "ℹ️  gitleaks non installé — ignoré (brew install gitleaks pour l'activer)"
 fi
 
-# ── 4. Fichiers volumineux ─────────────────────────────────
+# ── 4. Marqueurs cargo-mutants oubliés ─────────────────────
+# cargo-mutants applique une mutation, lance les tests, puis doit la
+# restaurer — que la mutation ait été détectée ou non. Si cette étape
+# échoue ou est interrompue (run interrompu, copier-coller manuel en
+# investiguant un mutant non détecté...), la ligne mutée — généralement
+# cassée — peut rester commitée à la place du code original. C'est
+# déjà arrivé une fois pour de vrai (un `&&`/`||` interverti dans
+# linkedin_import.rs qui corrompait silencieusement le parsing de
+# dates) ; cette vérification bloque le commit avant que ça ne se
+# reproduise sans être remarqué.
+if [ -n "$RUST_STAGED" ]; then
+  MUTANT_HITS=$(echo "$RUST_STAGED" | xargs grep -l "changed by cargo-mutants" 2>/dev/null || true)
+  if [ -n "$MUTANT_HITS" ]; then
+    echo "❌ Marqueur cargo-mutants trouvé dans le code stagé — commit bloqué :"
+    echo "$MUTANT_HITS"
+    echo "   Restaurez la logique d'origine avant de commiter."
+    exit 1
+  fi
+fi
+
+# ── 5. Fichiers volumineux ─────────────────────────────────
 LARGE=$(git diff --cached --name-only | while read f; do
   [ -f "$f" ] && size=$(wc -c < "$f") && [ "$size" -gt 512000 ] && echo "$f ($((size/1024)) KB)"
 done)
@@ -56,7 +76,7 @@ if [ -n "$LARGE" ]; then
   exit 1
 fi
 
-# ── 5. Reminder ────────────────────────────────────────────
+# ── 6. Reminder ────────────────────────────────────────────
 echo ""
 echo "⚠️  CV Generator — pre-commit checks passed"
 echo ""

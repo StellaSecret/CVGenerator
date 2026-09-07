@@ -46,6 +46,33 @@ fn localized(t: &cv_generator::models::LocalizedText) -> &str {
     }
 }
 
+/// Auto-persists the working state (JD text, job title, score mode,
+/// manual project selection) into the single "current session" storage
+/// slot — see `TailoringSession`'s doc comment for why this is kept
+/// separate from the named saved-sessions list. Called on every
+/// meaningful change (JD/job-title edits, checkbox toggles, mode
+/// switches, and the Générer/Apply/Reset/Clear actions) rather than
+/// debounced: a textarea-sized write to localStorage is cheap enough
+/// that the simplicity of "just always save" wins over adding a debounce
+/// mechanism for a save that's already sub-millisecond.
+fn persist_current_session(
+    job_title: &str,
+    jd_text: &str,
+    score_mode: ScoreMode,
+    checked_project_ids: &std::collections::HashSet<String>,
+) {
+    let session = cv_generator::models::TailoringSession {
+        id: "current".to_string(),
+        name: String::new(),
+        job_title: job_title.to_string(),
+        jd_text: jd_text.to_string(),
+        score_mode,
+        checked_project_ids: checked_project_ids.iter().cloned().collect(),
+        updated_at_ms: 0,
+    };
+    cv_generator::services::storage::save_current_session(&session);
+}
+
 fn mode_label(mode: ScoreMode, l: i18n::Lang) -> &'static str {
     match mode {
         ScoreMode::Keyword => match l {
@@ -126,6 +153,34 @@ pub fn Tailor() -> Element {
     // confirmation that the manual selection was applied (Item #3).
     let mut apply_confirmed = use_signal(|| false);
 
+    // Named, explicitly-saved sessions (Item #3) — distinct from the
+    // always-on auto-saved "current session" above; see
+    // TailoringSession's doc comment for why. Loaded once on mount in
+    // the same use_hook as the current-session restore below.
+    let mut saved_sessions = use_signal(Vec::<cv_generator::models::TailoringSession>::new);
+    let mut new_session_name = use_signal(String::new);
+
+    // Restore the auto-saved "current session" on mount (Item #2) — a
+    // reload or accidental navigation-away no longer loses an
+    // in-progress JD paste or manual selection. `checked_project_ids` is
+    // restored directly (not merged through the usual algorithm-vs-manual
+    // logic, since there's no fresh algorithm run to merge against yet);
+    // `last_algo_project_ids` is seeded to the SAME restored set, which
+    // means the next "Générer" run treats everything restored as already
+    // wanted and only ever ADDS new algorithm picks on top of it, never
+    // silently drops something the person had kept before reloading.
+    use_hook(|| {
+        if let Some(session) = cv_generator::services::storage::load_current_session() {
+            job_title.set(session.job_title);
+            jd_text.set(session.jd_text);
+            score_mode.set(session.score_mode);
+            let restored: HashSet<String> = session.checked_project_ids.into_iter().collect();
+            checked_project_ids.set(restored.clone());
+            last_algo_project_ids.set(restored);
+        }
+        saved_sessions.set(cv_generator::services::storage::load_sessions_list());
+    });
+
     let has_cv = !cv.read().personal.name.is_empty();
     let jd_empty = jd_text.read().trim().is_empty();
     let is_generated = *generated.read();
@@ -200,6 +255,13 @@ pub fn Tailor() -> Element {
     let t_empty = i18n::tr("tl_empty", l);
     let t_build = i18n::tr("tl_build_cv", l);
     let t_jt_lbl = i18n::tr("tl_job_title", l);
+    let t_saved_sessions = i18n::tr("tl_saved_sessions", l);
+    let t_save_as = i18n::tr("tl_save_as", l);
+    let t_save_as_placeholder = i18n::tr("tl_save_as_placeholder", l);
+    let t_save = i18n::tr("tl_save", l);
+    let t_load = i18n::tr("tl_load", l);
+    let t_delete = i18n::tr("tl_delete", l);
+    let t_no_saved_sessions = i18n::tr("tl_no_saved_sessions", l);
     let t_jd_lbl = i18n::tr("tl_jd_label", l);
     let t_gen = i18n::tr("tl_generate", l);
     let t_match = i18n::tr("tl_match", l);
@@ -241,13 +303,114 @@ pub fn Tailor() -> Element {
                 div { class: "tailor-layout",
                     div { class: "tailor-input",
                         div { class: "form-section",
+                            div { class: "saved-sessions-panel",
+                                p { class: "saved-sessions-title", "{t_saved_sessions}" }
+                                if saved_sessions.read().is_empty() {
+                                    p { class: "hint", "{t_no_saved_sessions}" }
+                                } else {
+                                    for session in saved_sessions.read().iter().cloned() {
+                                        {
+                                            let session_name = session.name.clone();
+                                            let session_for_load = session.clone();
+                                            let session_id_for_delete = session.id.clone();
+                                            rsx! {
+                                                div { class: "saved-session-row",
+                                                    span { class: "saved-session-name", "{session_name}" }
+                                                    button {
+                                                        class: "btn-text",
+                                                        onclick: move |_| {
+                                                            let session = session_for_load.clone();
+                                                            job_title.set(session.job_title.clone());
+                                                            jd_text.set(session.jd_text.clone());
+                                                            score_mode.set(session.score_mode);
+                                                            let restored: HashSet<String> =
+                                                                session.checked_project_ids.iter().cloned().collect();
+                                                            checked_project_ids.set(restored.clone());
+                                                            last_algo_project_ids.set(restored);
+                                                            // Loading a saved session also makes it
+                                                            // the new "current session" going
+                                                            // forward, so continuing to edit from
+                                                            // here keeps auto-persisting correctly.
+                                                            persist_current_session(
+                                                                &job_title.read(),
+                                                                &jd_text.read(),
+                                                                *score_mode.read(),
+                                                                &checked_project_ids.read(),
+                                                            );
+                                                        },
+                                                        "{t_load}"
+                                                    }
+                                                    button {
+                                                        class: "btn-text btn-text-danger",
+                                                        onclick: move |_| {
+                                                            let session_id = session_id_for_delete.clone();
+                                                            saved_sessions.write().retain(|s| s.id != session_id);
+                                                            cv_generator::services::storage::save_sessions_list(
+                                                                &saved_sessions.read(),
+                                                            );
+                                                        },
+                                                        "{t_delete}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                div { class: "saved-session-save-row",
+                                    label { class: "sr-only", r#for: "save-session-name-input", "{t_save_as}" }
+                                    input {
+                                        id: "save-session-name-input",
+                                        r#type: "text", class: "input",
+                                        placeholder: "{t_save_as_placeholder}",
+                                        value: new_session_name.read().clone(),
+                                        oninput: move |e| { new_session_name.set(e.value()); },
+                                    }
+                                    button {
+                                        class: "btn btn-secondary",
+                                        disabled: new_session_name.read().trim().is_empty(),
+                                        onclick: move |_| {
+                                            let name = new_session_name.read().trim().to_string();
+                                            if name.is_empty() {
+                                                return;
+                                            }
+                                            let session = cv_generator::models::TailoringSession {
+                                                id: uuid::Uuid::new_v4().to_string(),
+                                                name,
+                                                job_title: job_title.read().clone(),
+                                                jd_text: jd_text.read().clone(),
+                                                score_mode: *score_mode.read(),
+                                                checked_project_ids: checked_project_ids
+                                                    .read()
+                                                    .iter()
+                                                    .cloned()
+                                                    .collect(),
+                                                updated_at_ms: 0,
+                                            };
+                                            saved_sessions.write().push(session);
+                                            cv_generator::services::storage::save_sessions_list(
+                                                &saved_sessions.read(),
+                                            );
+                                            new_session_name.set(String::new());
+                                        },
+                                        "{t_save}"
+                                    }
+                                }
+                            }
                             div { class: "field",
                                 label { class: "label", "{t_jt_lbl}" }
                                 input {
                                     r#type: "text", class: "input",
                                     placeholder: "Senior Rust Engineer at Acme",
                                     value: job_title.read().clone(),
-                                    oninput: move |e| { job_title.set(e.value()); },
+                                    oninput: move |e| {
+                                        job_title.set(e.value());
+                                        persist_current_session(
+                                            &job_title.read(),
+                                            &jd_text.read(),
+                                            *score_mode.read(),
+                                            &checked_project_ids.read(),
+                                        );
+                                    },
                                 }
                             }
                             div { class: "field",
@@ -256,7 +419,15 @@ pub fn Tailor() -> Element {
                                     class: "input textarea jd-textarea", rows: "18",
                                     placeholder: "Paste the complete job posting here…",
                                     value: jd_text.read().clone(),
-                                    oninput: move |e| { jd_text.set(e.value()); },
+                                    oninput: move |e| {
+                                        jd_text.set(e.value());
+                                        persist_current_session(
+                                            &job_title.read(),
+                                            &jd_text.read(),
+                                            *score_mode.read(),
+                                            &checked_project_ids.read(),
+                                        );
+                                    },
                                 }
                             }
 
@@ -271,7 +442,15 @@ pub fn Tailor() -> Element {
                                     for mode in [ScoreMode::Keyword, ScoreMode::Embedding, ScoreMode::Hybrid] {
                                         button {
                                             class: if current_mode == mode { "mode-btn active" } else { "mode-btn" },
-                                            onclick: move |_| { score_mode.set(mode); },
+                                            onclick: move |_| {
+                                                score_mode.set(mode);
+                                                persist_current_session(
+                                                    &job_title.read(),
+                                                    &jd_text.read(),
+                                                    mode,
+                                                    &checked_project_ids.read(),
+                                                );
+                                            },
                                             "{mode_label(mode, l)}"
                                         }
                                     }
@@ -474,6 +653,12 @@ pub fn Tailor() -> Element {
                                     last_tailored.set(Some(result.tailored.clone()));
                                     result_html.set(html);
                                     generated.set(true);
+                                    persist_current_session(
+                                        &job_title.read(),
+                                        &jd_text.read(),
+                                        mode,
+                                        &checked_project_ids.read(),
+                                    );
                                 },
                                 "{t_gen}"
                             }
@@ -595,6 +780,12 @@ pub fn Tailor() -> Element {
                                                                 } else {
                                                                     checked_project_ids.write().remove(&pid);
                                                                 }
+                                                                persist_current_session(
+                                                                    &job_title.read(),
+                                                                    &jd_text.read(),
+                                                                    *score_mode.read(),
+                                                                    &checked_project_ids.read(),
+                                                                );
                                                             },
                                                         }
                                                         span { "{proj_name}" }
@@ -614,6 +805,12 @@ pub fn Tailor() -> Element {
                                             *checked_project_ids.write() =
                                                 last_algo_project_ids.read().clone();
                                             apply_confirmed.set(false);
+                                            persist_current_session(
+                                                &job_title.read(),
+                                                &jd_text.read(),
+                                                *score_mode.read(),
+                                                &checked_project_ids.read(),
+                                            );
                                         },
                                         "{t_reset_algo}"
                                     }
@@ -622,6 +819,12 @@ pub fn Tailor() -> Element {
                                         onclick: move |_| {
                                             checked_project_ids.write().clear();
                                             apply_confirmed.set(false);
+                                            persist_current_session(
+                                                &job_title.read(),
+                                                &jd_text.read(),
+                                                *score_mode.read(),
+                                                &checked_project_ids.read(),
+                                            );
                                         },
                                         "{t_clear_all}"
                                     }
