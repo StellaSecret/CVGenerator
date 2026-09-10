@@ -168,8 +168,7 @@ pub struct ExperienceProject {
     pub bullets: Vec<LocalizedText>,
     // References into `cv.skills` (by `Skill.id`), NOT free-text tool
     // names. Deliberately strict: the editor only lets you pick from
-    // skills that already exist in `cv.skills` (reusing the same
-    // `skill_ids` pattern `Experience` already uses), rather than
+    // skills that already exist in `cv.skills`, rather than
     // free-typed text that drifts in spelling/casing from the CV's
     // canonical skill names (which is exactly what caused several
     // keyword-matching bugs earlier — "K8s" vs "Kubernetes", accents,
@@ -202,8 +201,6 @@ pub struct Experience {
     pub start_date: String,               // "Jan 2021"
     pub end_date: String,                 // "Present" or "Mar 2024"
     pub projects: Vec<ExperienceProject>, // sub-projects within this role
-    #[serde(default)]
-    pub skill_ids: Vec<String>, // references to skills defined in cv.skills
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────

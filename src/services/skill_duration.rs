@@ -120,31 +120,16 @@ fn merge_intervals(mut intervals: Vec<(YearMonth, YearMonth)>) -> Vec<(YearMonth
 }
 
 /// Total months of experience with `skill_id`, derived from every
-/// experience/project that references it (via `skill_ids`), with
-/// overlapping time ranges deduplicated rather than summed twice.
+/// project that references it (via `skill_ids`), with overlapping time
+/// ranges deduplicated rather than summed twice.
 ///
-/// Checks both levels: an `Experience`'s own `skill_ids` (using that
-/// experience's full date range), and each of its `projects`' `skill_ids`
-/// (using that project's own dates, falling back independently per-field
-/// to the parent experience's dates when the project doesn't have its
-/// own — a project often only has one of start/end set, or neither).
-/// Checking both can't double-count: identical or overlapping intervals
-/// from both simply merge into one span.
+/// Uses each project's own dates, falling back independently per-field to
+/// the parent experience's dates when the project doesn't have its own —
+/// a project often only has one of start/end set, or neither.
 pub fn total_months_for_skill(skill_id: &str, experiences: &[Experience], now: YearMonth) -> i64 {
     let mut intervals: Vec<(YearMonth, YearMonth)> = Vec::new();
 
     for exp in experiences {
-        if exp.skill_ids.iter().any(|id| id == skill_id) {
-            if let (Some(s), Some(e)) = (
-                parse_month_year(&exp.start_date, now),
-                parse_month_year(&exp.end_date, now),
-            ) {
-                if month_index(s) <= month_index(e) {
-                    intervals.push((s, e));
-                }
-            }
-        }
-
         for proj in &exp.projects {
             if !proj.skill_ids.iter().any(|id| id == skill_id) {
                 continue;
@@ -368,15 +353,14 @@ mod tests {
     }
 
     #[test]
-    fn total_months_counts_experience_level_skill_ids_too() {
+    fn total_months_ignores_experiences_with_no_tagged_projects() {
         let exp = Experience {
             start_date: "Jan 2019".to_string(),
             end_date: "Dec 2019".to_string(),
-            skill_ids: vec!["s-leadership".to_string()],
-            projects: vec![], // no projects at all — only the exp-level tag
+            projects: vec![], // no projects at all — nothing to tag against
             ..Default::default()
         };
-        assert_eq!(total_months_for_skill("s-leadership", &[exp], NOW), 12);
+        assert_eq!(total_months_for_skill("s-leadership", &[exp], NOW), 0);
     }
 
     #[test]

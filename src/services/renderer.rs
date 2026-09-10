@@ -1192,7 +1192,10 @@ mod tests {
         let experiences = vec![Experience {
             start_date: "Jan 2020".to_string(),
             end_date: "Dec 2021".to_string(),
-            skill_ids: vec!["s1".to_string()],
+            projects: vec![ExperienceProject {
+                skill_ids: vec!["s1".to_string()],
+                ..Default::default()
+            }],
             ..Default::default()
         }];
         let html = render_skills(&skills, &experiences, Lang::En);
@@ -1246,7 +1249,10 @@ mod tests {
         let experiences = vec![Experience {
             start_date: "Jan 2020".to_string(),
             end_date: "Dec 2021".to_string(),
-            skill_ids: vec!["s1".to_string()],
+            projects: vec![ExperienceProject {
+                skill_ids: vec!["s1".to_string()],
+                ..Default::default()
+            }],
             ..Default::default()
         }];
         let html = render_skills(&skills, &experiences, Lang::En);
@@ -1453,7 +1459,6 @@ mod tests {
                 start_date: "Jan 2021".to_string(),
                 end_date: String::new(),
             }],
-            skill_ids: vec![],
         });
         let html = render_lifetime_cv(&cv, Lang::En);
         assert!(
@@ -1481,7 +1486,6 @@ mod tests {
                 start_date: "Jan 2021".to_string(),
                 end_date: "Mar 2021".to_string(),
             }],
-            skill_ids: vec![],
         });
         let html = render_lifetime_cv(&cv, Lang::En);
         assert!(
@@ -2009,7 +2013,6 @@ mod tests {
                 start_date: String::new(),
                 end_date: String::new(),
             }],
-            skill_ids: vec![],
         });
         let html = render_lifetime_cv(&cv, Lang::En);
         assert!(html.contains("Owned the <strong>core</strong> service"));

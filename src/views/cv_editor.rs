@@ -239,7 +239,6 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let mut e_start = use_signal(String::new);
     let mut e_end = use_signal(String::new);
     let mut e_projects = use_signal(Vec::<ExperienceProject>::new);
-    let mut e_skill_ids = use_signal(Vec::<String>::new);
     let all_skills = cv.read().skills.clone();
 
     let t_save = i18n::tr("ed_save_changes", *lang.read());
@@ -258,8 +257,6 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let t_add_project = i18n::tr("ed_add_project", *lang.read());
     let t_project_ctx = i18n::tr("ed_project_context", *lang.read());
     let t_add_context = i18n::tr("ed_add_context", *lang.read());
-    let t_skills_used = i18n::tr("ed_skills_used", *lang.read());
-    let t_skills_used_hint = i18n::tr("ed_skills_used_hint", *lang.read());
 
     if *editing.read() {
         rsx! {
@@ -461,15 +458,6 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                         "{t_add_project}"
                     }
                 }
-                div { class: "field",
-                    label { class: "label", "{t_skills_used}" }
-                    p { class: "hint", "{t_skills_used_hint}" }
-                    div { class: "skill-picker",
-                        for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
-                            SkillCheckbox { id: sk.0, name: sk.1, cat: sk.2, selected: e_skill_ids }
-                        }
-                    }
-                }
                 div { class: "form-actions",
                     button { class: "btn btn-primary",
                         onclick: move |_| {
@@ -493,7 +481,6 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 start_date: e_start.read().clone(),
                                 end_date: e_end.read().clone(),
                                 projects,
-                                skill_ids: e_skill_ids.read().clone(),
                             };
                             editing.set(false);
                         },
@@ -540,13 +527,6 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             }
                         }
                     }
-                    if !exp.skill_ids.is_empty() {
-                        div { class: "item-tags",
-                            for sk_name in exp.skill_ids.iter().filter_map(|id| all_skills.iter().find(|s| &s.id == id).map(|s| s.name.clone())) {
-                                span { class: "tag", "{sk_name}" }
-                            }
-                        }
-                    }
                 }
                 div { class: "item-actions",
                     if index > 0 {
@@ -574,7 +554,6 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                             } else {
                                 item.projects
                             });
-                            e_skill_ids.set(item.skill_ids);
                             editing.set(true);
                         },
                         "✎"
@@ -1431,7 +1410,6 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
             end_date: String::new(),
         }]
     });
-    let mut new_skill_ids = use_signal(Vec::<String>::new);
     let all_skills = cv.read().skills.clone();
 
     let experiences: Vec<Experience> = cv.read().experiences.clone();
@@ -1457,8 +1435,6 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_project_ctx = i18n::tr("ed_project_context", l);
     let t_add_context = i18n::tr("ed_add_context", l);
     let t_cancel = i18n::tr("ed_cancel", l);
-    let t_skills_used = i18n::tr("ed_skills_used", l);
-    let t_skills_used_hint = i18n::tr("ed_skills_used_hint", l);
 
     rsx! {
         div { class: "form-section",
@@ -1680,15 +1656,6 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                             "{t_add_project}"
                         }
                     }
-                    div { class: "field",
-                        label { class: "label", "{t_skills_used}" }
-                        p { class: "hint", "{t_skills_used_hint}" }
-                        div { class: "skill-picker",
-                            for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
-                                SkillCheckbox { id: sk.0, name: sk.1, cat: sk.2, selected: new_skill_ids }
-                            }
-                        }
-                    }
                     div { class: "form-actions",
                         button {
                             class: "btn btn-primary",
@@ -1710,13 +1677,11 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     role: new_role.read().clone(), location: new_loc.read().clone(),
                                     start_date: new_start.read().clone(), end_date: new_end.read().clone(),
                                     projects,
-                                    skill_ids: new_skill_ids.read().clone(),
                                 });
                                 new_company.set(String::new()); new_role.set(LocalizedText::default());
                                 new_loc.set(String::new());     new_start.set(String::new());
                                 new_end.set(t_present.to_string());
                                 new_projects.set(vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
-                                new_skill_ids.set(Vec::new());
                                 show_form.set(false);
                             },
                             "{t_add_pos}"
