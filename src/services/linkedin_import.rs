@@ -589,11 +589,12 @@ fn parse_linkedin_experiences(lines: &[String]) -> Vec<Experience> {
 /// currently-in-progress entry may omit either).
 fn parse_linkedin_education(lines: &[String]) -> Vec<Education> {
     let mut out = Vec::new();
-    let mut i = 0;
-    while i + 1 < lines.len() {
-        let institution = lines[i].clone();
-        let detail = lines[i + 1].replace('\u{a0}', " ");
-        i += 2;
+    for pair in lines.chunks(2) {
+        if pair.len() < 2 {
+            break;
+        }
+        let institution = pair[0].clone();
+        let detail = pair[1].replace('\u{a0}', " ");
 
         let (degree_field, years) = match (detail.rfind('('), detail.rfind(')')) {
             (Some(open), Some(close)) if open < close => (
@@ -774,6 +775,24 @@ mod tests {
         assert_eq!(cv.education[0].field.en, "Computer Science");
         assert_eq!(cv.education[0].start_year, "2014");
         assert_eq!(cv.education[0].end_year, "2018");
+    }
+
+    /// Regression test: LinkedIn education entries are exactly two lines
+    /// each (institution, then detail). A trailing, unpaired institution
+    /// line at the end of the section — with no detail line after it —
+    /// must be dropped rather than read one line past the end of the
+    /// slice. (A `<` → `<=` or `+` → `*` flip of the loop bound would
+    /// walk off the end and panic on this input instead.)
+    #[test]
+    fn parse_linkedin_education_ignores_trailing_unpaired_line() {
+        let lines = vec![
+            "State University".to_string(),
+            "Bachelor of Science, Computer Science · (2014 - 2018)".to_string(),
+            "Orphan Trailing Institution".to_string(),
+        ];
+        let edus = parse_linkedin_education(&lines);
+        assert_eq!(edus.len(), 1);
+        assert_eq!(edus[0].institution, "State University");
     }
 
     /// Regression test: a line that carries no alphanumeric characters at
