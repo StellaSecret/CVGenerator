@@ -4015,6 +4015,10 @@ const SKILL_CATEGORY_LABELS: &[(&str, SkillCategory)] = &[
     ("framework", SkillCategory::Programming), // pre-migration label
     ("database", SkillCategory::Database),
     ("tool", SkillCategory::AutomationDevOps), // pre-migration label
+    (
+        "collaboration & process",
+        SkillCategory::CollaborationProcess,
+    ),
 ];
 
 pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {

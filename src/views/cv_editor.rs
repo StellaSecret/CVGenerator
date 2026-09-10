@@ -604,6 +604,7 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
                                     "Monitoring" => SkillCategory::Monitoring,
                                     "Automation & DevOps" => SkillCategory::AutomationDevOps,
                                     "Middleware" => SkillCategory::Middleware,
+                                    "Collaboration & Process" => SkillCategory::CollaborationProcess,
                                     _           => SkillCategory::Programming,
                                 });
                             },
@@ -1757,6 +1758,7 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                     "Monitoring" => SkillCategory::Monitoring,
                                     "Automation & DevOps" => SkillCategory::AutomationDevOps,
                                     "Middleware" => SkillCategory::Middleware,
+                                    "Collaboration & Process" => SkillCategory::CollaborationProcess,
                                     _           => SkillCategory::Programming,
                                 });
                             },

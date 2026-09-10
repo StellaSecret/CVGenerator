@@ -242,6 +242,7 @@ pub enum SkillCategory {
     Monitoring,
     Middleware,
     Database,
+    CollaborationProcess,
 }
 
 impl SkillCategory {
@@ -253,6 +254,7 @@ impl SkillCategory {
             Self::Monitoring => "Monitoring",
             Self::Middleware => "Middleware",
             Self::Database => "Database",
+            Self::CollaborationProcess => "Collaboration & Process",
         }
     }
     pub fn label_fr(&self) -> &str {
@@ -263,6 +265,7 @@ impl SkillCategory {
             Self::Monitoring => "Supervision",
             Self::Middleware => "Middleware",
             Self::Database => "Bases de données",
+            Self::CollaborationProcess => "Collaboration & Processus",
         }
     }
     pub fn all() -> Vec<Self> {
@@ -273,6 +276,7 @@ impl SkillCategory {
             Self::Monitoring,
             Self::Middleware,
             Self::Database,
+            Self::CollaborationProcess,
         ]
     }
 }
@@ -892,8 +896,8 @@ mod tests {
         let all = SkillCategory::all();
         assert_eq!(
             all.len(),
-            6,
-            "SkillCategory::all() should return all 6 variants"
+            7,
+            "SkillCategory::all() should return all 7 variants"
         );
         assert!(all.contains(&SkillCategory::Programming));
         assert!(all.contains(&SkillCategory::PlatformsInfrastructure));
