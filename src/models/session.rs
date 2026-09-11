@@ -1,6 +1,56 @@
 use crate::services::score::ScoreMode;
 use serde::{Deserialize, Serialize};
 
+/// Lifecycle of a job application tracked in the saved-sessions list.
+/// Serialized as snake_case (`applied`, `interviewing`, `offer`,
+/// `rejected`) so stored values are stable and human-readable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationStatus {
+    #[default]
+    Applied,
+    Interviewing,
+    Offer,
+    Rejected,
+}
+
+impl ApplicationStatus {
+    pub const ALL: [ApplicationStatus; 4] = [
+        Self::Applied,
+        Self::Interviewing,
+        Self::Offer,
+        Self::Rejected,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Interviewing => "interviewing",
+            Self::Offer => "offer",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "interviewing" => Self::Interviewing,
+            "offer" => Self::Offer,
+            "rejected" => Self::Rejected,
+            _ => Self::Applied,
+        }
+    }
+
+    /// i18n key rendering this status's display label.
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            Self::Applied => "tl_status_applied",
+            Self::Interviewing => "tl_status_interviewing",
+            Self::Offer => "tl_status_offer",
+            Self::Rejected => "tl_status_rejected",
+        }
+    }
+}
+
 /// A snapshot of everything needed to resume a tailoring session: the job
 /// description text, the score mode used to generate against it, and the
 /// person's manual project-selection overrides (see
@@ -40,4 +90,40 @@ pub struct TailoringSession {
     pub checked_project_ids: Vec<String>,
     #[serde(default)]
     pub updated_at_ms: i64,
+    /// Match score (0.0–1.0, the same fraction `TailoredCV.match_score`
+    /// uses) captured when the session was saved, so the saved-sessions
+    /// list doubles as a lightweight application tracker.
+    #[serde(default)]
+    pub match_score: f32,
+    /// ISO date (YYYY-MM-DD) the person applied, captured at save time.
+    #[serde(default)]
+    pub date_applied: String,
+    /// Lifecycle of this application. Defaults to `Applied` so sessions
+    /// and backups written before this field existed still deserialize.
+    #[serde(default)]
+    pub status: ApplicationStatus,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserializes_sessions_written_before_tracking_fields_existed() {
+        let old = r#"{"id":"s1","name":"Acme","job_title":"Engineer","jd_text":"jd","checked_project_ids":["p1"],"updated_at_ms":0}"#;
+        let s: TailoringSession = serde_json::from_str(old).expect("old JSON must still load");
+        assert_eq!(s.status, ApplicationStatus::Applied);
+        assert_eq!(s.date_applied, "");
+        assert_eq!(s.match_score, 0.0);
+    }
+
+    #[test]
+    fn status_serde_roundtrip_and_labels_agree() {
+        for st in ApplicationStatus::ALL {
+            let json = serde_json::to_string(&st).unwrap();
+            assert_eq!(json, format!("\"{}\"", st.as_str()));
+            assert_eq!(ApplicationStatus::from_key(st.as_str()), st);
+            assert!(!st.i18n_key().is_empty());
+        }
+    }
 }

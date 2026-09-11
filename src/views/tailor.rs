@@ -38,6 +38,34 @@ fn score_color(score: u32) -> &'static str {
     }
 }
 
+/// `YYYY-MM-DD` for the "applied on" stamp. Web builds read the real
+/// clock; native builds only exist for tests/clippy, where a rough
+/// epoch-date estimate is enough.
+fn today_date() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let d = js_sys::Date::new_0();
+        format!(
+            "{:04}-{:02}-{:02}",
+            d.get_full_year(),
+            d.get_month() + 1,
+            d.get_date(),
+        )
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86400)
+            .unwrap_or(0);
+        let year = 1970 + days / 365;
+        let month = (days % 365) / 30 + 1;
+        let day = days % 30 + 1;
+        format!("{year:04}-{month:02}-{day:02}")
+    }
+}
+
 fn localized(t: &cv_generator::models::LocalizedText) -> &str {
     if !t.fr.is_empty() {
         &t.fr
@@ -69,6 +97,9 @@ fn persist_current_session(
         score_mode,
         checked_project_ids: checked_project_ids.iter().cloned().collect(),
         updated_at_ms: 0,
+        match_score: 0.0,
+        date_applied: String::new(),
+        status: Default::default(),
     };
     cv_generator::services::storage::save_current_session(&session);
 }
@@ -140,6 +171,11 @@ pub fn Tailor() -> Element {
     // it", and lets a later regeneration preserve the person's manual
     // deviations instead of discarding them (Fix #2).
     let mut last_algo_project_ids = use_signal(HashSet::<String>::new);
+    // Status filter for the saved-sessions list (`None` = show all). This
+    // is the application-tracking entry point: each saved session carries
+    // a match score, an "applied on" date and a status, so the list can be
+    // filtered by where the person is in each hiring process.
+    let mut status_filter = use_signal(|| None::<cv_generator::models::ApplicationStatus>);
     // The last full tailoring result (frozen at "Générer" time). Manual
     // selection only ever overrides `.experiences` on a clone of this —
     // `matched_keywords`/`missing_keywords`/`match_score` are deliberately
@@ -274,6 +310,29 @@ pub fn Tailor() -> Element {
     let t_applied = i18n::tr("tl_applied", l);
     let t_score_note = i18n::tr("tl_score_note", l);
     let t_ph = i18n::tr("tl_placeholder", l);
+    let t_filter_all = i18n::tr("tl_filter_all", l);
+    let t_applied_on = i18n::tr("tl_applied_on", l);
+    let t_status_applied = i18n::tr("tl_status_applied", l);
+    let t_status_interviewing = i18n::tr("tl_status_interviewing", l);
+    let t_status_offer = i18n::tr("tl_status_offer", l);
+    let t_status_rejected = i18n::tr("tl_status_rejected", l);
+
+    // Saved sessions to render, narrowed by the status filter (`None` =
+    // show all). Computed once here so the rsx! loop below stays a plain
+    // read-only iteration.
+    let shown_sessions: Vec<cv_generator::models::TailoringSession> = {
+        let all = saved_sessions.read();
+        match *status_filter.read() {
+            Some(st) => all.iter().filter(|s| s.status == st).cloned().collect(),
+            None => all.clone(),
+        }
+    };
+    // Display value for the filter `<select>`: the serialized status, or
+    // "all" when no filter is active.
+    let filter_select_value: &str = match &*status_filter.read() {
+        Some(s) => s.as_str(),
+        None => "all",
+    };
 
     // Total number of projects across the whole CV — the denominator for the
     // "N of M projects selected" count in the manual-selection panel.
@@ -308,14 +367,68 @@ pub fn Tailor() -> Element {
                                 if saved_sessions.read().is_empty() {
                                     p { class: "hint", "{t_no_saved_sessions}" }
                                 } else {
-                                    for session in saved_sessions.read().iter().cloned() {
+                                    div { class: "saved-sessions-filter",
+                                        select {
+                                            class: "input",
+                                            value: filter_select_value,
+                                            onchange: move |e| {
+                                                let v = e.value();
+                                                status_filter.set(if v == "all" {
+                                                    None
+                                                } else {
+                                                    Some(cv_generator::models::ApplicationStatus::from_key(&v))
+                                                });
+                                            },
+                                            option { value: "all", "{t_filter_all}" }
+                                            option { value: "applied", "{t_status_applied}" }
+                                            option { value: "interviewing", "{t_status_interviewing}" }
+                                            option { value: "offer", "{t_status_offer}" }
+                                            option { value: "rejected", "{t_status_rejected}" }
+                                        }
+                                    }
+                                    for session in shown_sessions {
                                         {
                                             let session_name = session.name.clone();
                                             let session_for_load = session.clone();
+                                            let session_id = session.id.clone();
                                             let session_id_for_delete = session.id.clone();
+                                            let session_date = session.date_applied.clone();
+                                            let session_score = session.match_score;
+                                            let session_score_pct =
+                                                format!("{:.0}%", session_score * 100.0);
+                                            let session_status_str = session.status.as_str();
                                             rsx! {
                                                 div { class: "saved-session-row",
                                                     span { class: "saved-session-name", "{session_name}" }
+                                                    if session_score > 0.0 {
+                                                        span {
+                                                            class: "saved-session-score",
+                                                            style: "color: {score_color((session_score * 100.0) as u32)}",
+                                                            "{session_score_pct}"
+                                                        }
+                                                    }
+                                                    if !session_date.is_empty() {
+                                                        span { class: "saved-session-date", "{t_applied_on} {session_date}" }
+                                                    }
+                                                    select {
+                                                        class: "input saved-session-status",
+                                                        value: session_status_str,
+                                                        onchange: move |e| {
+                                                            let sid = session_id.clone();
+                                                            let new_status =
+                                                                cv_generator::models::ApplicationStatus::from_key(&e.value());
+                                                            if let Some(s) = saved_sessions.write().iter_mut().find(|s| s.id == sid) {
+                                                                s.status = new_status;
+                                                            }
+                                                            cv_generator::services::storage::save_sessions_list(
+                                                                &saved_sessions.read(),
+                                                            );
+                                                        },
+                                                        option { value: "applied", "{t_status_applied}" }
+                                                        option { value: "interviewing", "{t_status_interviewing}" }
+                                                        option { value: "offer", "{t_status_offer}" }
+                                                        option { value: "rejected", "{t_status_rejected}" }
+                                                    }
                                                     button {
                                                         class: "btn-text",
                                                         onclick: move |_| {
@@ -385,6 +498,9 @@ pub fn Tailor() -> Element {
                                                     .cloned()
                                                     .collect(),
                                                 updated_at_ms: 0,
+                                                match_score: *match_score.read() as f32 / 100.0,
+                                                date_applied: today_date(),
+                                                status: Default::default(),
                                             };
                                             saved_sessions.write().push(session);
                                             cv_generator::services::storage::save_sessions_list(

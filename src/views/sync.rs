@@ -3,7 +3,7 @@ use crate::router::Route;
 use cv_generator::models::LifetimeCV;
 use cv_generator::services::auth;
 use cv_generator::services::drive;
-use cv_generator::services::storage::save_cv;
+use cv_generator::services::storage::{load_sessions_list, save_cv, save_sessions_list};
 use dioxus::prelude::*;
 
 const BUILD_TIME_CLIENT_ID: Option<&str> = option_env!("GOOGLE_CLIENT_ID");
@@ -119,10 +119,11 @@ pub fn Sync() -> Element {
                             onclick: move |_| {
                                 let t       = token.read().clone();
                                 let cv_snap = cv.read().clone();
+                                let sess    = load_sessions_list();
                                 loading.set(true);
                                 let tok_label = t_backupok;
                                 spawn(async move {
-                                    match drive::drive_backup(&cv_snap, &t).await {
+                                    match drive::drive_backup(&cv_snap, &sess, &t).await {
                                         Ok(_)  => status.set(make_ok(tok_label)),
                                         Err(e) => status.set(make_err(&e)),
                                     }
@@ -141,8 +142,9 @@ pub fn Sync() -> Element {
                                 spawn(async move {
                                     match drive::drive_restore(&t).await {
                                         Ok(restored) => {
-                                            save_cv(&restored);
-                                            *cv.write() = restored;
+                                            save_cv(&restored.cv);
+                                            *cv.write() = restored.cv;
+                                            save_sessions_list(&restored.saved_sessions);
                                             status.set(make_ok(tok_label));
                                         }
                                         Err(e) => status.set(make_err(&e)),
@@ -167,7 +169,7 @@ pub fn Sync() -> Element {
                         class: "btn btn-outline",
                         disabled: !has_cv,
                         onclick: move |_| {
-                            drive::local_export(&cv.read());
+                            drive::local_export(&cv.read(), &load_sessions_list());
                             status.set(make_ok(t_jsonok));
                         },
                         "{t_export}"
@@ -226,8 +228,9 @@ fn ImportButton(
                                     if let Some(text) = r2.result().ok().and_then(|r| r.as_string()) {
                                         match drive::restore_from_json(&text) {
                                             Ok(restored) => {
-                                                save_cv(&restored);
-                                                *cv.write() = restored;
+                                                save_cv(&restored.cv);
+                                                *cv.write() = restored.cv;
+                                                save_sessions_list(&restored.saved_sessions);
                                                 status.set(make_ok(&ok_msg3));
                                             }
                                             Err(e) => status.set(make_err(&e)),

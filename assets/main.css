@@ -904,8 +904,39 @@ a:hover { text-decoration: underline; }
   background: var(--bg-card);
 }
 .saved-sessions-title { font-weight: 700; font-size: 0.88rem; margin: 0 0 8px; }
-.saved-session-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.saved-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  transition: background var(--fast) var(--ease);
+}
+.saved-session-row:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.03)); }
+.saved-session-row.active {
+  border: 1px solid var(--blue);
+  background: var(--blue-pale);
+}
 .saved-session-name { flex: 1; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-session-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.saved-session-loaded-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--blue);
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+/* Inline delete confirmation, swapped in for the trash icon so a single
+   accidental click can no longer destroy a saved/tracked session. */
+.confirm-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--red, #dc2626);
+  white-space: nowrap;
+}
 .saved-session-save-row { display: flex; gap: 8px; margin-top: 10px; }
 .sr-only {
   position: absolute;

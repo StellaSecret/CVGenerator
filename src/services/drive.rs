@@ -1,4 +1,4 @@
-use crate::models::LifetimeCV;
+use crate::models::{LifetimeCV, TailoringSession};
 use serde::{Deserialize, Serialize};
 
 // ── Backup payload ────────────────────────────────────────────────────────────
@@ -8,9 +8,14 @@ pub struct BackupData {
     pub version: u8,
     pub exported_at: i64,
     pub cv: LifetimeCV,
+    /// Application-tracking sessions (the saved tailoring sessions).
+    /// `#[serde(default)]` keeps v1 backups (which predate this field)
+    /// fully restorable.
+    #[serde(default)]
+    pub saved_sessions: Vec<TailoringSession>,
 }
 
-const BACKUP_VERSION: u8 = 1;
+const BACKUP_VERSION: u8 = 2;
 // DRIVE_SCOPE is documented for reference but only needed if you build a consent URL here.
 #[cfg(target_arch = "wasm32")]
 #[allow(dead_code)]
@@ -24,21 +29,31 @@ const BACKUP_NAME: &str = "cv_generator_backup.json";
 
 // ── Serialise / deserialise ───────────────────────────────────────────────────
 
-pub fn build_backup(cv: &LifetimeCV) -> String {
+pub fn build_backup(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) -> String {
     let data = BackupData {
         version: BACKUP_VERSION,
         exported_at: now_ms(),
         cv: cv.clone(),
+        saved_sessions: saved_sessions.to_vec(),
     };
     serde_json::to_string_pretty(&data).expect("BackupData serialization failed")
 }
 
-pub fn restore_from_json(json: &str) -> Result<LifetimeCV, String> {
+#[derive(Debug, Clone)]
+pub struct RestoredData {
+    pub cv: LifetimeCV,
+    pub saved_sessions: Vec<TailoringSession>,
+}
+
+pub fn restore_from_json(json: &str) -> Result<RestoredData, String> {
     let data: BackupData =
         serde_json::from_str(json).map_err(|e| format!("Invalid backup: {e}"))?;
     let mut cv = data.cv;
     cv.backfill_project_ids();
-    Ok(cv)
+    Ok(RestoredData {
+        cv,
+        saved_sessions: data.saved_sessions,
+    })
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -59,8 +74,12 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response, String> {
 /// Creates the file on first run; patches it on subsequent runs.
 /// Returns the Drive file ID on success.
 #[cfg(target_arch = "wasm32")]
-pub async fn drive_backup(cv: &LifetimeCV, token: &str) -> Result<String, String> {
-    let json = build_backup(cv);
+pub async fn drive_backup(
+    cv: &LifetimeCV,
+    saved_sessions: &[TailoringSession],
+    token: &str,
+) -> Result<String, String> {
+    let json = build_backup(cv, saved_sessions);
     let bytes = json.into_bytes();
     let client = reqwest::Client::new();
 
@@ -137,7 +156,11 @@ pub async fn drive_backup(cv: &LifetimeCV, token: &str) -> Result<String, String
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn drive_backup(_cv: &LifetimeCV, _token: &str) -> Result<String, String> {
+pub async fn drive_backup(
+    _cv: &LifetimeCV,
+    _saved_sessions: &[TailoringSession],
+    _token: &str,
+) -> Result<String, String> {
     Err("Drive backup is only available on web".to_string())
 }
 
@@ -145,7 +168,7 @@ pub async fn drive_backup(_cv: &LifetimeCV, _token: &str) -> Result<String, Stri
 
 /// Download the backup from Google Drive `appDataFolder` and return the CV.
 #[cfg(target_arch = "wasm32")]
-pub async fn drive_restore(token: &str) -> Result<LifetimeCV, String> {
+pub async fn drive_restore(token: &str) -> Result<RestoredData, String> {
     let client = reqwest::Client::new();
 
     let search = check(
@@ -190,20 +213,20 @@ pub async fn drive_restore(token: &str) -> Result<LifetimeCV, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn drive_restore(_token: &str) -> Result<LifetimeCV, String> {
+pub async fn drive_restore(_token: &str) -> Result<RestoredData, String> {
     Err("Drive restore is only available on web".to_string())
 }
 
 // ── Local export (browser download) ──────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
-pub fn local_export(cv: &LifetimeCV) {
+pub fn local_export(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) {
     use js_sys::Array;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
     use web_sys::{Blob, Url};
 
-    let json = build_backup(cv);
+    let json = build_backup(cv, saved_sessions);
     let arr = Array::new();
     arr.push(&JsValue::from_str(&json));
 
@@ -229,7 +252,7 @@ pub fn local_export(cv: &LifetimeCV) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn local_export(_cv: &LifetimeCV) {}
+pub fn local_export(_cv: &LifetimeCV, _saved_sessions: &[TailoringSession]) {}
 
 // ── Time helper ───────────────────────────────────────────────────────────────
 
@@ -293,19 +316,43 @@ mod tests {
     #[test]
     fn backup_roundtrip() {
         let cv = sample_cv();
-        let json = build_backup(&cv);
+        let json = build_backup(&cv, &[]);
         assert!(json.contains("Jane Smith"));
         assert!(json.contains("\"version\""));
 
         let restored = restore_from_json(&json).expect("restore failed");
-        assert_eq!(restored.personal.name, "Jane Smith");
-        assert_eq!(restored.personal.email, "jane@example.com");
+        assert_eq!(restored.cv.personal.name, "Jane Smith");
+        assert_eq!(restored.cv.personal.email, "jane@example.com");
+    }
+
+    #[test]
+    fn backup_roundtrips_saved_sessions() {
+        let cv = sample_cv();
+        let session = TailoringSession {
+            id: "s1".to_string(),
+            name: "Acme".to_string(),
+            job_title: "Platform Engineer".to_string(),
+            match_score: 0.87,
+            date_applied: "2026-09-11".to_string(),
+            status: crate::models::ApplicationStatus::Interviewing,
+            ..Default::default()
+        };
+        let json = build_backup(&cv, &[session]);
+        let restored = restore_from_json(&json).expect("restore failed");
+        assert_eq!(restored.saved_sessions.len(), 1);
+        assert_eq!(restored.saved_sessions[0].name, "Acme");
+        assert_eq!(
+            restored.saved_sessions[0].status,
+            crate::models::ApplicationStatus::Interviewing
+        );
+        assert_eq!(restored.saved_sessions[0].match_score, 0.87);
+        assert_eq!(restored.saved_sessions[0].date_applied, "2026-09-11");
     }
 
     #[test]
     fn backup_has_correct_version() {
         let cv = sample_cv();
-        let json = build_backup(&cv);
+        let json = build_backup(&cv, &[]);
         let data: BackupData = serde_json::from_str(&json).unwrap();
         assert_eq!(data.version, BACKUP_VERSION);
     }
@@ -323,25 +370,49 @@ mod tests {
     }
 
     #[test]
+    fn v1_backup_without_sessions_still_restores() {
+        // Build a real v2 file, then strip the sessions field and set
+        // version=1 to reproduce exactly what a pre-tracking backup holds.
+        let cv = sample_cv();
+        let v2: serde_json::Value = serde_json::from_str(&build_backup(
+            &cv,
+            &[crate::models::TailoringSession {
+                id: "s1".to_string(),
+                name: "Acme".to_string(),
+                ..Default::default()
+            }],
+        ))
+        .unwrap();
+        let mut v1 = v2.as_object().unwrap().clone();
+        v1.remove("saved_sessions");
+        v1.insert("version".to_string(), serde_json::json!(1));
+        let json = serde_json::to_string(&serde_json::Value::Object(v1)).unwrap();
+
+        let restored = restore_from_json(&json).expect("v1 backup must restore");
+        assert_eq!(restored.cv.personal.name, "Jane Smith");
+        assert!(restored.saved_sessions.is_empty());
+    }
+
+    #[test]
     fn empty_cv_roundtrip() {
         let cv = LifetimeCV::default();
-        let json = build_backup(&cv);
+        let json = build_backup(&cv, &[]);
         let restored = restore_from_json(&json).unwrap();
-        assert!(restored.personal.name.is_empty());
-        assert!(restored.experiences.is_empty());
+        assert!(restored.cv.personal.name.is_empty());
+        assert!(restored.cv.experiences.is_empty());
     }
 
     #[test]
     fn backup_contains_exported_at() {
         let cv = sample_cv();
-        let json = build_backup(&cv);
+        let json = build_backup(&cv, &[]);
         let data: BackupData = serde_json::from_str(&json).unwrap();
         assert!(data.exported_at >= 0);
     }
 
     #[test]
     fn drive_backup_unavailable_on_native() {
-        let res = block_on(drive_backup(&sample_cv(), "fake-token"));
+        let res = block_on(drive_backup(&sample_cv(), &[], "fake-token"));
         assert!(
             res.is_err(),
             "native stub must report Drive backup as web-only, got {res:?}"
