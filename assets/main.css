@@ -642,6 +642,52 @@ a:hover { text-decoration: underline; }
 .item-sub { font-size: 0.8rem; color: var(--text-2); margin-top: 2px; }
 .item-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 
+/* ── Experience drill-down ──────────────────────────────────────────────────── */
+.drill { display: flex; flex-direction: column; gap: 14px; }
+.drill-missing { padding: 12px 0; }
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+.breadcrumb-crumb { color: var(--blue); font-weight: 600; padding: 0; }
+.breadcrumb-sep { color: var(--text-3); user-select: none; }
+.breadcrumb-current { color: var(--text-2); font-weight: 500; }
+.clickable { cursor: pointer; }
+.clickable:hover .item-title { color: var(--blue); }
+.count-badge { margin-left: 8px; }
+.exp-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 13px 16px;
+}
+.exp-meta .item-title { flex: 1; min-width: 0; font-size: 1rem; }
+.exp-meta .item-sub { flex-basis: 100%; }
+.project-list { margin-bottom: 10px; }
+.item-project-context {
+  font-size: 0.8rem;
+  color: var(--text-2);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.project-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+.project-detail .item-title { white-space: normal; font-size: 1rem; }
+
 /* ── Skill chips ───────────────────────────────────────────────────────────── */
 .skill-group { margin-bottom: 14px; }
 .skill-group-label {

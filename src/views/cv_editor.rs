@@ -12,6 +12,47 @@ fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Drill-down navigation for the Experience step: the list of experience
+/// cards → the project cards of one experience → one project's full detail.
+/// Keyed by the stable uuids (`Experience.id` / `ExperienceProject.id`),
+/// never by array index (indices shift when items get reordered).
+#[derive(Clone, PartialEq)]
+enum ExpView {
+    List,
+    Experience(String),
+    Project(String, String),
+}
+
+/// Up to `max` unique skill names referenced by `project_ids`, looked up in
+/// `all_skills` — used for the compact card previews at each drill-down
+/// level. The full list only appears on a project's detail screen.
+fn preview_skill_names(project_ids: &[String], all_skills: &[Skill], max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in project_ids {
+        if let Some(s) = all_skills.iter().find(|s| &s.id == id) {
+            if !out.contains(&s.name) {
+                out.push(s.name.clone());
+                if out.len() >= max {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Truncates long card-preview text to a single visible line.
+fn truncate_line(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max).collect();
+        out.push('…');
+        out
+    }
+}
+
 // ── Bold highlighting ────────────────────────────────────────────────────────
 //
 // Free-text fields (bullets, project context/description, summary) support
@@ -229,8 +270,83 @@ fn StepButton(label: String, index: usize, current_idx: usize, mut step: Signal<
 // ── Experience ─────────────────────────────────────────────────────────────────
 
 #[component]
-fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element {
+fn ExpItem(
+    exp: Experience,
+    index: usize,
+    mut cv: Signal<LifetimeCV>,
+    view: Signal<ExpView>,
+) -> Element {
     let lang: Signal<i18n::Lang> = use_context();
+    let l = *lang.read();
+    let all_skills = cv.read().skills.clone();
+    let t_count = i18n::tr("ed_n_projects", l);
+
+    let role = exp.role.get(l).to_string();
+    let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
+    let n_projects = exp
+        .projects
+        .iter()
+        .filter(|p| !p.name.get(l).is_empty() || !p.bullets.is_empty())
+        .count();
+    let project_ids: Vec<String> = exp
+        .projects
+        .iter()
+        .flat_map(|p| p.skill_ids.iter().cloned())
+        .collect();
+    let chips = preview_skill_names(&project_ids, &all_skills, 4);
+    let exp_id = exp.id.clone();
+    let count_txt = t_count.replacen("{}", &n_projects.to_string(), 1);
+
+    rsx! {
+        div { class: "item-card",
+            div { class: "item-card-body clickable enter-experience",
+                onclick: move |_| { view.set(ExpView::Experience(exp_id.clone())); },
+                div { class: "item-title", "{role}" }
+                div { class: "item-sub",
+                    "{sub}"
+                    if n_projects > 0 {
+                        span { class: "tag count-badge", "{count_txt}" }
+                    }
+                }
+                if !chips.is_empty() {
+                    div { class: "item-tags",
+                        for c in chips {
+                            span { class: "tag-small", "{c}" }
+                        }
+                    }
+                }
+            }
+            div { class: "item-actions",
+                if index > 0 {
+                    button { class: "btn-icon btn-move",
+                        onclick: move |_| { cv.write().experiences.swap(index, index - 1); },
+                        "↑"
+                    }
+                }
+                if index < cv.read().experiences.len() - 1 {
+                    button { class: "btn-icon btn-move",
+                        onclick: move |_| { cv.write().experiences.swap(index, index + 1); },
+                        "↓"
+                    }
+                }
+                button { class: "btn-icon btn-danger",
+                    onclick: move |_| { cv.write().experiences.remove(index); },
+                    "🗑"
+                }
+            }
+        }
+    }
+}
+
+/// Drill-down level 1: one experience — a compact meta header (browse ↔ edit)
+/// above the clickable project cards. Projects are opened one level deeper.
+#[component]
+fn ExpExperienceView(
+    exp_id: String,
+    mut cv: Signal<LifetimeCV>,
+    lang: Signal<i18n::Lang>,
+    view: Signal<ExpView>,
+) -> Element {
     let l = *lang.read();
     let mut editing = use_signal(|| false);
     let mut e_company = use_signal(String::new);
@@ -238,215 +354,219 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
     let mut e_location = use_signal(String::new);
     let mut e_start = use_signal(String::new);
     let mut e_end = use_signal(String::new);
-    let mut e_projects = use_signal(Vec::<ExperienceProject>::new);
+
+    let t_all = i18n::tr("ed_all_experiences", l);
+    let t_company = i18n::tr("ed_company", l);
+    let t_role = i18n::tr("ed_role", l);
+    let t_location = i18n::tr("ed_location", l);
+    let t_start = i18n::tr("ed_start_date", l);
+    let t_end = i18n::tr("ed_end_date", l);
+    let t_edit = i18n::tr("ed_edit", l);
+    let t_save = i18n::tr("ed_save_changes", l);
+    let t_cancel = i18n::tr("ed_cancel", l);
+    let t_projects = i18n::tr("ed_projects", l);
+    let t_add_project = i18n::tr("ed_add_project", l);
+    let t_new_project = i18n::tr("ed_new_project", l);
+    let t_n_bullets = i18n::tr("ed_n_bullets", l);
+    let t_present = i18n::tr("ed_present", l);
+
+    let eid_save = exp_id.clone();
+    let eid_edit = exp_id.clone();
+    let eid_add = exp_id.clone();
+    let eid_loop = exp_id.clone();
+
     let all_skills = cv.read().skills.clone();
+    let exp_i = cv.read().experiences.iter().position(|e| e.id == exp_id);
+    let Some(exp) = cv
+        .read()
+        .experiences
+        .iter()
+        .find(|e| e.id == exp_id)
+        .cloned()
+    else {
+        return rsx! {
+            div { class: "drill-missing",
+                button { class: "btn btn-secondary", onclick: move |_| { view.set(ExpView::List); }, "{t_all}" }
+            }
+        };
+    };
 
-    let t_save = i18n::tr("ed_save_changes", *lang.read());
-    let t_cancel = i18n::tr("ed_cancel", *lang.read());
-    let t_company = i18n::tr("ed_company", *lang.read());
-    let t_role = i18n::tr("ed_role", *lang.read());
-    let t_loc = i18n::tr("ed_location", *lang.read());
-    let t_start = i18n::tr("ed_start_date", *lang.read());
-    let t_end = i18n::tr("ed_end_date", *lang.read());
-    let t_projects = i18n::tr("ed_projects", *lang.read());
-    let t_project_name = i18n::tr("ed_project_name", *lang.read());
-    let t_achieve = i18n::tr("ed_achievements", *lang.read());
-    let t_add_bullet = i18n::tr("ed_add_bullet", *lang.read());
-    let t_tools = i18n::tr("ed_tools", *lang.read());
-    let t_present = i18n::tr("ed_present", *lang.read());
-    let t_add_project = i18n::tr("ed_add_project", *lang.read());
-    let t_project_ctx = i18n::tr("ed_project_context", *lang.read());
-    let t_add_context = i18n::tr("ed_add_context", *lang.read());
+    let role = exp.role.get(l).to_string();
+    let title = if role.is_empty() {
+        exp.company.clone()
+    } else {
+        role
+    };
+    let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
 
-    if *editing.read() {
-        rsx! {
-            div { class: "inline-form inline-form-compact",
-                LangEditBadge { lang }
-                div { class: "form-row",
-                    Field { label: t_company.to_string(), required: true,
-                        input { r#type: "text", class: "input",
-                            value: e_company.read().clone(),
-                            oninput: move |e| { e_company.set(e.value()); },
+    rsx! {
+        div { class: "drill",
+            div { class: "breadcrumb",
+                button { class: "btn-text breadcrumb-crumb",
+                    onclick: move |_| { view.set(ExpView::List); },
+                    "{t_all}"
+                }
+                span { class: "breadcrumb-sep", "›" }
+                span { class: "breadcrumb-current", "{title}" }
+            }
+
+            if *editing.read() {
+                div { class: "inline-form inline-form-compact",
+                    LangEditBadge { lang }
+                    div { class: "form-row",
+                        Field { label: t_company.to_string(), required: true,
+                            input { r#type: "text", class: "input",
+                                value: e_company.read().clone(),
+                                oninput: move |e| { e_company.set(e.value()); },
+                            }
+                        }
+                        Field { label: t_role.to_string(), required: true,
+                            input { r#type: "text", class: "input",
+                                key: "{l:?}",
+                                value: e_role.read().get(l).to_string(),
+                                oninput: move |e| { e_role.write().set(l, e.value()); },
+                            }
                         }
                     }
-                    Field { label: t_role.to_string(), required: true,
-                        input { r#type: "text", class: "input",
-                            key: "{l:?}",
-                            value: e_role.read().get(l).to_string(),
-                            oninput: move |e| { e_role.write().set(l, e.value()); },
+                    div { class: "form-row",
+                        Field { label: t_location.to_string(),
+                            input { r#type: "text", class: "input",
+                                value: e_location.read().clone(),
+                                oninput: move |e| { e_location.set(e.value()); },
+                            }
+                        }
+                        Field { label: t_start.to_string(),
+                            input { r#type: "text", class: "input",
+                                value: e_start.read().clone(),
+                                oninput: move |e| { e_start.set(e.value()); },
+                            }
+                        }
+                        Field { label: t_end.to_string(),
+                            input { r#type: "text", class: "input", placeholder: "{t_present}",
+                                value: e_end.read().clone(),
+                                oninput: move |e| { e_end.set(e.value()); },
+                            }
+                        }
+                    }
+                    div { class: "form-actions",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                if let Some(i) = exp_i {
+                                    let projects = cv.read().experiences[i].projects.clone();
+                                    cv.write().experiences[i] = Experience {
+                                        id: eid_save.clone(),
+                                        company: e_company.read().clone(),
+                                        role: e_role.read().clone(),
+                                        location: e_location.read().clone(),
+                                        start_date: e_start.read().clone(),
+                                        end_date: e_end.read().clone(),
+                                        projects,
+                                    };
+                                }
+                                editing.set(false);
+                            },
+                            "{t_save}"
+                        }
+                        button { class: "btn btn-secondary",
+                            onclick: move |_| { editing.set(false); },
+                            "{t_cancel}"
                         }
                     }
                 }
-                div { class: "form-row",
-                    Field { label: t_loc.to_string(),
-                        input { r#type: "text", class: "input",
-                            value: e_location.read().clone(),
-                            oninput: move |e| { e_location.set(e.value()); },
-                        }
-                    }
-                    Field { label: t_start.to_string(),
-                        input { r#type: "text", class: "input",
-                            value: e_start.read().clone(),
-                            oninput: move |e| { e_start.set(e.value()); },
-                        }
-                    }
-                    Field { label: t_end.to_string(),
-                        input { r#type: "text", class: "input", placeholder: "{t_present}",
-                            value: e_end.read().clone(),
-                            oninput: move |e| { e_end.set(e.value()); },
-                        }
+            } else {
+                div { class: "exp-meta",
+                    div { class: "item-title", "{title}" }
+                    div { class: "item-sub", "{sub}" }
+                    button { class: "btn-icon btn-edit",
+                        onclick: move |_| {
+                            if let Some(item) = cv.read().experiences.iter().find(|e| e.id == eid_edit) {
+                                e_company.set(item.company.clone());
+                                e_role.set(item.role.clone());
+                                e_location.set(item.location.clone());
+                                e_start.set(item.start_date.clone());
+                                e_end.set(item.end_date.clone());
+                            }
+                            editing.set(true);
+                        },
+                        "{t_edit}"
                     }
                 }
-                div { class: "field",
-                    label { class: "label", "{t_projects}" }
-                    for pi in 0..e_projects.read().len() {
-                        div { class: "project-card",
-                            Field { label: t_project_name.to_string(),
-                                input { r#type: "text", class: "input",
-                                    key: "{pi}-{l:?}",
-                                    value: e_projects.read()[pi].name.get(l).to_string(),
-                                    oninput: move |e| { e_projects.write()[pi].name.set(l, e.value()); },
-                                }
-                            }
-                            div { class: "field",
-                                label { class: "label", "{t_project_ctx}" }
-                                for ci in 0..e_projects.read()[pi].context.len() {
-                                    div { class: "bullet-row",
-                                        if ci > 0 {
-                                            button { class: "btn-icon btn-move",
-                                                onclick: move |_| { e_projects.write()[pi].context.swap(ci, ci - 1); },
-                                                "↑"
+            }
+
+            div { class: "field",
+                label { class: "label", "{t_projects}" }
+                div { class: "item-list project-list",
+                    for (pi, proj) in exp.projects.iter().enumerate() {
+                        {
+                            let proj_name = proj.name.get(l).to_string();
+                            let ptitle = if proj_name.is_empty() { t_new_project.to_string() } else { proj_name };
+                            let first_ctx = proj
+                                .context
+                                .iter()
+                                .find(|c| !c.get(l).is_empty())
+                                .map(|c| truncate_line(c.get(l), 110));
+                            let n_bullets = proj
+                                .bullets
+                                .iter()
+                                .map(|b| b.get(l))
+                                .filter(|b| !b.is_empty())
+                                .count();
+                            let chips = preview_skill_names(&proj.skill_ids, &all_skills, 4);
+                            let proj_count = exp.projects.len();
+                            let eid_open = eid_loop.clone();
+                            let pid_open = proj.id.clone();
+                            let pid_del = proj.id.clone();
+                            let bullets_txt = t_n_bullets.replacen("{}", &n_bullets.to_string(), 1);
+                            rsx! {
+                                div { class: "item-card",
+                                    div { class: "item-card-body clickable enter-project",
+                                        onclick: move |_| { view.set(ExpView::Project(eid_open.clone(), pid_open.clone())); },
+                                        div { class: "item-title",
+                                            "{ptitle}"
+                                            if n_bullets > 0 {
+                                                span { class: "tag count-badge", "{bullets_txt}" }
                                             }
                                         }
-                                        if ci < e_projects.read()[pi].context.len() - 1 {
-                                            button { class: "btn-icon btn-move",
-                                                onclick: move |_| { e_projects.write()[pi].context.swap(ci, ci + 1); },
-                                                "↓"
-                                            }
+                                        if let Some(ctx) = &first_ctx {
+                                            div { class: "item-project-context", "{ctx}" }
                                         }
-                                        span { class: "bullet-dot", "•" }
-                                        BoldableField {
-                                            key: "{pi}-{ci}-{l:?}",
-                                            id: format!("exp-ctx-{index}-{pi}-{ci}"),
-                                            value: e_projects.read()[pi].context[ci].get(l).to_string(),
-                                            oninput: move |v| { e_projects.write()[pi].context[ci].set(l, v); },
-                                        }
-                                        if e_projects.read()[pi].context.len() > 1 {
-                                            button { class: "btn-icon",
-                                                onclick: move |_| { e_projects.write()[pi].context.remove(ci); },
-                                                "×"
-                                            }
-                                        }
-                                    }
-                                }
-                                button { class: "btn-text",
-                                    onclick: move |_| { e_projects.write()[pi].context.push(LocalizedText::default()); },
-                                    "{t_add_context}"
-                                }
-                            }
-                            div { class: "field",
-                                label { class: "label", "{t_achieve}" }
-                                for bi in 0..e_projects.read()[pi].bullets.len() {
-                                    div { class: "bullet-row",
-                                        if bi > 0 {
-                                            button { class: "btn-icon btn-move",
-                                                onclick: move |_| { e_projects.write()[pi].bullets.swap(bi, bi - 1); },
-                                                "↑"
-                                            }
-                                        }
-                                        if bi < e_projects.read()[pi].bullets.len() - 1 {
-                                            button { class: "btn-icon btn-move",
-                                                onclick: move |_| { e_projects.write()[pi].bullets.swap(bi, bi + 1); },
-                                                "↓"
-                                            }
-                                        }
-                                        span { class: "bullet-dot", "•" }
-                                        BoldableField {
-                                            key: "{pi}-{bi}-{l:?}",
-                                            id: format!("exp-bullet-{index}-{pi}-{bi}"),
-                                            value: e_projects.read()[pi].bullets[bi].get(l).to_string(),
-                                            oninput: move |v| { e_projects.write()[pi].bullets[bi].set(l, v); },
-                                        }
-                                        if e_projects.read()[pi].bullets.len() > 1 {
-                                            button { class: "btn-icon",
-                                                onclick: move |_| { e_projects.write()[pi].bullets.remove(bi); },
-                                                "×"
-                                            }
-                                        }
-                                    }
-                                }
-                                button { class: "btn-text",
-                                    onclick: move |_| { e_projects.write()[pi].bullets.push(LocalizedText::default()); },
-                                    "{t_add_bullet}"
-                                }
-                            }
-                            Field { label: t_tools.to_string(),
-                                div { class: "skill-check-list",
-                                    for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
-                                        {
-                                            let sk_id = sk.0.clone();
-                                            let checked = e_projects.read()[pi].skill_ids.contains(&sk_id);
-                                            rsx! {
-                                                label { class: "skill-check",
-                                                    input {
-                                                        r#type: "checkbox",
-                                                        checked: checked,
-                                                        onchange: move |e| {
-                                                            if e.checked() {
-                                                                e_projects.write()[pi].skill_ids.push(sk_id.clone());
-                                                            } else {
-                                                                e_projects.write()[pi].skill_ids.retain(|id| id != &sk_id);
-                                                            }
-                                                        },
-                                                    }
-                                                    span { class: "skill-check-name", "{sk.1}" }
-                                                    span { class: "skill-check-cat", "{sk.2}" }
+                                        if !chips.is_empty() {
+                                            div { class: "item-tags",
+                                                for c in chips {
+                                                    span { class: "tag-small", "{c}" }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                            }
-                            div { class: "form-row",
-                                Field { label: t_start.to_string(),
-                                    input { r#type: "text", class: "input",
-                                        value: e_projects.read()[pi].start_date.clone(),
-                                        oninput: move |e| { e_projects.write()[pi].start_date = e.value(); },
-                                    }
-                                }
-                                Field { label: t_end.to_string(),
-                                    input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                        value: e_projects.read()[pi].end_date.clone(),
-                                        oninput: move |e| { e_projects.write()[pi].end_date = e.value(); },
-                                    }
-                                }
-                            }
-                            if e_projects.read().len() > 1 {
-                                div { class: "project-actions",
-                                    if pi > 0 {
-                                        button { class: "btn-icon btn-move",
-                                            onclick: move |_| { e_projects.write().swap(pi, pi - 1); },
-                                            "↑"
+                                    div { class: "item-actions",
+                                        if pi > 0 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { cv.write().experiences[exp_i.unwrap()].projects.swap(pi, pi - 1); },
+                                                "↑"
+                                            }
                                         }
-                                    }
-                                    if pi < e_projects.read().len() - 1 {
-                                        button { class: "btn-icon btn-move",
-                                            onclick: move |_| { e_projects.write().swap(pi, pi + 1); },
-                                            "↓"
+                                        if pi < proj_count - 1 {
+                                            button { class: "btn-icon btn-move",
+                                                onclick: move |_| { cv.write().experiences[exp_i.unwrap()].projects.swap(pi, pi + 1); },
+                                                "↓"
+                                            }
                                         }
-                                    }
-                                    button { class: "btn-text btn-danger",
-                                        onclick: move |_| { e_projects.write().remove(pi); },
-                                        "× Remove project"
+                                        button { class: "btn-icon btn-danger",
+                                            onclick: move |_| { cv.write().experiences[exp_i.unwrap()].projects.retain(|p| p.id != pid_del); },
+                                            "🗑"
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    button { class: "btn-text",
-                        onclick: move |_| {
-                            e_projects.write().push(ExperienceProject {
-                                id: new_id(),
+                }
+                button { class: "btn btn-outline",
+                    onclick: move |_| {
+                        if let Some(i) = exp_i {
+                            let pid = new_id();
+                            cv.write().experiences[i].projects.push(ExperienceProject {
+                                id: pid.clone(),
                                 name: LocalizedText::default(),
                                 context: vec![LocalizedText::default()],
                                 bullets: vec![LocalizedText::default()],
@@ -454,113 +574,322 @@ fn ExpItem(exp: Experience, index: usize, mut cv: Signal<LifetimeCV>) -> Element
                                 start_date: String::new(),
                                 end_date: String::new(),
                             });
-                        },
-                        "{t_add_project}"
-                    }
-                }
-                div { class: "form-actions",
-                    button { class: "btn btn-primary",
-                        onclick: move |_| {
-                            let id = cv.read().experiences[index].id.clone();
-                            let projects: Vec<ExperienceProject> = e_projects.read().iter().map(|p| {
-                                ExperienceProject {
-                                    id: p.id.clone(),
-                                    name: p.name.clone(),
-                                    context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
-                                    bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
-                                    skill_ids: p.skill_ids.clone(),
-                                    start_date: p.start_date.clone(),
-                                    end_date: p.end_date.clone(),
-                                }
-                            }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
-                            cv.write().experiences[index] = Experience {
-                                id,
-                                company: e_company.read().clone(),
-                                role: e_role.read().clone(),
-                                location: e_location.read().clone(),
-                                start_date: e_start.read().clone(),
-                                end_date: e_end.read().clone(),
-                                projects,
-                            };
-                            editing.set(false);
-                        },
-                        "{t_save}"
-                    }
-                    button { class: "btn btn-secondary",
-                        onclick: move |_| { editing.set(false); },
-                        "{t_cancel}"
-                    }
+                            view.set(ExpView::Project(eid_add.clone(), pid));
+                        }
+                    },
+                    "{t_add_project}"
                 }
             }
         }
-    } else {
+    }
+}
+
+/// Deepest drill-down level: one project's full content (context, bullets,
+/// tools, dates) with its own edit form. A newly added empty project opens
+/// straight into edit mode.
+#[component]
+fn ExpProjectView(
+    exp_id: String,
+    proj_id: String,
+    mut cv: Signal<LifetimeCV>,
+    lang: Signal<i18n::Lang>,
+    view: Signal<ExpView>,
+) -> Element {
+    let l = *lang.read();
+    let proj_src = cv
+        .read()
+        .experiences
+        .iter()
+        .find(|e| e.id == exp_id)
+        .and_then(|e| e.projects.iter().find(|p| p.id == proj_id))
+        .cloned();
+    let auto_edit = proj_src.as_ref().is_some_and(|p| {
+        p.name.get(l).is_empty()
+            && p.bullets.iter().all(|b| b.is_empty())
+            && p.context.iter().all(|c| c.is_empty())
+    });
+    let init_name = proj_src
+        .as_ref()
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let init_context = proj_src
+        .as_ref()
+        .map(|p| p.context.clone())
+        .unwrap_or_default();
+    let init_bullets = proj_src
+        .as_ref()
+        .map(|p| p.bullets.clone())
+        .unwrap_or_default();
+    let init_skills = proj_src
+        .as_ref()
+        .map(|p| p.skill_ids.clone())
+        .unwrap_or_default();
+    let init_start = proj_src
+        .as_ref()
+        .map(|p| p.start_date.clone())
+        .unwrap_or_default();
+    let init_end = proj_src
+        .as_ref()
+        .map(|p| p.end_date.clone())
+        .unwrap_or_default();
+    let mut editing = use_signal(|| auto_edit);
+    let mut p_name = use_signal(|| init_name);
+    let mut p_context = use_signal(|| init_context);
+    let mut p_bullets = use_signal(|| init_bullets);
+    let mut p_skills = use_signal(|| init_skills);
+    let mut p_start = use_signal(|| init_start);
+    let mut p_end = use_signal(|| init_end);
+
+    let t_all = i18n::tr("ed_all_experiences", l);
+    let t_edit = i18n::tr("ed_edit", l);
+    let t_save = i18n::tr("ed_save_changes", l);
+    let t_cancel = i18n::tr("ed_cancel", l);
+    let t_new_project = i18n::tr("ed_new_project", l);
+    let t_project_name = i18n::tr("ed_project_name", l);
+    let t_project_ctx = i18n::tr("ed_project_context", l);
+    let t_add_context = i18n::tr("ed_add_context", l);
+    let t_achieve = i18n::tr("ed_achievements", l);
+    let t_add_bullet = i18n::tr("ed_add_bullet", l);
+    let t_tools = i18n::tr("ed_tools", l);
+    let t_start = i18n::tr("ed_start_date", l);
+    let t_end = i18n::tr("ed_end_date", l);
+    let t_present = i18n::tr("ed_present", l);
+
+    let all_skills = cv.read().skills.clone();
+    let exp = cv
+        .read()
+        .experiences
+        .iter()
+        .find(|e| e.id == exp_id)
+        .cloned();
+    let Some(exp) = exp else {
+        return rsx! {
+            div { class: "drill-missing",
+                button { class: "btn btn-secondary", onclick: move |_| { view.set(ExpView::List); }, "{t_all}" }
+            }
+        };
+    };
+    let exp_title = {
         let role = exp.role.get(l).to_string();
-        let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
-        rsx! {
-            div { class: "item-card",
-                div { class: "item-card-body",
-                    div { class: "item-title", "{role}" }
-                    div { class: "item-sub", "{sub}" }
-                    for proj in exp.projects.iter() {
-                        if !proj.name.is_empty() || !proj.bullets.is_empty() {
-                            div { class: "item-project",
-                                if !proj.name.get(l).is_empty() {
-                                    div { class: "item-project-name", "{proj.name.get(l)}" }
-                                }
-                                for c in proj.context.iter().map(|c| c.get(l)).filter(|c| !c.is_empty()) {
-                                    div { class: "item-project-context", "{c}" }
-                                }
-                                if !proj.bullets.is_empty() {
-                                    div { class: "item-tags",
-                                        for b in proj.bullets.iter().map(|b| b.get(l)).filter(|b| !b.is_empty()) {
-                                            span { class: "tag-small", "• {b}" }
-                                        }
+        if role.is_empty() {
+            exp.company.clone()
+        } else {
+            role
+        }
+    };
+    let Some(proj) = exp.projects.iter().find(|p| p.id == proj_id).cloned() else {
+        return rsx! {
+            div { class: "drill-missing",
+                button { class: "btn btn-secondary",
+                    onclick: move |_| { view.set(ExpView::Experience(exp_id.clone())); },
+                    "{t_all}"
+                }
+            }
+        };
+    };
+    let eid_back = exp_id.clone();
+    let proj_title = if proj.name.get(l).is_empty() {
+        t_new_project.to_string()
+    } else {
+        proj.name.get(l).to_string()
+    };
+
+    rsx! {
+        div { class: "drill",
+            div { class: "breadcrumb",
+                button { class: "btn-text breadcrumb-crumb",
+                    onclick: move |_| { view.set(ExpView::List); },
+                    "{t_all}"
+                }
+                span { class: "breadcrumb-sep", "›" }
+                button { class: "btn-text breadcrumb-crumb",
+                    onclick: move |_| { view.set(ExpView::Experience(eid_back.clone())); },
+                    "{exp_title}"
+                }
+                span { class: "breadcrumb-sep", "›" }
+                span { class: "breadcrumb-current", "{proj_title}" }
+            }
+
+            if *editing.read() {
+                div { class: "inline-form inline-form-compact",
+                    LangEditBadge { lang }
+                    Field { label: t_project_name.to_string(),
+                        input { r#type: "text", class: "input",
+                            key: "{l:?}",
+                            value: p_name.read().get(l).to_string(),
+                            oninput: move |e| { p_name.write().set(l, e.value()); },
+                        }
+                    }
+                    div { class: "field",
+                        label { class: "label", "{t_project_ctx}" }
+                        for ci in 0..p_context.read().len() {
+                            div { class: "bullet-row",
+                                if ci > 0 {
+                                    button { class: "btn-icon btn-move",
+                                        onclick: move |_| { p_context.write().swap(ci, ci - 1); },
+                                        "↑"
                                     }
                                 }
-                                if !proj.skill_ids.is_empty() {
-                                    div { class: "item-tags",
-                                        for t in proj.skill_ids.iter().filter_map(|id| all_skills.iter().find(|s| &s.id == id).map(|s| s.name.clone())) {
-                                            span { class: "tag-small", "{t}" }
+                                if ci < p_context.read().len() - 1 {
+                                    button { class: "btn-icon btn-move",
+                                        onclick: move |_| { p_context.write().swap(ci, ci + 1); },
+                                        "↓"
+                                    }
+                                }
+                                span { class: "bullet-dot", "•" }
+                                BoldableField {
+                                    key: "{l:?}-{ci}",
+                                    id: format!("exp-ctx-{proj_id}-{ci}"),
+                                    value: p_context.read()[ci].get(l).to_string(),
+                                    oninput: move |v| { p_context.write()[ci].set(l, v); },
+                                }
+                                if p_context.read().len() > 1 {
+                                    button { class: "btn-icon",
+                                        onclick: move |_| { p_context.write().remove(ci); },
+                                        "×"
+                                    }
+                                }
+                            }
+                        }
+                        button { class: "btn-text",
+                            onclick: move |_| { p_context.write().push(LocalizedText::default()); },
+                            "{t_add_context}"
+                        }
+                    }
+                    div { class: "field",
+                        label { class: "label", "{t_achieve}" }
+                        for bi in 0..p_bullets.read().len() {
+                            div { class: "bullet-row",
+                                if bi > 0 {
+                                    button { class: "btn-icon btn-move",
+                                        onclick: move |_| { p_bullets.write().swap(bi, bi - 1); },
+                                        "↑"
+                                    }
+                                }
+                                if bi < p_bullets.read().len() - 1 {
+                                    button { class: "btn-icon btn-move",
+                                        onclick: move |_| { p_bullets.write().swap(bi, bi + 1); },
+                                        "↓"
+                                    }
+                                }
+                                span { class: "bullet-dot", "•" }
+                                BoldableField {
+                                    key: "{l:?}-{bi}",
+                                    id: format!("exp-bullet-{proj_id}-{bi}"),
+                                    placeholder: "Reduced API latency by 40%".to_string(),
+                                    value: p_bullets.read()[bi].get(l).to_string(),
+                                    oninput: move |v| { p_bullets.write()[bi].set(l, v); },
+                                }
+                                if p_bullets.read().len() > 1 {
+                                    button { class: "btn-icon",
+                                        onclick: move |_| { p_bullets.write().remove(bi); },
+                                        "×"
+                                    }
+                                }
+                            }
+                        }
+                        button { class: "btn-text",
+                            onclick: move |_| { p_bullets.write().push(LocalizedText::default()); },
+                            "{t_add_bullet}"
+                        }
+                    }
+                    Field { label: t_tools.to_string(),
+                        div { class: "skill-check-list",
+                            for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
+                                {
+                                    let sk_id = sk.0.clone();
+                                    let checked = p_skills.read().contains(&sk_id);
+                                    rsx! {
+                                        label { class: "skill-check",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: checked,
+                                                onchange: move |e| {
+                                                    if e.checked() {
+                                                        p_skills.write().push(sk_id.clone());
+                                                    } else {
+                                                        p_skills.write().retain(|id| id != &sk_id);
+                                                    }
+                                                },
+                                            }
+                                            span { class: "skill-check-name", "{sk.1}" }
+                                            span { class: "skill-check-cat", "{sk.2}" }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    div { class: "form-row",
+                        Field { label: t_start.to_string(),
+                            input { r#type: "text", class: "input",
+                                value: p_start.read().clone(),
+                                oninput: move |e| { p_start.set(e.value()); },
+                            }
+                        }
+                        Field { label: t_end.to_string(),
+                            input { r#type: "text", class: "input", placeholder: "{t_present}",
+                                value: p_end.read().clone(),
+                                oninput: move |e| { p_end.set(e.value()); },
+                            }
+                        }
+                    }
+                    div { class: "form-actions",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                let exp_i = cv.read().experiences.iter().position(|e| e.id == exp_id);
+                                if let Some(i) = exp_i {
+                                    let proj_i = cv.read().experiences[i].projects.iter().position(|p| p.id == proj_id);
+                                    if let Some(pi) = proj_i {
+                                        cv.write().experiences[i].projects[pi] = ExperienceProject {
+                                            id: proj_id.clone(),
+                                            name: p_name.read().clone(),
+                                            context: p_context.read().iter().filter(|c| !c.is_empty()).cloned().collect(),
+                                            bullets: p_bullets.read().iter().filter(|b| !b.is_empty()).cloned().collect(),
+                                            skill_ids: p_skills.read().clone(),
+                                            start_date: p_start.read().clone(),
+                                            end_date: p_end.read().clone(),
+                                        };
+                                    }
+                                }
+                                editing.set(false);
+                            },
+                            "{t_save}"
+                        }
+                        button { class: "btn btn-secondary",
+                            onclick: move |_| { editing.set(false); },
+                            "{t_cancel}"
+                        }
+                    }
                 }
-                div { class: "item-actions",
-                    if index > 0 {
-                        button { class: "btn-icon btn-move",
-                            onclick: move |_| { cv.write().experiences.swap(index, index - 1); },
-                            "↑"
+            } else {
+                div { class: "project-detail",
+                    div { class: "item-title", "{proj_title}" }
+                    if !proj.start_date.is_empty() || !proj.end_date.is_empty() {
+                        div { class: "item-sub", "{proj.start_date} – {proj.end_date}" }
+                    }
+                    for c in proj.context.iter().map(|c| c.get(l)).filter(|c| !c.is_empty()) {
+                        div { class: "item-project-context", "{c}" }
+                    }
+                    if proj.bullets.iter().any(|b| !b.get(l).is_empty()) {
+                        div { class: "item-tags",
+                            for b in proj.bullets.iter().map(|b| b.get(l)).filter(|b| !b.is_empty()) {
+                                span { class: "tag-small", "• {b}" }
+                            }
                         }
                     }
-                    if index < cv.read().experiences.len() - 1 {
-                        button { class: "btn-icon btn-move",
-                            onclick: move |_| { cv.write().experiences.swap(index, index + 1); },
-                            "↓"
+                    if !proj.skill_ids.is_empty() {
+                        div { class: "item-tags",
+                            for t in proj.skill_ids.iter().filter_map(|id| all_skills.iter().find(|s| &s.id == id).map(|s| s.name.clone())) {
+                                span { class: "tag-small", "{t}" }
+                            }
                         }
                     }
-                    button { class: "btn-icon btn-edit",
-                        onclick: move |_| {
-                            let item = cv.read().experiences[index].clone();
-                            e_company.set(item.company);
-                            e_role.set(item.role);
-                            e_location.set(item.location);
-                            e_start.set(item.start_date);
-                            e_end.set(item.end_date);
-                            e_projects.set(if item.projects.is_empty() {
-                                vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]
-                            } else {
-                                item.projects
-                            });
-                            editing.set(true);
-                        },
-                        "✎"
-                    }
-                    button { class: "btn-icon btn-danger",
-                        onclick: move |_| { cv.write().experiences.remove(index); },
-                        "🗑"
+                    div { class: "project-actions",
+                        button { class: "btn btn-secondary",
+                            onclick: move |_| { editing.set(true); },
+                            "{t_edit}"
+                        }
                     }
                 }
             }
@@ -1415,6 +1744,8 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
 
     let experiences: Vec<Experience> = cv.read().experiences.clone();
     let adding = *show_form.read();
+    let view = use_signal(|| ExpView::List);
+    let view_ = view.read().clone();
 
     let t_title = i18n::tr("ed_exp_title", l);
     let t_hint = i18n::tr("ed_exp_hint", l);
@@ -1440,260 +1771,270 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     rsx! {
         div { class: "form-section",
             h2 { "{t_title}" LangEditBadge { lang } }
-            p { class: "hint", "{t_hint}" }
+            match view_ {
+                ExpView::List => rsx! {
+                    p { class: "hint", "{t_hint}" }
 
-            div { class: "item-list",
-                for (i, exp) in experiences.into_iter().enumerate() {
-                    ExpItem { exp, index: i, cv }
-                }
-            }
-
-            if !adding {
-                button {
-                    class: "btn btn-outline",
-                    onclick: move |_| { show_form.set(true); },
-                    "{t_add_exp}"
-                }
-            } else {
-                div { class: "inline-form",
-                    h3 { "{t_new_pos}" }
-                    div { class: "form-row",
-                        Field { label: t_company.to_string(), required: true,
-                            input { r#type: "text", class: "input", placeholder: "Acme Corp",
-                                value: new_company.read().clone(),
-                                oninput: move |e| { new_company.set(e.value()); },
-                            }
-                        }
-                        Field { label: t_role.to_string(), required: true,
-                            input { r#type: "text", class: "input", placeholder: "Software Engineer",
-                                key: "{l:?}",
-                                value: new_role.read().get(l).to_string(),
-                                oninput: move |e| { new_role.write().set(l, e.value()); },
-                            }
+                    div { class: "item-list",
+                        for (i, exp) in experiences.into_iter().enumerate() {
+                            ExpItem { exp, index: i, cv, view }
                         }
                     }
-                    div { class: "form-row",
-                        Field { label: t_location.to_string(),
-                            input { r#type: "text", class: "input", placeholder: "Paris, France",
-                                value: new_loc.read().clone(),
-                                oninput: move |e| { new_loc.set(e.value()); },
-                            }
+
+                    if !adding {
+                        button {
+                            class: "btn btn-outline",
+                            onclick: move |_| { show_form.set(true); },
+                            "{t_add_exp}"
                         }
-                        Field { label: t_start.to_string(),
-                            input { r#type: "text", class: "input", placeholder: "Jan 2021",
-                                value: new_start.read().clone(),
-                                oninput: move |e| { new_start.set(e.value()); },
-                            }
-                        }
-                        Field { label: t_end.to_string(),
-                            input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                value: new_end.read().clone(),
-                                oninput: move |e| { new_end.set(e.value()); },
-                            }
-                        }
-                    }
-                    div { class: "field",
-                        label { class: "label", "{t_projects}" }
-                        for pi in 0..new_projects.read().len() {
-                            div { class: "project-card",
-                                Field { label: t_project_name.to_string(),
-                                    input { r#type: "text", class: "input", placeholder: "API Platform",
-                                        key: "{pi}-{l:?}",
-                                        value: new_projects.read()[pi].name.get(l).to_string(),
-                                        oninput: move |e| { new_projects.write()[pi].name.set(l, e.value()); },
+                    } else {
+                        div { class: "inline-form",
+                            h3 { "{t_new_pos}" }
+                            div { class: "form-row",
+                                Field { label: t_company.to_string(), required: true,
+                                    input { r#type: "text", class: "input", placeholder: "Acme Corp",
+                                        value: new_company.read().clone(),
+                                        oninput: move |e| { new_company.set(e.value()); },
                                     }
                                 }
-                                div { class: "field",
-                                    label { class: "label", "{t_project_ctx}" }
-                                    for ci in 0..new_projects.read()[pi].context.len() {
-                                        div { class: "bullet-row",
-                                            if ci > 0 {
-                                                button { class: "btn-icon btn-move",
-                                                    onclick: move |_| { new_projects.write()[pi].context.swap(ci, ci - 1); },
-                                                    "↑"
-                                                }
-                                            }
-                                            if ci < new_projects.read()[pi].context.len() - 1 {
-                                                button { class: "btn-icon btn-move",
-                                                    onclick: move |_| { new_projects.write()[pi].context.swap(ci, ci + 1); },
-                                                    "↓"
-                                                }
-                                            }
-                                            span { class: "bullet-dot", "•" }
-                                            BoldableField {
-                                                key: "{pi}-{ci}-{l:?}",
-                                                id: format!("new-exp-ctx-{pi}-{ci}"),
-                                                value: new_projects.read()[pi].context[ci].get(l).to_string(),
-                                                oninput: move |v| { new_projects.write()[pi].context[ci].set(l, v); },
-                                            }
-                                            if new_projects.read()[pi].context.len() > 1 {
-                                                button { class: "btn-icon",
-                                                    onclick: move |_| { new_projects.write()[pi].context.remove(ci); },
-                                                    "×"
-                                                }
+                                Field { label: t_role.to_string(), required: true,
+                                    input { r#type: "text", class: "input", placeholder: "Software Engineer",
+                                        key: "{l:?}",
+                                        value: new_role.read().get(l).to_string(),
+                                        oninput: move |e| { new_role.write().set(l, e.value()); },
+                                    }
+                                }
+                            }
+                            div { class: "form-row",
+                                Field { label: t_location.to_string(),
+                                    input { r#type: "text", class: "input", placeholder: "Paris, France",
+                                        value: new_loc.read().clone(),
+                                        oninput: move |e| { new_loc.set(e.value()); },
+                                    }
+                                }
+                                Field { label: t_start.to_string(),
+                                    input { r#type: "text", class: "input", placeholder: "Jan 2021",
+                                        value: new_start.read().clone(),
+                                        oninput: move |e| { new_start.set(e.value()); },
+                                    }
+                                }
+                                Field { label: t_end.to_string(),
+                                    input { r#type: "text", class: "input", placeholder: "{t_present}",
+                                        value: new_end.read().clone(),
+                                        oninput: move |e| { new_end.set(e.value()); },
+                                    }
+                                }
+                            }
+                            div { class: "field",
+                                label { class: "label", "{t_projects}" }
+                                for pi in 0..new_projects.read().len() {
+                                    div { class: "project-card",
+                                        Field { label: t_project_name.to_string(),
+                                            input { r#type: "text", class: "input", placeholder: "API Platform",
+                                                key: "{pi}-{l:?}",
+                                                value: new_projects.read()[pi].name.get(l).to_string(),
+                                                oninput: move |e| { new_projects.write()[pi].name.set(l, e.value()); },
                                             }
                                         }
-                                    }
-                                    button { class: "btn-text",
-                                        onclick: move |_| { new_projects.write()[pi].context.push(LocalizedText::default()); },
-                                        "{t_add_context}"
-                                    }
-                                }
-                                div { class: "field",
-                                    label { class: "label", "{t_achieve}" }
-                                    for bi in 0..new_projects.read()[pi].bullets.len() {
-                                        div { class: "bullet-row",
-                                            if bi > 0 {
-                                                button { class: "btn-icon btn-move",
-                                                    onclick: move |_| { new_projects.write()[pi].bullets.swap(bi, bi - 1); },
-                                                    "↑"
-                                                }
-                                            }
-                                            if bi < new_projects.read()[pi].bullets.len() - 1 {
-                                                button { class: "btn-icon btn-move",
-                                                    onclick: move |_| { new_projects.write()[pi].bullets.swap(bi, bi + 1); },
-                                                    "↓"
-                                                }
-                                            }
-                                            span { class: "bullet-dot", "•" }
-                                            BoldableField {
-                                                key: "{pi}-{bi}-{l:?}",
-                                                id: format!("new-exp-bullet-{pi}-{bi}"),
-                                                placeholder: "Reduced API latency by 40%".to_string(),
-                                                value: new_projects.read()[pi].bullets[bi].get(l).to_string(),
-                                                oninput: move |v| { new_projects.write()[pi].bullets[bi].set(l, v); },
-                                            }
-                                            if new_projects.read()[pi].bullets.len() > 1 {
-                                                button {
-                                                    class: "btn-icon",
-                                                    onclick: move |_| { new_projects.write()[pi].bullets.remove(bi); },
-                                                    "×"
-                                                }
-                                            }
-                                        }
-                                    }
-                                    button {
-                                        class: "btn-text",
-                                        onclick: move |_| { new_projects.write()[pi].bullets.push(LocalizedText::default()); },
-                                        "{t_add_bullet}"
-                                    }
-                                }
-                                Field { label: t_tools.to_string(),
-                                    div { class: "skill-check-list",
-                                        for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
-                                            {
-                                                let sk_id = sk.0.clone();
-                                                let checked = new_projects.read()[pi].skill_ids.contains(&sk_id);
-                                                rsx! {
-                                                    label { class: "skill-check",
-                                                        input {
-                                                            r#type: "checkbox",
-                                                            checked: checked,
-                                                            onchange: move |e| {
-                                                                if e.checked() {
-                                                                    new_projects.write()[pi].skill_ids.push(sk_id.clone());
-                                                                } else {
-                                                                    new_projects.write()[pi].skill_ids.retain(|id| id != &sk_id);
-                                                                }
-                                                            },
+                                        div { class: "field",
+                                            label { class: "label", "{t_project_ctx}" }
+                                            for ci in 0..new_projects.read()[pi].context.len() {
+                                                div { class: "bullet-row",
+                                                    if ci > 0 {
+                                                        button { class: "btn-icon btn-move",
+                                                            onclick: move |_| { new_projects.write()[pi].context.swap(ci, ci - 1); },
+                                                            "↑"
                                                         }
-                                                        span { class: "skill-check-name", "{sk.1}" }
-                                                        span { class: "skill-check-cat", "{sk.2}" }
+                                                    }
+                                                    if ci < new_projects.read()[pi].context.len() - 1 {
+                                                        button { class: "btn-icon btn-move",
+                                                            onclick: move |_| { new_projects.write()[pi].context.swap(ci, ci + 1); },
+                                                            "↓"
+                                                        }
+                                                    }
+                                                    span { class: "bullet-dot", "•" }
+                                                    BoldableField {
+                                                        key: "{pi}-{ci}-{l:?}",
+                                                        id: format!("new-exp-ctx-{pi}-{ci}"),
+                                                        value: new_projects.read()[pi].context[ci].get(l).to_string(),
+                                                        oninput: move |v| { new_projects.write()[pi].context[ci].set(l, v); },
+                                                    }
+                                                    if new_projects.read()[pi].context.len() > 1 {
+                                                        button { class: "btn-icon",
+                                                            onclick: move |_| { new_projects.write()[pi].context.remove(ci); },
+                                                            "×"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            button { class: "btn-text",
+                                                onclick: move |_| { new_projects.write()[pi].context.push(LocalizedText::default()); },
+                                                "{t_add_context}"
+                                            }
+                                        }
+                                        div { class: "field",
+                                            label { class: "label", "{t_achieve}" }
+                                            for bi in 0..new_projects.read()[pi].bullets.len() {
+                                                div { class: "bullet-row",
+                                                    if bi > 0 {
+                                                        button { class: "btn-icon btn-move",
+                                                            onclick: move |_| { new_projects.write()[pi].bullets.swap(bi, bi - 1); },
+                                                            "↑"
+                                                        }
+                                                    }
+                                                    if bi < new_projects.read()[pi].bullets.len() - 1 {
+                                                        button { class: "btn-icon btn-move",
+                                                            onclick: move |_| { new_projects.write()[pi].bullets.swap(bi, bi + 1); },
+                                                            "↓"
+                                                        }
+                                                    }
+                                                    span { class: "bullet-dot", "•" }
+                                                    BoldableField {
+                                                        key: "{pi}-{bi}-{l:?}",
+                                                        id: format!("new-exp-bullet-{pi}-{bi}"),
+                                                        placeholder: "Reduced API latency by 40%".to_string(),
+                                                        value: new_projects.read()[pi].bullets[bi].get(l).to_string(),
+                                                        oninput: move |v| { new_projects.write()[pi].bullets[bi].set(l, v); },
+                                                    }
+                                                    if new_projects.read()[pi].bullets.len() > 1 {
+                                                        button {
+                                                            class: "btn-icon",
+                                                            onclick: move |_| { new_projects.write()[pi].bullets.remove(bi); },
+                                                            "×"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            button {
+                                                class: "btn-text",
+                                                onclick: move |_| { new_projects.write()[pi].bullets.push(LocalizedText::default()); },
+                                                "{t_add_bullet}"
+                                            }
+                                        }
+                                        Field { label: t_tools.to_string(),
+                                            div { class: "skill-check-list",
+                                                for sk in all_skills.iter().map(|s| (s.id.clone(), s.name.clone(), s.category.label().to_string())).collect::<Vec<_>>().into_iter() {
+                                                    {
+                                                        let sk_id = sk.0.clone();
+                                                        let checked = new_projects.read()[pi].skill_ids.contains(&sk_id);
+                                                        rsx! {
+                                                            label { class: "skill-check",
+                                                                input {
+                                                                    r#type: "checkbox",
+                                                                    checked: checked,
+                                                                    onchange: move |e| {
+                                                                        if e.checked() {
+                                                                            new_projects.write()[pi].skill_ids.push(sk_id.clone());
+                                                                        } else {
+                                                                            new_projects.write()[pi].skill_ids.retain(|id| id != &sk_id);
+                                                                        }
+                                                                    },
+                                                                }
+                                                                span { class: "skill-check-name", "{sk.1}" }
+                                                                span { class: "skill-check-cat", "{sk.2}" }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                }
-                                div { class: "form-row",
-                                    Field { label: t_start.to_string(),
-                                        input { r#type: "text", class: "input", placeholder: "Jan 2025",
-                                            value: new_projects.read()[pi].start_date.clone(),
-                                            oninput: move |e| { new_projects.write()[pi].start_date = e.value(); },
-                                        }
-                                    }
-                                    Field { label: t_end.to_string(),
-                                        input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                            value: new_projects.read()[pi].end_date.clone(),
-                                            oninput: move |e| { new_projects.write()[pi].end_date = e.value(); },
-                                        }
-                                    }
-                                }
-                                if new_projects.read().len() > 1 {
-                                    div { class: "project-actions",
-                                        if pi > 0 {
-                                            button { class: "btn-icon btn-move",
-                                                onclick: move |_| { new_projects.write().swap(pi, pi - 1); },
-                                                "↑"
+                                        div { class: "form-row",
+                                            Field { label: t_start.to_string(),
+                                                input { r#type: "text", class: "input", placeholder: "Jan 2025",
+                                                    value: new_projects.read()[pi].start_date.clone(),
+                                                    oninput: move |e| { new_projects.write()[pi].start_date = e.value(); },
+                                                }
+                                            }
+                                            Field { label: t_end.to_string(),
+                                                input { r#type: "text", class: "input", placeholder: "{t_present}",
+                                                    value: new_projects.read()[pi].end_date.clone(),
+                                                    oninput: move |e| { new_projects.write()[pi].end_date = e.value(); },
+                                                }
                                             }
                                         }
-                                        if pi < new_projects.read().len() - 1 {
-                                            button { class: "btn-icon btn-move",
-                                                onclick: move |_| { new_projects.write().swap(pi, pi + 1); },
-                                                "↓"
+                                        if new_projects.read().len() > 1 {
+                                            div { class: "project-actions",
+                                                if pi > 0 {
+                                                    button { class: "btn-icon btn-move",
+                                                        onclick: move |_| { new_projects.write().swap(pi, pi - 1); },
+                                                        "↑"
+                                                    }
+                                                }
+                                                if pi < new_projects.read().len() - 1 {
+                                                    button { class: "btn-icon btn-move",
+                                                        onclick: move |_| { new_projects.write().swap(pi, pi + 1); },
+                                                        "↓"
+                                                    }
+                                                }
+                                                button { class: "btn-text btn-danger",
+                                                    onclick: move |_| { new_projects.write().remove(pi); },
+                                                    "× Remove project"
+                                                }
                                             }
                                         }
-                                        button { class: "btn-text btn-danger",
-                                            onclick: move |_| { new_projects.write().remove(pi); },
-                                            "× Remove project"
-                                        }
                                     }
+                                }
+                                button {
+                                    class: "btn-text",
+                                    onclick: move |_| {
+                                        new_projects.write().push(ExperienceProject {
+                                            id: new_id(),
+                                            name: LocalizedText::default(),
+                                            context: vec![LocalizedText::default()],
+                                            bullets: vec![LocalizedText::default()],
+                                            skill_ids: Vec::new(),
+                                            start_date: String::new(),
+                                            end_date: String::new(),
+                                        });
+                                    },
+                                    "{t_add_project}"
+                                }
+                            }
+                            div { class: "form-actions",
+                                button {
+                                    class: "btn btn-primary",
+                                    onclick: move |_| {
+                                        if new_company.read().is_empty() || new_role.read().is_empty() { return; }
+                                        let projects: Vec<ExperienceProject> = new_projects.read().iter().map(|p| {
+                                            ExperienceProject {
+                                                id: p.id.clone(),
+                                                name: p.name.clone(),
+                                                context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
+                                                bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
+                                                skill_ids: p.skill_ids.clone(),
+                                                start_date: p.start_date.clone(),
+                                                end_date: p.end_date.clone(),
+                                            }
+                                        }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
+                                        cv.write().experiences.push(Experience {
+                                            id: new_id(), company: new_company.read().clone(),
+                                            role: new_role.read().clone(), location: new_loc.read().clone(),
+                                            start_date: new_start.read().clone(), end_date: new_end.read().clone(),
+                                            projects,
+                                        });
+                                        new_company.set(String::new()); new_role.set(LocalizedText::default());
+                                        new_loc.set(String::new());     new_start.set(String::new());
+                                        new_end.set(t_present.to_string());
+                                        new_projects.set(vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
+                                        show_form.set(false);
+                                    },
+                                    "{t_add_pos}"
+                                }
+                                button {
+                                    class: "btn btn-secondary",
+                                    onclick: move |_| { show_form.set(false); },
+                                    "{t_cancel}"
                                 }
                             }
                         }
-                        button {
-                            class: "btn-text",
-                            onclick: move |_| {
-                                new_projects.write().push(ExperienceProject {
-                                    id: new_id(),
-                                    name: LocalizedText::default(),
-                                    context: vec![LocalizedText::default()],
-                                    bullets: vec![LocalizedText::default()],
-                                    skill_ids: Vec::new(),
-                                    start_date: String::new(),
-                                    end_date: String::new(),
-                                });
-                            },
-                            "{t_add_project}"
-                        }
                     }
-                    div { class: "form-actions",
-                        button {
-                            class: "btn btn-primary",
-                            onclick: move |_| {
-                                if new_company.read().is_empty() || new_role.read().is_empty() { return; }
-                                let projects: Vec<ExperienceProject> = new_projects.read().iter().map(|p| {
-                                    ExperienceProject {
-                                        id: p.id.clone(),
-                                        name: p.name.clone(),
-                                        context: p.context.iter().filter(|c| !c.is_empty()).cloned().collect(),
-                                        bullets: p.bullets.iter().filter(|b| !b.is_empty()).cloned().collect(),
-                                        skill_ids: p.skill_ids.clone(),
-                                        start_date: p.start_date.clone(),
-                                        end_date: p.end_date.clone(),
-                                    }
-                                }).filter(|p| !p.name.is_empty() || !p.bullets.is_empty()).collect();
-                                cv.write().experiences.push(Experience {
-                                    id: new_id(), company: new_company.read().clone(),
-                                    role: new_role.read().clone(), location: new_loc.read().clone(),
-                                    start_date: new_start.read().clone(), end_date: new_end.read().clone(),
-                                    projects,
-                                });
-                                new_company.set(String::new()); new_role.set(LocalizedText::default());
-                                new_loc.set(String::new());     new_start.set(String::new());
-                                new_end.set(t_present.to_string());
-                                new_projects.set(vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
-                                show_form.set(false);
-                            },
-                            "{t_add_pos}"
-                        }
-                        button {
-                            class: "btn btn-secondary",
-                            onclick: move |_| { show_form.set(false); },
-                            "{t_cancel}"
-                        }
-                    }
-                }
+                },
+                ExpView::Experience(exp_id) => rsx! {
+                    ExpExperienceView { key: "{exp_id}", exp_id, cv, lang, view }
+                },
+                ExpView::Project(exp_id, proj_id) => rsx! {
+                    ExpProjectView { key: "{proj_id}", exp_id, proj_id, cv, lang, view }
+                },
             }
         }
     }
