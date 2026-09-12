@@ -10,6 +10,24 @@ use cv_generator::services::worker::{fetch_model_bytes_cached, EmbeddingWorker, 
 use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+/// Drill-down navigation for the tailor output column (mirrors the
+/// Experience step's `ExpView` in cv_editor): instead of stacking the
+/// score, both adjustment panels and the rendered CV on one long page,
+/// each section is a separate view reached through clickable cards and a
+/// breadcrumb that returns to the hub. The three views:
+///  - `Summary`: score banner, keyword clouds, and the section cards.
+///  - `Adjust`: the manual project + skills selection panels (shared
+///    Apply/Reset/Clear row lives here).
+///  - `Preview`: the rendered iframe + Download button (the button needs
+///    the iframe actually rendered to call print(), so hiding it via CSS
+///    to keep a stray Download button elsewhere would print a blank page).
+#[derive(Clone, PartialEq)]
+enum TailorView {
+    Summary,
+    Adjust,
+    Preview,
+}
+
 #[cfg(target_arch = "wasm32")]
 fn download_pdf(iframe_id: &str, filename: &str) {
     let title = filename.strip_suffix(".pdf").unwrap_or(filename);
@@ -204,6 +222,11 @@ pub fn Tailor() -> Element {
     // Set to true by "Apply selection" so the panel can show a brief
     // confirmation that the manual selection was applied (Item #3).
     let mut apply_confirmed = use_signal(|| false);
+    // Which drill-down section of the output column is shown (see
+    // `TailorView`'s doc comment). Always starts on the Summary hub; each
+    // "Générer" run resets back to it so the new score is what the person
+    // lands on first.
+    let mut view = use_signal(|| TailorView::Summary);
 
     // Named, explicitly-saved sessions (Item #3) — distinct from the
     // always-on auto-saved "current session" above; see
@@ -335,6 +358,16 @@ pub fn Tailor() -> Element {
     let t_status_interviewing = i18n::tr("tl_status_interviewing", l);
     let t_status_offer = i18n::tr("tl_status_offer", l);
     let t_status_rejected = i18n::tr("tl_status_rejected", l);
+
+    // Drill-down navigation labels (see `TailorView`).
+    let t_nav_sections = i18n::tr("tl_nav_sections", l);
+    let t_nav_summary = i18n::tr("tl_nav_summary", l);
+    let t_nav_adjust = i18n::tr("tl_nav_adjust", l);
+    let t_nav_preview = i18n::tr("tl_nav_preview", l);
+    let t_section_projects = i18n::tr("tl_section_projects", l);
+    let t_section_skills = i18n::tr("tl_section_skills", l);
+    let t_section_preview = i18n::tr("tl_section_preview", l);
+    let t_section_preview_sub = i18n::tr("tl_section_preview_sub", l);
 
     // Saved sessions to render, narrowed by the status filter (`None` =
     // show all). Computed once here so the rsx! loop below stays a plain
@@ -867,6 +900,7 @@ pub fn Tailor() -> Element {
                                     last_tailored.set(Some(result.tailored.clone()));
                                     result_html.set(html);
                                     generated.set(true);
+                                    view.set(TailorView::Summary);
                                     persist_current_session(
                                         &job_title.read(),
                                         &jd_text.read(),
@@ -882,6 +916,8 @@ pub fn Tailor() -> Element {
 
                     div { class: "tailor-output",
                         if is_generated {
+                        if *view.read() == TailorView::Summary {
+                            div { class: "drill",
                             div { class: "score-banner",
                                 div { class: "score-left",
                                     div {
@@ -912,19 +948,70 @@ pub fn Tailor() -> Element {
                                     }
                                 }
                             }
-
                             div { class: "output-actions",
-                                button {
-                                    class: "btn btn-primary",
-                                    onclick: move |_| { download_pdf("cv-tailor-frame", "tailored-cv.pdf"); },
-                                    "{t_dl}"
-                                }
                                 button {
                                     class: "btn btn-secondary",
                                     onclick: move |_| { let cur = *show_debug.read(); show_debug.set(!cur); },
                                     if *show_debug.read() { "Hide score debug" } else { "Show score debug" }
                                 }
                             }
+
+                            p { class: "manual-selection-title", "{t_nav_sections}" }
+                            div { class: "item-list",
+                                div { class: "item-card",
+                                    div { class: "item-card-body clickable",
+                                        onclick: move |_| view.set(TailorView::Adjust),
+                                        div { class: "item-title", "{t_section_projects}" }
+                                        div { class: "item-sub", "{t_n_selected}" }
+                                    }
+                                }
+                                div { class: "item-card",
+                                    div { class: "item-card-body clickable",
+                                        onclick: move |_| view.set(TailorView::Adjust),
+                                        div { class: "item-title", "{t_section_skills}" }
+                                        div { class: "item-sub", "{t_n_skills_selected}" }
+                                    }
+                                }
+                                div { class: "item-card",
+                                    div { class: "item-card-body clickable",
+                                        onclick: move |_| view.set(TailorView::Preview),
+                                        div { class: "item-title", "{t_section_preview}" }
+                                        div { class: "item-sub", "{t_section_preview_sub}" }
+                                    }
+                                }
+                            }
+
+                            if *show_debug.read() {
+                                div {
+                                    style: "margin: 1rem 0; padding: 1rem; border: 1px solid #444; border-radius: 8px; font-family: monospace; font-size: 0.85rem;",
+                                    p { style: "margin-top: 0; font-weight: bold;", "Raw scores (mode: {mode_label(current_mode, l)})" }
+                                    for exp_row in debug_rows.iter() {
+                                        div {
+                                            style: "margin-bottom: 0.5rem; opacity: {exp_row.opacity};",
+                                            div { "{exp_row.line}" }
+                                            for proj_row in exp_row.projects.iter() {
+                                                div {
+                                                    style: "margin-left: 1.5rem; opacity: 0.85;",
+                                                    "{proj_row.line}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            }
+                        }
+
+                        if *view.read() == TailorView::Adjust {
+                            div { class: "drill",
+                                div { class: "breadcrumb",
+                                    button { class: "btn-text breadcrumb-crumb",
+                                        onclick: move |_| view.set(TailorView::Summary),
+                                        "{t_nav_summary}"
+                                    }
+                                    span { class: "breadcrumb-sep", "›" }
+                                    span { class: "breadcrumb-current", "{t_nav_adjust}" }
+                                }
 
                             // Manual project selection: lets the person tick/untick
                             // individual projects in or out of the final result,
@@ -1143,24 +1230,28 @@ pub fn Tailor() -> Element {
                                 }
                             }
 
-                            if *show_debug.read() {
-                                div {
-                                    style: "margin: 1rem 0; padding: 1rem; border: 1px solid #444; border-radius: 8px; font-family: monospace; font-size: 0.85rem;",
-                                    p { style: "margin-top: 0; font-weight: bold;", "Raw scores (mode: {mode_label(current_mode, l)})" }
-                                    for exp_row in debug_rows.iter() {
-                                        div {
-                                            style: "margin-bottom: 0.5rem; opacity: {exp_row.opacity};",
-                                            div { "{exp_row.line}" }
-                                            for proj_row in exp_row.projects.iter() {
-                                                div {
-                                                    style: "margin-left: 1.5rem; opacity: 0.85;",
-                                                    "{proj_row.line}"
-                                                }
-                                            }
-                                        }
+                            }
+                        }
+
+                        if *view.read() == TailorView::Preview {
+                            div { class: "drill",
+                                div { class: "breadcrumb",
+                                    button { class: "btn-text breadcrumb-crumb",
+                                        onclick: move |_| view.set(TailorView::Summary),
+                                        "{t_nav_summary}"
+                                    }
+                                    span { class: "breadcrumb-sep", "›" }
+                                    span { class: "breadcrumb-current", "{t_nav_preview}" }
+                                }
+
+                                div { class: "output-actions",
+                                    button {
+                                        class: "btn btn-primary",
+                                        onclick: move |_| { download_pdf("cv-tailor-frame", "tailored-cv.pdf"); },
+                                        "{t_dl}"
                                     }
                                 }
-                            }
+
                             p { class: "hint", "{t_dl_hint}" }
 
                             iframe {
@@ -1168,6 +1259,9 @@ pub fn Tailor() -> Element {
                                 class: "cv-iframe cv-iframe-tall",
                                 srcdoc: result_html.read().clone(),
                             }
+                            }
+                        }
+
                         } else {
                             div { class: "output-placeholder",
                                 div { class: "placeholder-icon", "📄" }
