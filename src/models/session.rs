@@ -88,6 +88,12 @@ pub struct TailoringSession {
     /// would have bought.
     #[serde(default)]
     pub checked_project_ids: Vec<String>,
+    /// `Skill` ids the person has manually checked — the same ids
+    /// `apply_manual_skill_selection` consumes. Same storage choice as
+    /// `checked_project_ids` (a `Vec`: order is meaningless and JSON
+    /// round-trips trivially).
+    #[serde(default)]
+    pub checked_skill_ids: Vec<String>,
     #[serde(default)]
     pub updated_at_ms: i64,
     /// Match score (0.0–1.0, the same fraction `TailoredCV.match_score`
@@ -115,6 +121,10 @@ mod tests {
         assert_eq!(s.status, ApplicationStatus::Applied);
         assert_eq!(s.date_applied, "");
         assert_eq!(s.match_score, 0.0);
+        assert!(
+            s.checked_skill_ids.is_empty(),
+            "old JSON has no skill selection; it must deserialize to empty"
+        );
     }
 
     #[test]

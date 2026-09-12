@@ -874,6 +874,21 @@ pub fn apply_manual_project_selection(
     result
 }
 
+/// `Skill` ids the person manually checked, applied to the full lifetime
+/// skill list. Skills keep the CV's own order (the rendered skills section
+/// regroups them by category anyway); an unchecked skill is simply
+/// dropped, an empty set drops them all.
+pub fn apply_manual_skill_selection(
+    cv: &LifetimeCV,
+    checked_skill_ids: &HashSet<String>,
+) -> Vec<Skill> {
+    cv.skills
+        .iter()
+        .filter(|s| checked_skill_ids.contains(&s.id))
+        .cloned()
+        .collect()
+}
+
 fn display_role(role: &crate::models::LocalizedText) -> String {
     if !role.fr.is_empty() {
         role.fr.clone()
@@ -1606,6 +1621,76 @@ mod tests {
             "output order must match cv.experiences' own order"
         );
         assert_eq!(result[1].company, "Second");
+    }
+
+    #[test]
+    fn apply_manual_skill_selection_keeps_only_checked_skills_in_cv_order() {
+        let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s1".into(),
+                    name: "Rust".into(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s2".into(),
+                    name: "Docker".into(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s3".into(),
+                    name: "Bash".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        // Checked out of order + a missing one — output must follow the CV's
+        // own skill order, not the checkbox iteration order.
+        let checked: HashSet<String> = ["s3", "s1"].iter().map(|s| s.to_string()).collect();
+        let result = apply_manual_skill_selection(&cv, &checked);
+        let names: Vec<&str> = result.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["Rust", "Bash"]);
+    }
+
+    #[test]
+    fn apply_manual_skill_selection_empty_set_drops_everything() {
+        let cv = LifetimeCV {
+            skills: vec![Skill {
+                id: "s1".into(),
+                name: "Rust".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let result = apply_manual_skill_selection(&cv, &HashSet::new());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn apply_manual_skill_selection_can_reinclude_a_skill_the_algorithm_dropped() {
+        // Like the project counterpart: reading from `cv` (not the already
+        // filtered TailoredCV) is what lets a person re-add an unrelated
+        // non-Expert skill that the automatic pass excluded.
+        let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-rust".into(),
+                    name: "Rust".into(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-py".into(),
+                    name: "Python".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let checked: HashSet<String> = ["s-rust", "s-py"].iter().map(|s| s.to_string()).collect();
+        let result = apply_manual_skill_selection(&cv, &checked);
+        let names: Vec<&str> = result.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["Rust", "Python"]);
     }
 
     // ── Fixture ───────────────────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 use crate::i18n;
 use crate::router::Route;
 use cv_generator::models::LifetimeCV;
-use cv_generator::services::matcher::apply_manual_project_selection;
+use cv_generator::services::matcher::{
+    apply_manual_project_selection, apply_manual_skill_selection,
+};
 use cv_generator::services::renderer::render_tailored_cv;
 use cv_generator::services::score::ScoreMode;
 use cv_generator::services::worker::{fetch_model_bytes_cached, EmbeddingWorker, WorkerStatus};
@@ -88,6 +90,7 @@ fn persist_current_session(
     jd_text: &str,
     score_mode: ScoreMode,
     checked_project_ids: &std::collections::HashSet<String>,
+    checked_skill_ids: &std::collections::HashSet<String>,
 ) {
     let session = cv_generator::models::TailoringSession {
         id: "current".to_string(),
@@ -96,6 +99,7 @@ fn persist_current_session(
         jd_text: jd_text.to_string(),
         score_mode,
         checked_project_ids: checked_project_ids.iter().cloned().collect(),
+        checked_skill_ids: checked_skill_ids.iter().cloned().collect(),
         updated_at_ms: 0,
         match_score: 0.0,
         date_applied: String::new(),
@@ -171,6 +175,18 @@ pub fn Tailor() -> Element {
     // it", and lets a later regeneration preserve the person's manual
     // deviations instead of discarding them (Fix #2).
     let mut last_algo_project_ids = use_signal(HashSet::<String>::new);
+    // Manual skill-selection override — the exact same mechanism as the
+    // project override above, one level down: `checked_skill_ids` starts as
+    // whatever `select_tailored_skills` kept from the last run, then the
+    // person can tick/untick individual skills (including re-including one
+    // of the non-JD/non-Expert skills the algorithm dropped entirely, since
+    // this also reads from `cv`, the full CV). Applied together with the
+    // project selection by the single shared "Apply selection" button.
+    let mut checked_skill_ids = use_signal(HashSet::<String>::new);
+    // The algorithm's skill selection from the last run, frozen at
+    // "Générer" time — the skill counterpart of `last_algo_project_ids`
+    // (same marker logic, same regenerate-preserves-deviations rule).
+    let mut last_algo_skill_ids = use_signal(HashSet::<String>::new);
     // Status filter for the saved-sessions list (`None` = show all). This
     // is the application-tracking entry point: each saved session carries
     // a match score, an "applied on" date and a status, so the list can be
@@ -198,13 +214,13 @@ pub fn Tailor() -> Element {
 
     // Restore the auto-saved "current session" on mount (Item #2) — a
     // reload or accidental navigation-away no longer loses an
-    // in-progress JD paste or manual selection. `checked_project_ids` is
-    // restored directly (not merged through the usual algorithm-vs-manual
-    // logic, since there's no fresh algorithm run to merge against yet);
-    // `last_algo_project_ids` is seeded to the SAME restored set, which
-    // means the next "Générer" run treats everything restored as already
-    // wanted and only ever ADDS new algorithm picks on top of it, never
-    // silently drops something the person had kept before reloading.
+    // in-progress JD paste or manual selection. `checked_project_ids` (and
+    // its skill counterpart) is restored directly (not merged through the
+    // usual algorithm-vs-manual logic, since there's no fresh algorithm run
+    // to merge against yet); `last_algo_*` is seeded to the SAME restored
+    // set, which means the next "Générer" run treats everything restored as
+    // already wanted and only ever ADDS new algorithm picks on top of it,
+    // never silently drops something the person had kept before reloading.
     use_hook(|| {
         if let Some(session) = cv_generator::services::storage::load_current_session() {
             job_title.set(session.job_title);
@@ -213,6 +229,9 @@ pub fn Tailor() -> Element {
             let restored: HashSet<String> = session.checked_project_ids.into_iter().collect();
             checked_project_ids.set(restored.clone());
             last_algo_project_ids.set(restored);
+            let restored_skills: HashSet<String> = session.checked_skill_ids.into_iter().collect();
+            checked_skill_ids.set(restored_skills.clone());
+            last_algo_skill_ids.set(restored_skills);
         }
         saved_sessions.set(cv_generator::services::storage::load_sessions_list());
     });
@@ -342,6 +361,48 @@ pub fn Tailor() -> Element {
         .replacen("{}", &selected_count.to_string(), 1)
         .replacen("{}", &total_projects.to_string(), 1);
 
+    // Skill counterpart of the two counts above.
+    let total_skills = cv.read().skills.len();
+    let selected_skills_count = checked_skill_ids.read().len();
+    let t_n_skills_selected = i18n::tr("tl_n_skills_selected", l)
+        .replacen("{}", &selected_skills_count.to_string(), 1)
+        .replacen("{}", &total_skills.to_string(), 1);
+    let t_adjust_skills = i18n::tr("tl_adjust_skills", l);
+
+    // Skills grouped by category for the manual-selection panel, along with
+    // each skill's current checked state (live override) and the algorithm's
+    // last decision — the same data the project panel derives per project.
+    // Materialized up front (category, then flat entries) so the render tree
+    // only does a plain `for` with no conditional emission per category.
+    type SkillGroup = (String, Vec<(String, String, bool, bool)>);
+    let skill_groups: Vec<SkillGroup> = {
+        let checked = checked_skill_ids.read();
+        let algo = last_algo_skill_ids.read();
+        cv_generator::models::SkillCategory::all()
+            .into_iter()
+            .map(|cat| {
+                let entries: Vec<(String, String, bool, bool)> = cv
+                    .read()
+                    .skills
+                    .iter()
+                    .filter(|s| s.category == cat)
+                    .map(|s| {
+                        let sid = s.id.clone();
+                        let is_checked = checked.contains(&sid);
+                        let algo_selected = algo.contains(&sid);
+                        (sid, s.name.clone(), is_checked, algo_selected)
+                    })
+                    .collect();
+                let label = match l {
+                    i18n::Lang::Fr => cat.label_fr().to_string(),
+                    _ => cat.label().to_string(),
+                };
+                (label, entries)
+            })
+            .filter(|(_, entries)| !entries.is_empty())
+            .collect()
+    };
+
     rsx! {
         div { class: "page",
             div { class: "page-back-row",
@@ -440,6 +501,10 @@ pub fn Tailor() -> Element {
                                                                 session.checked_project_ids.iter().cloned().collect();
                                                             checked_project_ids.set(restored.clone());
                                                             last_algo_project_ids.set(restored);
+                                                            let restored_skills: HashSet<String> =
+                                                                session.checked_skill_ids.iter().cloned().collect();
+                                                            checked_skill_ids.set(restored_skills.clone());
+                                                            last_algo_skill_ids.set(restored_skills);
                                                             // Loading a saved session also makes it
                                                             // the new "current session" going
                                                             // forward, so continuing to edit from
@@ -449,6 +514,7 @@ pub fn Tailor() -> Element {
                                                                 &jd_text.read(),
                                                                 *score_mode.read(),
                                                                 &checked_project_ids.read(),
+                                                                &checked_skill_ids.read(),
                                                             );
                                                         },
                                                         "{t_load}"
@@ -497,6 +563,11 @@ pub fn Tailor() -> Element {
                                                     .iter()
                                                     .cloned()
                                                     .collect(),
+                                                checked_skill_ids: checked_skill_ids
+                                                    .read()
+                                                    .iter()
+                                                    .cloned()
+                                                    .collect(),
                                                 updated_at_ms: 0,
                                                 match_score: *match_score.read() as f32 / 100.0,
                                                 date_applied: today_date(),
@@ -525,6 +596,7 @@ pub fn Tailor() -> Element {
                                             &jd_text.read(),
                                             *score_mode.read(),
                                             &checked_project_ids.read(),
+                                            &checked_skill_ids.read(),
                                         );
                                     },
                                 }
@@ -542,6 +614,7 @@ pub fn Tailor() -> Element {
                                             &jd_text.read(),
                                             *score_mode.read(),
                                             &checked_project_ids.read(),
+                                            &checked_skill_ids.read(),
                                         );
                                     },
                                 }
@@ -565,6 +638,7 @@ pub fn Tailor() -> Element {
                                                     &jd_text.read(),
                                                     mode,
                                                     &checked_project_ids.read(),
+                                                    &checked_skill_ids.read(),
                                                 );
                                             },
                                             "{mode_label(mode, l)}"
@@ -766,6 +840,30 @@ pub fn Tailor() -> Element {
                                         checked_project_ids.set(merged);
                                     }
                                     last_algo_project_ids.set(new_algo);
+                                    // Skill counterpart of the merge above: the algorithm's
+                                    // kept skills come straight from the tailored result.
+                                    let new_algo_skills: HashSet<String> = result
+                                        .tailored
+                                        .skills
+                                        .iter()
+                                        .map(|s| s.id.clone())
+                                        .collect();
+                                    {
+                                        let prev_checked = checked_skill_ids.read().clone();
+                                        let prev_algo = last_algo_skill_ids.read();
+                                        let user_removed: HashSet<String> = prev_algo
+                                            .difference(&prev_checked)
+                                            .cloned()
+                                            .collect();
+                                        let mut merged = prev_checked;
+                                        for id in &new_algo_skills {
+                                            if !user_removed.contains(id) {
+                                                merged.insert(id.clone());
+                                            }
+                                        }
+                                        checked_skill_ids.set(merged);
+                                    }
+                                    last_algo_skill_ids.set(new_algo_skills);
                                     last_tailored.set(Some(result.tailored.clone()));
                                     result_html.set(html);
                                     generated.set(true);
@@ -774,6 +872,7 @@ pub fn Tailor() -> Element {
                                         &jd_text.read(),
                                         mode,
                                         &checked_project_ids.read(),
+                                        &checked_skill_ids.read(),
                                     );
                                 },
                                 "{t_gen}"
@@ -901,6 +1000,7 @@ pub fn Tailor() -> Element {
                                                                     &jd_text.read(),
                                                                     *score_mode.read(),
                                                                     &checked_project_ids.read(),
+                                                                    &checked_skill_ids.read(),
                                                                 );
                                                             },
                                                         }
@@ -914,18 +1014,89 @@ pub fn Tailor() -> Element {
                                         }
                                     }
                                 }
+                                div { class: "manual-selection-panel",
+                                    p { class: "manual-selection-title", "{t_adjust_skills}" }
+                                    p { class: "manual-selection-count", "{t_n_skills_selected}" }
+                                    // Same marker/count semantics as the project panel above,
+                                    // one level down: the algorithm's picks come from the
+                                    // `select_tailored_skills` filter of the last run
+                                    // (`last_algo_skill_ids`), and the person can tick back in
+                                    // a non-JD/non-Expert skill the filter dropped entirely.
+                                    for (cat_label, entries) in &skill_groups {
+                                        div { class: "manual-selection-exp",
+                                            div { class: "manual-selection-exp-header", "{cat_label}" }
+                                            for (sid, sname, is_checked, algo_selected) in entries {
+                                                {
+                                                    let sid = sid.clone();
+                                                    let sname = sname.clone();
+                                                    let marker = if *is_checked && *algo_selected {
+                                                        "auto"
+                                                    } else if *is_checked {
+                                                        "added"
+                                                    } else if *algo_selected {
+                                                        "removed"
+                                                    } else {
+                                                        "excluded"
+                                                    };
+                                                    let marker_css = match marker {
+                                                        "added" => "hand-added",
+                                                        "removed" => "hand-removed",
+                                                        "excluded" => "not-selected",
+                                                        _ => "automatic",
+                                                    };
+                                                    let marker_label = match marker {
+                                                        "added" => i18n::tr("tl_marker_added", l),
+                                                        "removed" => i18n::tr("tl_marker_removed", l),
+                                                        "excluded" => i18n::tr("tl_marker_excluded", l),
+                                                        _ => i18n::tr("tl_marker_auto", l),
+                                                    };
+                                                    rsx! {
+                                                        label {
+                                                            class: "manual-selection-project manual-selection-project-{marker}",
+                                                            input {
+                                                                r#type: "checkbox",
+                                                                checked: *is_checked,
+                                                                onchange: move |e| {
+                                                                    if e.checked() {
+                                                                        checked_skill_ids.write().insert(sid.clone());
+                                                                    } else {
+                                                                        checked_skill_ids.write().remove(&sid);
+                                                                    }
+                                                                    persist_current_session(
+                                                                        &job_title.read(),
+                                                                        &jd_text.read(),
+                                                                        *score_mode.read(),
+                                                                        &checked_project_ids.read(),
+                                                                        &checked_skill_ids.read(),
+                                                                    );
+                                                                },
+                                                            }
+                                                            span { "{sname}" }
+                                                            span { class: "manual-selection-marker {marker_css}",
+                                                                "{marker_label}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 div { class: "manual-selection-actions",
                                     button {
                                         class: "btn btn-secondary",
                                         onclick: move |_| {
                                             *checked_project_ids.write() =
                                                 last_algo_project_ids.read().clone();
+                                            *checked_skill_ids.write() =
+                                                last_algo_skill_ids.read().clone();
                                             apply_confirmed.set(false);
                                             persist_current_session(
                                                 &job_title.read(),
                                                 &jd_text.read(),
                                                 *score_mode.read(),
                                                 &checked_project_ids.read(),
+                                                &checked_skill_ids.read(),
                                             );
                                         },
                                         "{t_reset_algo}"
@@ -934,12 +1105,14 @@ pub fn Tailor() -> Element {
                                         class: "btn btn-secondary",
                                         onclick: move |_| {
                                             checked_project_ids.write().clear();
+                                            checked_skill_ids.write().clear();
                                             apply_confirmed.set(false);
                                             persist_current_session(
                                                 &job_title.read(),
                                                 &jd_text.read(),
                                                 *score_mode.read(),
                                                 &checked_project_ids.read(),
+                                                &checked_skill_ids.read(),
                                             );
                                         },
                                         "{t_clear_all}"
@@ -952,6 +1125,10 @@ pub fn Tailor() -> Element {
                                                 tailored.experiences = apply_manual_project_selection(
                                                     &cv.read(),
                                                     &checked_project_ids.read(),
+                                                );
+                                                tailored.skills = apply_manual_skill_selection(
+                                                    &cv.read(),
+                                                    &checked_skill_ids.read(),
                                                 );
                                                 let html = render_tailored_cv(&tailored, &job_title.read(), l);
                                                 result_html.set(html);
