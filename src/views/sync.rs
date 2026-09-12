@@ -8,6 +8,10 @@ use dioxus::prelude::*;
 
 const BUILD_TIME_CLIENT_ID: Option<&str> = option_env!("GOOGLE_CLIENT_ID");
 
+/// Companion site of mine that provides a dedicated UI to browse and
+/// manage the Google Drive backups this app writes.
+const DRIVE_BROWSER_URL: &str = "https://stellasecret.github.io/gdrive-appdata-browser/";
+
 fn make_ok(s: &str) -> String {
     format!("✅  {s}")
 }
@@ -58,6 +62,9 @@ pub fn Sync() -> Element {
     let t_ldesc = i18n::tr("sy_local_desc", l);
     let t_export = i18n::tr("sy_export", l);
     let t_jsonok = i18n::tr("sy_json_ok", l);
+    let t_browse_title = i18n::tr("sy_browse_title", l);
+    let t_browse_desc = i18n::tr("sy_browse_desc", l);
+    let t_browse_open = i18n::tr("sy_browse_open", l);
 
     rsx! {
         div { class: "page",
@@ -175,6 +182,23 @@ pub fn Sync() -> Element {
                         "{t_export}"
                     }
                     ImportButton { cv, status, lang }
+                }
+            }
+
+            div { class: "sync-card",
+                h2 { class: "sync-card-title",
+                    span { class: "sync-card-icon", "🔗" }
+                    "{t_browse_title}"
+                }
+                p { class: "sync-card-desc", "{t_browse_desc}" }
+                div { class: "sync-drive-actions",
+                    a {
+                        class: "btn btn-outline",
+                        href: DRIVE_BROWSER_URL,
+                        target: "_blank",
+                        rel: "noopener",
+                        "{t_browse_open}"
+                    }
                 }
             }
 

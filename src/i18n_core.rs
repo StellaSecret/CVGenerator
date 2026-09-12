@@ -370,6 +370,9 @@ fn en(key: &'static str) -> &'static str {
         "sy_import"         => "⬆  Import JSON",
         "sy_json_ok"        => "JSON downloaded",
         "sy_import_ok"      => "CV imported from file",
+        "sy_browse_title"   => "Drive backup manager",
+        "sy_browse_desc"    => "A dedicated web app to explore and manage your Google Drive backups.",
+        "sy_browse_open"    => "Open backup manager",
 
         // Renderer section titles
         "rs_experience"     => "Experience",
@@ -593,6 +596,9 @@ fn fr(key: &'static str) -> &'static str {
         "sy_import"         => "⬆  Importer JSON",
         "sy_json_ok"        => "JSON téléchargé",
         "sy_import_ok"      => "CV importé depuis le fichier",
+        "sy_browse_title"   => "Gestion des sauvegardes Drive",
+        "sy_browse_desc"    => "Une application web dédiée pour explorer et gérer vos sauvegardes Google Drive.",
+        "sy_browse_open"    => "Ouvrir le gestionnaire de sauvegardes",
 
         // Renderer section titles
         "rs_experience"     => "Expérience",
@@ -791,6 +797,9 @@ mod tests {
             "sy_restore",
             "sy_export",
             "sy_import",
+            "sy_browse_title",
+            "sy_browse_desc",
+            "sy_browse_open",
         ];
         for key in keys {
             assert_ne!(tr(key, Lang::En), key);
@@ -1004,6 +1013,9 @@ mod tests {
             ("sy_import", "⬆  Import JSON"),
             ("sy_json_ok", "JSON downloaded"),
             ("sy_import_ok", "CV imported from file"),
+            ("sy_browse_title", "Drive backup manager"),
+            ("sy_browse_desc", "A dedicated web app to explore and manage your Google Drive backups."),
+            ("sy_browse_open", "Open backup manager"),
             ("rs_experience", "Experience"),
             ("rs_skills", "Skills"),
             ("rs_projects", "Projects"),
@@ -1208,6 +1220,9 @@ mod tests {
             ("sy_import", "⬆  Importer JSON"),
             ("sy_json_ok", "JSON téléchargé"),
             ("sy_import_ok", "CV importé depuis le fichier"),
+            ("sy_browse_title", "Gestion des sauvegardes Drive"),
+            ("sy_browse_desc", "Une application web dédiée pour explorer et gérer vos sauvegardes Google Drive."),
+            ("sy_browse_open", "Ouvrir le gestionnaire de sauvegardes"),
             ("rs_experience", "Expérience"),
             ("rs_skills", "Compétences"),
             ("rs_projects", "Projets"),
