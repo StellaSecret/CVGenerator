@@ -8,10 +8,13 @@
 //!
 //! All logic here is pure and takes "now" as an explicit parameter rather
 //! than reading the real clock, so it's fully unit-testable without any
-//! platform/WASM dependency — only the one real call site in `renderer.rs`
-//! needs to supply the actual current date.
+//! platform/WASM dependency — only the two real call sites (`renderer.rs`
+//! for the printed CV, and the Skills editor's "Experience summary" panel
+//! in `cv_editor.rs`) need to supply the actual current date via
+//! `current_year_month` (which is likewise platform-neutral for tests and
+//! clock-backed on wasm).
 
-use crate::models::Experience;
+use crate::models::{Experience, Skill, SkillCategory};
 
 /// A (year, month) pair, month 1-12. Only calendar-month granularity is
 /// needed since CV dates are always "Month Year", never exact days.
@@ -127,11 +130,54 @@ fn merge_intervals(mut intervals: Vec<(YearMonth, YearMonth)>) -> Vec<(YearMonth
 /// the parent experience's dates when the project doesn't have its own —
 /// a project often only has one of start/end set, or neither.
 pub fn total_months_for_skill(skill_id: &str, experiences: &[Experience], now: YearMonth) -> i64 {
+    merged_months(skill_match_intervals(experiences, now, |id| id == skill_id))
+}
+
+/// Total months during which the user did any work in `category` — the
+/// union of every interval on which some project used *any* skill of that
+/// category. Overlapping/back-to-back ranges are deduplicated once across
+/// the whole category, so working with Linux + Kubernetes + Docker on the
+/// same 3-year project counts as 3 years, not 9.
+///
+/// This is deliberately NOT a sum of each skill's individual months:
+/// `total_months_for_skill` already dedupes per-skill, but summing those
+/// correct-per-skill numbers across a category reintroduces exactly the
+/// shared-project double-counting that per-skill merging avoids. A project
+/// spanning several tools still spans only its own time range once.
+///
+/// A category whose skills are all untagged (nothing references them)
+/// returns 0; callers present that as "not measurable", not "under a
+/// year" — `format_years(0)` returns an empty string.
+pub fn total_months_for_category(
+    category: SkillCategory,
+    skills: &[Skill],
+    experiences: &[Experience],
+    now: YearMonth,
+) -> i64 {
+    let ids: std::collections::HashSet<&str> = skills
+        .iter()
+        .filter(|s| s.category == category)
+        .map(|s| s.id.as_str())
+        .collect();
+    merged_months(skill_match_intervals(experiences, now, |id| {
+        ids.contains(id)
+    }))
+}
+
+/// Effective `(start, end)` interval of every project in `experiences`
+/// that references (via `skill_ids`) an id for which `keep` returns true.
+/// Shared by the per-skill and per-category totals, which differ only in
+/// which `skill_ids` match.
+fn skill_match_intervals(
+    experiences: &[Experience],
+    now: YearMonth,
+    keep: impl Fn(&str) -> bool,
+) -> Vec<(YearMonth, YearMonth)> {
     let mut intervals: Vec<(YearMonth, YearMonth)> = Vec::new();
 
     for exp in experiences {
         for proj in &exp.projects {
-            if !proj.skill_ids.iter().any(|id| id == skill_id) {
+            if !proj.skill_ids.iter().any(|id| keep(id)) {
                 continue;
             }
             let start_str = if !proj.start_date.is_empty() {
@@ -154,9 +200,16 @@ pub fn total_months_for_skill(skill_id: &str, experiences: &[Experience], now: Y
             }
         }
     }
+    intervals
+}
 
-    let merged = merge_intervals(intervals);
-    merged.iter().map(|(s, e)| months_between(*s, *e)).sum()
+/// Months spanned by `intervals` with overlapping/adjacent ranges merged
+/// once (see `merge_intervals`).
+fn merged_months(intervals: Vec<(YearMonth, YearMonth)>) -> i64 {
+    merge_intervals(intervals)
+        .iter()
+        .map(|(s, e)| months_between(*s, *e))
+        .sum()
 }
 
 /// Formats a month count as a short display string. Anything under 12
@@ -189,10 +242,62 @@ fn format_years_with(months: i64, under_one: &str, exactly_one: &str, plural_uni
     }
 }
 
+/// Current (year, month) — `month` is 1-12, calendar convention (NOT the
+/// 0-indexed convention JS `Date.getMonth()` uses; converted below). Used
+/// only to resolve "Present"/"Actuel" when deriving a skill's years of
+/// experience — all the actual date-math logic above is pure; this is the
+/// one real call to an actual clock, isolated here the same way
+/// `drive.rs`'s `now_ms()` isolates its own clock access.
+pub fn current_year_month() -> YearMonth {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let d = js_sys::Date::new_0();
+        (d.get_full_year() as i32, d.get_month() as u32 + 1)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Native builds only exist for `cargo test`/`clippy` in this
+        // project — nothing here ever renders a real CV/UI outside wasm, so
+        // exact accuracy doesn't matter, only that it compiles and is in
+        // the right ballpark (tests inject their own fixed `now` and
+        // never call this). A rough days-since-epoch/365.25 estimate is
+        // enough for that.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86400)
+            .unwrap_or(0) as f64;
+        let year = 1970 + (days / 365.25) as i32;
+        (year, 6) // mid-year placeholder month
+    }
+}
+
+/// Derived months of experience for every skill in `skills` — `(skill_id,
+/// months)` pairs, one per skill in the given order. Skills never tagged
+/// against a project (nothing in any project's `skill_ids` references
+/// them) come back as `0`, which callers must present as "not measurable"
+/// rather than "under a year" — `format_years(0)` deliberately returns an
+/// empty string.
+pub fn months_by_skill(
+    skills: &[Skill],
+    experiences: &[Experience],
+    now: YearMonth,
+) -> Vec<(String, i64)> {
+    skills
+        .iter()
+        .map(|s| {
+            (
+                s.id.clone(),
+                total_months_for_skill(&s.id, experiences, now),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Experience, ExperienceProject, LocalizedText};
+    use crate::models::{Experience, ExperienceProject, LocalizedText, Skill, SkillCategory};
 
     const NOW: YearMonth = (2026, 6);
 
@@ -314,6 +419,36 @@ mod tests {
         }
     }
 
+    fn exp_with_project_skills(
+        exp_start: &str,
+        exp_end: &str,
+        proj_start: &str,
+        proj_end: &str,
+        skill_ids: &[&str],
+    ) -> Experience {
+        Experience {
+            start_date: exp_start.to_string(),
+            end_date: exp_end.to_string(),
+            projects: vec![ExperienceProject {
+                name: LocalizedText::same("Some Project"),
+                start_date: proj_start.to_string(),
+                end_date: proj_end.to_string(),
+                skill_ids: skill_ids.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn skill(id: &str, category: &SkillCategory) -> Skill {
+        Skill {
+            id: id.to_string(),
+            name: id.to_string(),
+            category: category.clone(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn total_months_uses_project_dates_when_present() {
         let exps = vec![exp_with_project_skill(
@@ -364,6 +499,99 @@ mod tests {
     }
 
     #[test]
+    fn total_months_for_category_unions_skills_shared_across_one_project() {
+        // The regression that motivated the category total: one 3-year
+        // project running Linux + Kubernetes + OpenShift + Docker
+        // simultaneously. Each skill measures 36 months; naively summing
+        // them would claim 144 months (12 years) of "Platforms &
+        // Infrastructure" work. The union must stay 36 — the project
+        // spanned only three years, regardless of how many tools ran on it.
+        let cat = SkillCategory::PlatformsInfrastructure;
+        let skills = [
+            skill("s-linux", &cat),
+            skill("s-k8s", &cat),
+            skill("s-ocp", &cat),
+            skill("s-dkr", &cat),
+        ];
+        let exp = exp_with_project_skills(
+            "Jan 2020",
+            "Dec 2022",
+            "Jan 2020",
+            "Dec 2022",
+            &["s-linux", "s-k8s", "s-ocp", "s-dkr"],
+        );
+        assert_eq!(
+            total_months_for_skill("s-linux", std::slice::from_ref(&exp), NOW),
+            36
+        );
+        assert_eq!(
+            total_months_for_skill("s-k8s", std::slice::from_ref(&exp), NOW),
+            36
+        );
+        assert_eq!(
+            total_months_for_category(cat, &skills, &[exp], NOW),
+            36,
+            "union, not the 144-month per-skill sum"
+        );
+    }
+
+    #[test]
+    fn total_months_for_category_sums_disjoint_spans() {
+        // No overlap between the two tools' time ranges — the union really
+        // is their sum (1 year in 2018 + 3 years in 2020-2022).
+        let cat = SkillCategory::Programming;
+        let skills = [skill("s-rs", &cat), skill("s-go", &cat)];
+        let exps = vec![
+            exp_with_project_skill("Jan 2018", "Dec 2018", "Jan 2018", "Dec 2018", "s-rs"),
+            exp_with_project_skill("Jan 2020", "Dec 2022", "Jan 2020", "Dec 2022", "s-go"),
+        ];
+        assert_eq!(total_months_for_category(cat, &skills, &exps, NOW), 12 + 36);
+    }
+
+    #[test]
+    fn total_months_for_category_dedupes_overlap_across_experiences() {
+        // Two different category skills, used at two DIFFERENT employers
+        // whose time ranges overlap by a year — the overlap must not be
+        // counted twice (union is Jan 2020–Dec 2022, not 48 months).
+        let cat = SkillCategory::Database;
+        let skills = [skill("s-pg", &cat), skill("s-mys", &cat)];
+        let exps = vec![
+            exp_with_project_skill("Jan 2020", "Dec 2022", "Jan 2020", "Dec 2022", "s-pg"),
+            exp_with_project_skill("Jan 2021", "Dec 2022", "Jan 2021", "Dec 2022", "s-mys"),
+        ];
+        assert_eq!(total_months_for_category(cat, &skills, &exps, NOW), 36);
+    }
+
+    #[test]
+    fn total_months_for_category_ignores_other_categories() {
+        // A project tagged only with a Programming skill must not inflate
+        // the Platforms total, even though both live in the same
+        // experience's timeframe.
+        let progr = SkillCategory::Programming;
+        let infra = SkillCategory::PlatformsInfrastructure;
+        let skills = [skill("s-rust", &progr), skill("s-dkr", &infra)];
+        let exp = exp_with_project_skill("Jan 2020", "Dec 2022", "Jan 2020", "Dec 2022", "s-rust");
+        assert_eq!(
+            total_months_for_category(infra, &skills, std::slice::from_ref(&exp), NOW),
+            0
+        );
+        assert_eq!(total_months_for_category(progr, &skills, &[exp], NOW), 36);
+    }
+
+    #[test]
+    fn total_months_for_category_untagged_skills_return_zero() {
+        let cat = SkillCategory::Monitoring;
+        let skills = [skill("s-graf", &cat), skill("s-prom", &cat)];
+        let exp = Experience {
+            start_date: "Jan 2019".to_string(),
+            end_date: "Dec 2019".to_string(),
+            projects: vec![],
+            ..Default::default()
+        };
+        assert_eq!(total_months_for_category(cat, &skills, &[exp], NOW), 0);
+    }
+
+    #[test]
     fn format_years_buckets_correctly() {
         assert_eq!(format_years(0), "");
         assert_eq!(format_years(6), "< 1 yr");
@@ -381,5 +609,38 @@ mod tests {
         assert_eq!(format_years_fr(18), "2 ans");
         assert_eq!(format_years_fr(24), "2 ans");
         assert_eq!(format_years_fr(139), "12 ans");
+    }
+
+    #[test]
+    fn current_year_month_native_returns_plausible_year() {
+        let (year, month) = current_year_month();
+        assert!((1970..=2100).contains(&year), "implausible year {year}");
+        assert!((1..=12).contains(&month), "implausible month {month}");
+    }
+
+    #[test]
+    fn months_by_skill_maps_every_skill_to_derived_months() {
+        let skills = vec![
+            Skill {
+                id: "s-rust".to_string(),
+                name: "Rust".to_string(),
+                ..Default::default()
+            },
+            Skill {
+                id: "s-k8s".to_string(),
+                name: "Kubernetes".to_string(),
+                ..Default::default()
+            },
+        ];
+        let exps = vec![
+            exp_with_project_skill("Jan 2020", "Dec 2021", "Jan 2020", "Dec 2020", "s-rust"),
+            // Never tagged against any project — must measure as 0.
+            exp_with_project_skill("Jan 2020", "Dec 2021", "Jan 2020", "Dec 2021", "s-other"),
+        ];
+        let measured = months_by_skill(&skills, &exps, NOW);
+        let by_id: std::collections::HashMap<&str, i64> =
+            measured.iter().map(|(id, m)| (id.as_str(), *m)).collect();
+        assert_eq!(by_id["s-rust"], 12);
+        assert_eq!(by_id["s-k8s"], 0);
     }
 }

@@ -3,6 +3,7 @@ use crate::i18n;
 use crate::router::Route;
 use cv_generator::models::*;
 use cv_generator::services::pdf_import;
+use cv_generator::services::skill_duration;
 use cv_generator::services::storage::save_cv;
 use dioxus::prelude::*;
 use uuid::Uuid;
@@ -11,6 +12,12 @@ use web_sys::wasm_bindgen::JsCast as _;
 fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
+
+/// Skills of one category as `(index, skill, derived_months)` triples.
+type SkillGroupRows = Vec<(usize, Skill, i64)>;
+/// Category → `(label, category_years, per_skill(name, years, bar_pct))`
+/// flattened rows for the Experience Summary panel.
+type SkillSummary = Vec<(String, String, Vec<(String, String, f32)>)>;
 
 /// Drill-down navigation for the Experience step: the list of experience
 /// cards → the project cards of one experience → one project's full detail.
@@ -900,7 +907,7 @@ fn ExpProjectView(
 // ── Skills ────────────────────────────────────────────────────────────────────
 
 #[component]
-fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element {
+fn SkillItem(skill: Skill, index: usize, months: i64, mut cv: Signal<LifetimeCV>) -> Element {
     let lang: Signal<i18n::Lang> = use_context();
     let mut editing = use_signal(|| false);
     let mut e_name = use_signal(String::new);
@@ -913,6 +920,11 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
     let t_sname = i18n::tr("ed_skill_name", l);
     let t_cat = i18n::tr("ed_category", l);
     let t_level = i18n::tr("ed_level", l);
+    let years_badge = if l == i18n::Lang::Fr {
+        skill_duration::format_years_fr(months)
+    } else {
+        skill_duration::format_years(months)
+    };
 
     if *editing.read() {
         rsx! {
@@ -989,6 +1001,9 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
         rsx! {
             div { class: "skill-chip",
                 span { "{name}" }
+                if months > 0 {
+                    span { class: "chip-years", "{years_badge}" }
+                }
                 span { class: "chip-level", "{level}" }
                 button { class: "btn-icon-sm btn-edit-sm",
                     onclick: move |_| {
@@ -1010,12 +1025,27 @@ fn SkillItem(skill: Skill, index: usize, mut cv: Signal<LifetimeCV>) -> Element 
 }
 
 #[component]
-fn SkillGroup(cat_label: String, items: Vec<(usize, Skill)>, cv: Signal<LifetimeCV>) -> Element {
+fn SkillGroup(
+    cat_label: String,
+    cat_months: i64,
+    items: Vec<(usize, Skill, i64)>,
+    cv: Signal<LifetimeCV>,
+) -> Element {
+    let lang: Signal<i18n::Lang> = use_context();
+    let l = *lang.read();
+    let cat_years = if l == i18n::Lang::Fr {
+        skill_duration::format_years_fr(cat_months)
+    } else {
+        skill_duration::format_years(cat_months)
+    };
     rsx! {
         div { class: "skill-group",
             div { class: "skill-group-label", "{cat_label}" }
+            if !cat_years.is_empty() {
+                span { class: "skill-group-total", "{cat_years}" }
+            }
             div { class: "skill-chips",
-                for (i, skill) in items { SkillItem { skill, index: i, cv } }
+                for (i, skill, m) in items { SkillItem { skill, index: i, months: m, cv } }
             }
         }
     }
@@ -2050,19 +2080,42 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_level = use_signal(|| SkillLevel::Intermediate);
 
     let skills: Vec<Skill> = cv.read().skills.clone();
-    let groups: Vec<(SkillCategory, Vec<(usize, Skill)>)> = SkillCategory::all()
+    let experiences = cv.read().experiences.clone();
+    let now = skill_duration::current_year_month();
+    let months: Vec<(String, i64)> = skill_duration::months_by_skill(&skills, &experiences, now);
+    let months_of: std::collections::HashMap<String, i64> =
+        months.iter().map(|(id, m)| (id.clone(), *m)).collect();
+    let max_months: i64 = months.iter().map(|(_, m)| *m).max().unwrap_or(0);
+
+    let groups: Vec<(SkillCategory, SkillGroupRows)> = SkillCategory::all()
         .into_iter()
         .map(|cat| {
-            let items: Vec<(usize, Skill)> = skills
+            let items: Vec<(usize, Skill, i64)> = skills
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| s.category == cat)
-                .map(|(i, s)| (i, s.clone()))
+                .map(|(i, s)| (i, s.clone(), months_of.get(&s.id).copied().unwrap_or(0)))
                 .collect();
             (cat, items)
         })
         .filter(|(_, items)| !items.is_empty())
         .collect();
+
+    // Category totals are the union of every project interval touching any
+    // skill of the category — NOT the sum of each skill's own months, which
+    // would double-count a project running several tools at once (see
+    // `skill_duration::total_months_for_category`).
+    let cat_months_by_label: std::collections::HashMap<String, i64> = SkillCategory::all()
+        .into_iter()
+        .map(|cat| {
+            (
+                cat.label().to_string(),
+                skill_duration::total_months_for_category(cat, &skills, &experiences, now),
+            )
+        })
+        .collect();
+
+    let untagged: usize = months.iter().filter(|(_, m)| *m == 0).count();
 
     let t_title = i18n::tr("ed_skills_title", l);
     let t_hint = i18n::tr("ed_skills_hint", l);
@@ -2070,15 +2123,94 @@ fn StepSkills(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_cat = i18n::tr("ed_category", l);
     let t_level = i18n::tr("ed_level", l);
     let t_add = i18n::tr("ed_add", l);
+    let t_summary = i18n::tr("ed_skills_summary", l);
+    let t_summary_hint = i18n::tr("ed_skills_summary_hint", l);
+    let t_no_data = i18n::tr("ed_skills_no_data", l);
+    let t_untagged = i18n::tr("ed_skills_untagged_n", l);
+    let untagged_txt = t_untagged.replacen("{}", &untagged.to_string(), 1);
+
+    let all_untagged = untagged == skills.len();
+
+    let summary_groups: SkillSummary = groups
+        .iter()
+        .map(|(cat, items)| {
+            let cat_months: i64 = cat_months_by_label[cat.label()];
+            let cat_years = if l == i18n::Lang::Fr {
+                skill_duration::format_years_fr(cat_months)
+            } else {
+                skill_duration::format_years(cat_months)
+            };
+            let scale = max_months.max(1) as f32;
+            let rows = items
+                .iter()
+                .map(|(_, skill, m)| {
+                    let pct = if *m <= 0 {
+                        0.0
+                    } else {
+                        (*m as f32 / scale) * 100.0
+                    };
+                    let years = if l == i18n::Lang::Fr {
+                        skill_duration::format_years_fr(*m)
+                    } else {
+                        skill_duration::format_years(*m)
+                    };
+                    (skill.name.clone(), years, pct)
+                })
+                .collect();
+            (cat.label().to_string(), cat_years, rows)
+        })
+        .collect();
 
     rsx! {
         div { class: "form-section",
             h2 { "{t_title}" }
             p { class: "hint", "{t_hint}" }
 
+            details { class: "skill-summary", open: true,
+                summary { "{t_summary}" }
+                div { class: "skill-summary-body",
+                    p { class: "hint", "{t_summary_hint}" }
+                    div { class: "item-list",
+                        for (cat_label, cat_years, rows) in summary_groups {
+                            div { class: "skill-group skill-group-summary",
+                                div { class: "skill-group-label", "{cat_label}" }
+                                if !cat_years.is_empty() {
+                                    span { class: "skill-group-total", "{cat_years}" }
+                                }
+                                div { class: "skill-bars",
+                                    for (name, years, pct) in rows {
+                                        div { class: "skill-bar-row",
+                                            div { class: "skill-bar-row-top",
+                                                div { class: "skill-bar-row-name", "{name}" }
+                                                if !years.is_empty() {
+                                                    span { class: "chip-years", "{years}" }
+                                                }
+                                            }
+                                            div { class: "skill-bar",
+                                                div { class: "skill-bar-fill", style: "width: {pct}%" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if all_untagged {
+                        p { class: "skill-untagged", "{t_no_data}" }
+                    } else if untagged > 0 {
+                        p { class: "skill-untagged", "{untagged_txt}" }
+                    }
+                }
+            }
+
             div { class: "item-list",
                 for (cat, items) in groups {
-                    SkillGroup { cat_label: cat.label().to_string(), items, cv }
+                    SkillGroup {
+                        cat_label: cat.label().to_string(),
+                        cat_months: cat_months_by_label[cat.label()],
+                        items,
+                        cv,
+                    }
                 }
             }
 

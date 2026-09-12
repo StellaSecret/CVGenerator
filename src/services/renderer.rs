@@ -740,7 +740,7 @@ fn render_skills(
     if skills.is_empty() {
         return String::new();
     }
-    let now = current_year_month();
+    let now = crate::services::skill_duration::current_year_month();
 
     // Group by category
     let categories = SkillCategory::all();
@@ -829,37 +829,6 @@ fn render_skills(
         blocks.push(format!(r#"<div class="skills-legend">{legend}</div>"#));
     }
     wrap_section(i18n_core::tr("rs_skills", lang), blocks)
-}
-
-/// Current (year, month) — `month` is 1-12, calendar convention (NOT the
-/// 0-indexed convention JS `Date.getMonth()` uses; converted below). Used
-/// only to resolve "Present"/"Actuel" when deriving a skill's years of
-/// experience (see skill_duration.rs) — all the actual date-math logic is
-/// pure and platform-independent; this is the one real call to an actual
-/// clock, isolated here the same way `drive.rs`'s `now_ms()` isolates its
-/// own clock access.
-fn current_year_month() -> crate::services::skill_duration::YearMonth {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let d = js_sys::Date::new_0();
-        (d.get_full_year() as i32, d.get_month() as u32 + 1)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        // Native builds only exist for `cargo test`/`clippy` in this
-        // project — nothing here ever renders a real CV outside wasm, so
-        // exact accuracy doesn't matter, only that it compiles and is in
-        // the right ballpark (tests inject their own fixed `now` and
-        // never call this). A rough days-since-epoch/365.25 estimate is
-        // enough for that.
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let days = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() / 86400)
-            .unwrap_or(0) as f64;
-        let year = 1970 + (days / 365.25) as i32;
-        (year, 6) // mid-year placeholder month
-    }
 }
 
 fn render_projects(projects: &[crate::models::Project], lang: Lang) -> String {
@@ -1962,20 +1931,6 @@ mod tests {
         // guard were dropped (mutated to always-true), "a * b" would close
         // at the lone star, producing "<strong>a</strong> b**" instead.
         assert_eq!(apply_bold("**a * b**"), "<strong>a * b</strong>");
-    }
-
-    #[test]
-    fn current_year_month_native_returns_plausible_year() {
-        // The native branch is only compiled for `cargo test`/`clippy`, but
-        // its date arithmetic still has mutants (divisor, year base, etc.).
-        // A rough plausibility window catches them all: a broken divisor or
-        // operator would push the year far outside [2020, 2100].
-        let (year, month) = current_year_month();
-        assert!((2020..=2100).contains(&year), "year {year} implausible");
-        assert_eq!(
-            month, 6,
-            "native branch reports the fixed mid-year placeholder"
-        );
     }
 
     #[test]
