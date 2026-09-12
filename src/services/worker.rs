@@ -336,7 +336,12 @@ mod tests {
             ScoreMode::Embedding,
             None,
         );
-        assert_eq!(result.tailored.skills.len(), 1);
+        // Without an engine an Embedding scorer scores everything 0, so the
+        // only surviving skills are Expert/Mastery ones — and test_cv's
+        // single 'Rust' is Intermediate. Production never runs this path
+        // (the UI gates Embedding/Hybrid behind a loaded model); this just
+        // guards against panic and NaN, and pins the drop-behaviour.
+        assert_eq!(result.tailored.skills.len(), 0);
     }
 
     #[test]

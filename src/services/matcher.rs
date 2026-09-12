@@ -1,4 +1,6 @@
-use crate::models::{Experience, ExperienceProject, LifetimeCV, Project, Skill, TailoredCV};
+use crate::models::{
+    Experience, ExperienceProject, LifetimeCV, Project, Skill, SkillLevel, TailoredCV,
+};
 use std::collections::{HashMap, HashSet};
 
 // ── Relative-cutoff selection ─────────────────────────────────────────────────
@@ -741,6 +743,26 @@ fn score_skill(skill: &Skill, keywords: &[(String, usize)], idf: &Idf) -> f32 {
     score_text(&skill.name, keywords, idf)
 }
 
+/// Skills retained for a tailored CV: every skill related to the JD
+/// (`is_related` returns true) plus every self-assessed Expert/Mastery
+/// skill. Unrelated Beginner/Intermediate/Advanced skills — a CV almost
+/// always lists far more tools than a given offer actually needs — are
+/// dropped. Related skills come first, then the expert-tier ones (the
+/// pre-existing split between matched and score-0 skills), each group in
+/// original CV order.
+fn select_tailored_skills(skills: &[Skill], is_related: impl Fn(&Skill) -> bool) -> Vec<Skill> {
+    let mut out: Vec<Skill> = skills.iter().filter(|s| is_related(s)).cloned().collect();
+    out.extend(
+        skills
+            .iter()
+            .filter(|s| {
+                !is_related(s) && matches!(s.level, SkillLevel::Expert | SkillLevel::Mastery)
+            })
+            .cloned(),
+    );
+    out
+}
+
 /// Builds the scorable text blob for a top-level project. Shared between
 /// scoring (`score_project`) and IDF corpus construction in `tailor_cv`.
 pub fn project_text(proj: &Project) -> String {
@@ -882,8 +904,9 @@ pub struct TailorResult {
 /// Rules:
 ///   - Experiences are filtered to those with score > 0, then sorted best-first.
 ///     Always include at least the 2 most recent even if score = 0.
-///   - Skills are filtered to those with score > 0, then sorted best-first.
-///     Skills with score = 0 are appended at the end (separated).
+///   - Skills: only JD-related skills (score > 0) plus self-assessed
+///     Expert/Mastery skills survive; everything else is dropped. Related
+///     ones come first, then the expert-tier rest.
 ///   - Projects: only those with score > 0.
 ///   - Education, languages, certifications: always included, unchanged.
 ///   - Matched / missing keywords are derived from the top-30 JD keywords.
@@ -1049,21 +1072,12 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     }
 
     // ── Skills ────────────────────────────────────────────────────────────────
-    let mut matched_skills: Vec<Skill> = cv
-        .skills
-        .iter()
-        .filter(|s| score_skill(s, &top_keywords, &idf) > 0.0)
-        .cloned()
-        .collect();
-
-    let unmatched_skills: Vec<Skill> = cv
-        .skills
-        .iter()
-        .filter(|s| score_skill(s, &top_keywords, &idf) == 0.0)
-        .cloned()
-        .collect();
-
-    matched_skills.extend(unmatched_skills);
+    // Keep only skills related to the JD (score > 0) plus Expert/Mastery
+    // ones — a CV lists far more tools than the offer actually needs, so
+    // unrelated Beginner/Intermediate/Advanced skills are dropped (see
+    // `select_tailored_skills`).
+    let matched_skills =
+        select_tailored_skills(&cv.skills, |s| score_skill(s, &top_keywords, &idf) > 0.0);
 
     // ── Projects ──────────────────────────────────────────────────────────────
     let mut scored_proj: Vec<(f32, Project)> = cv
@@ -1300,23 +1314,19 @@ pub fn tailor_cv_with_scorer(
         .map(|s| scorer.score_skill(s, &top_keywords, jd_embedding))
         .collect();
 
-    let mut matched_skills: Vec<Skill> = cv
+    // Keep only skills related to the JD (score > 0) plus Expert/Mastery
+    // ones — unrelated Beginner/Intermediate/Advanced skills are dropped
+    // (see `select_tailored_skills`). Uses the precomputed `skill_scores`
+    // so the embedding scorer runs once per skill.
+    let related_ids: HashSet<&str> = cv
         .skills
         .iter()
         .zip(&skill_scores)
         .filter(|(_, s)| **s > 0.0)
-        .map(|(skill, _)| skill.clone())
+        .map(|(sk, _)| sk.id.as_str())
         .collect();
-
-    let unmatched_skills: Vec<Skill> = cv
-        .skills
-        .iter()
-        .zip(&skill_scores)
-        .filter(|(_, s)| **s == 0.0)
-        .map(|(skill, _)| skill.clone())
-        .collect();
-
-    matched_skills.extend(unmatched_skills);
+    let matched_skills =
+        select_tailored_skills(&cv.skills, |s| related_ids.contains(s.id.as_str()));
 
     // ── Projects ──────────────────────────────────────────────────────────────
     let mut scored_proj: Vec<(f32, Project)> = cv
@@ -2261,7 +2271,11 @@ mod tests {
     // ── tailor_cv ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn tailor_relevant_skills_rank_before_unrelated() {
+    fn tailor_drops_unrelated_non_expert_skills() {
+        // fixture_cv: Rust = Expert, PostgreSQL = Advanced, Python =
+        // Intermediate. The JD only relates to Rust + PostgreSQL, so Python
+        // (unrelated AND not Expert/Mastery) must be dropped from the
+        // tailored skills entirely; Rust/PostgreSQL stay, Rust first.
         let cv = fixture_cv();
         let jd = "We need a Rust developer with PostgreSQL knowledge for backend systems";
         let result = tailor_cv(&cv, jd);
@@ -2276,14 +2290,103 @@ mod tests {
             .iter()
             .position(|&n| n == "Rust")
             .expect("Rust should be in skills");
-        let py_pos = names
+        let pg_pos = names
             .iter()
-            .position(|&n| n == "Python")
-            .expect("Python should be in skills");
+            .position(|&n| n == "PostgreSQL")
+            .expect("PostgreSQL should be in skills");
         assert!(
-            rust_pos < py_pos,
-            "Rust should rank before Python for a Rust-focused JD"
+            rust_pos < pg_pos,
+            "Rust should rank before PostgreSQL for a Rust-focused JD"
         );
+        assert!(
+            !names.contains(&"Python"),
+            "unrelated, non-Expert Python must be dropped, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn tailor_keeps_expert_and_related_skills_only() {
+        let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-java".into(),
+                    name: "Java".into(),
+                    level: SkillLevel::Expert,
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-k8s".into(),
+                    name: "Kubernetes".into(),
+                    level: SkillLevel::Mastery,
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-dkr".into(),
+                    name: "Docker".into(),
+                    level: SkillLevel::Intermediate,
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-bash".into(),
+                    name: "Bash".into(),
+                    level: SkillLevel::Advanced,
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-py".into(),
+                    name: "Python".into(),
+                    level: SkillLevel::Beginner,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        // JD only relates to Docker — Java/Kubernetes survive by being
+        // expert-tier, Bash/Python (neither related nor expert-tier) drop.
+        let result = tailor_cv(&cv, "Docker container orchestration");
+        let names: Vec<&str> = result
+            .tailored
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["Docker", "Java", "Kubernetes"],
+            "related first, then expert-tier in original order, everything else dropped"
+        );
+    }
+
+    #[test]
+    fn tailor_scorer_keeps_expert_unrelated_skill() {
+        // Hybrid-mode parity: an unrelated skill survives if it is
+        // self-assessed Expert, even though it scores 0 against the JD.
+        let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-rust".into(),
+                    name: "rust engineer".into(),
+                    level: SkillLevel::Intermediate,
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-acct".into(),
+                    name: "accounting".into(),
+                    level: SkillLevel::Expert,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+        let names: Vec<&str> = result
+            .tailored
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["rust engineer", "accounting"]);
     }
 
     #[test]
@@ -2874,15 +2977,16 @@ mod tests {
             "skills-only score must be 1.0, got {}",
             result.tailored.match_score
         );
-        // The zero-scoring skills stay present (appended after matched ones)
-        // but must NOT be selected as the leading/matched skill.
+        // The unrelated zero-scoring skills (default-level = Intermediate)
+        // are dropped by the tailored-skills filter — only the matched one
+        // survives, and it stays the leading skill.
         let names: Vec<&str> = result
             .tailored
             .skills
             .iter()
             .map(|s| s.name.as_str())
             .collect();
-        assert_eq!(names.first().copied(), Some("rust engineer"));
+        assert_eq!(names, vec!["rust engineer"]);
     }
 
     // Keyword mode applies NO mean floor to the experience cutoff, so a
