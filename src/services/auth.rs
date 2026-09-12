@@ -167,9 +167,6 @@ pub fn init() {}
 #[cfg(not(target_arch = "wasm32"))]
 pub fn start_oauth(_client_id: &str, _redirect_uri: &str) {}
 
-/// Handle OAuth redirect — no-op with GIS library (no redirect flow used).
-pub fn handle_oauth_redirect() {}
-
 // ── UI helper ─────────────────────────────────────────────────────────────────
 
 pub fn mask_token(t: &str) -> String {

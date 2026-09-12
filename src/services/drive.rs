@@ -16,10 +16,9 @@ pub struct BackupData {
 }
 
 const BACKUP_VERSION: u8 = 2;
-// DRIVE_SCOPE is documented for reference but only needed if you build a consent URL here.
-#[cfg(target_arch = "wasm32")]
-#[allow(dead_code)]
-const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.appdata";
+// The Google Drive OAuth scope string lives hard-coded in auth.rs
+// ("https://www.googleapis.com/auth/drive.appdata"), so this file needs no
+// scope constant of its own.
 #[cfg(target_arch = "wasm32")]
 const DRIVE_API: &str = "https://www.googleapis.com/drive/v3/files";
 #[cfg(target_arch = "wasm32")]
