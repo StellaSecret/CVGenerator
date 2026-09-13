@@ -314,6 +314,11 @@ a:hover { text-decoration: underline; }
   transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 .btn-icon:hover { background: var(--red-pale); color: var(--red); }
+.btn-icon:disabled {
+  color: var(--text-4, #4a5568);
+  cursor: not-allowed;
+}
+.btn-icon:disabled:hover { background: none; color: var(--text-4, #4a5568); }
 
 .btn-edit {
   background: none;

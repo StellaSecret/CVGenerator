@@ -1672,6 +1672,14 @@ fn StepPersonal(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_web = i18n::tr("ed_website", l);
     let t_summary = i18n::tr("ed_summary", l);
     let t_hint = i18n::tr("ed_summary_hint", l);
+    let t_summary_variants = i18n::tr("ed_summary_variants", l);
+    let t_summary_variants_hint = i18n::tr("ed_summary_variants_hint", l);
+    let t_variant_placeholder = i18n::tr("ed_summary_variant_placeholder", l);
+    let t_add_summary_variant = i18n::tr("ed_add_summary_variant", l);
+    let t_remove_variant = i18n::tr("ed_remove_summary_variant", l);
+    let t_remove_variant_last = i18n::tr("ed_remove_summary_variant_last", l);
+    let t_pick_template = i18n::tr("ed_pick_template", l);
+    let mut tpl_pick = use_signal(String::new);
 
     rsx! {
         div { class: "form-section",
@@ -1741,6 +1749,95 @@ fn StepPersonal(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                     placeholder: t_hint.to_string(),
                     value: cv.read().personal.summary.get(l).to_string(),
                     oninput: move |v| { cv.write().personal.summary.set(l, v); },
+                }
+            }
+            Field { label: t_summary_variants.to_string(),
+                p { class: "hint", "{t_summary_variants_hint}" }
+                for i in 0..cv.read().personal.summaries.len() {
+                    {
+                        let idx = i;
+                        let vname = cv.read().personal.summaries.get(idx)
+                            .map(|s| s.name.clone()).unwrap_or_default();
+                        let vtext = cv.read().personal.summaries.get(idx)
+                            .map(|s| s.text.get(l).to_string()).unwrap_or_default();
+                        let n_before = cv.read().personal.summaries.len();
+                        rsx! {
+                            div { class: "bullet-row",
+                                input { class: "input", placeholder: t_variant_placeholder,
+                                    value: vname,
+                                    oninput: move |e| {
+                                        if cv.read().personal.summaries.is_empty() { return; }
+                                        let mut w = cv.write();
+                                        if let Some(s) = w.personal.summaries.get_mut(idx) {
+                                            s.name = e.value();
+                                        }
+                                    },
+                                }
+                                div { class: "summary-variant-text",
+                                    BoldableTextarea {
+                                        key: "{l:?}-{idx}",
+                                        id: format!("summary-variant-{idx}"),
+                                        rows: 3,
+                                        placeholder: t_hint,
+                                        value: vtext,
+                                        oninput: move |v| {
+                                            if cv.read().personal.summaries.is_empty() { return; }
+                                            let mut w = cv.write();
+                                            if let Some(s) = w.personal.summaries.get_mut(idx) {
+                                                s.text.set(l, v);
+                                            }
+                                        },
+                                    }
+                                }
+                                button {
+                                    class: "btn-icon btn-danger",
+                                    title: if n_before > 1 { t_remove_variant } else { t_remove_variant_last },
+                                    disabled: n_before <= 1,
+                                    onclick: move |_| {
+                                        if n_before <= 1 { return; }
+                                        let mut w = cv.write();
+                                        if idx < w.personal.summaries.len() {
+                                            w.personal.summaries.remove(idx);
+                                        }
+                                    },
+                                    "×"
+                                }
+                            }
+                        }
+                    }
+                }
+                button { class: "btn-text",
+                    onclick: move |_| {
+                        cv.write().personal.summaries.push(NamedSummary::default());
+                    },
+                    "{t_add_summary_variant}"
+                }
+                div { class: "tpl-picker",
+                    select { class: "input select",
+                        key: "{l:?}",
+                        value: tpl_pick.read().clone(),
+                        onchange: move |e| {
+                            let key = e.value();
+                            if key.is_empty() { return; }
+                            if let Some(t) = cv_generator::models::SUMMARY_TEMPLATES
+                                .iter()
+                                .find(|t| t.key == key)
+                            {
+                                cv.write().personal.summaries.push(NamedSummary {
+                                    name: i18n::tr(t.name_key, l).to_string(),
+                                    text: LocalizedText {
+                                        en: t.en.to_string(),
+                                        fr: t.fr.to_string(),
+                                    },
+                                });
+                            }
+                            tpl_pick.set(String::new());
+                        },
+                        option { value: "", disabled: true, selected: true, "{t_pick_template}" }
+                        for t in cv_generator::models::SUMMARY_TEMPLATES.iter() {
+                            option { key: "{t.key}", value: t.key, "{i18n::tr(t.name_key, l)}" }
+                        }
+                    }
                 }
             }
         }

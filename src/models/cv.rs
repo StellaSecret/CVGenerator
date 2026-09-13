@@ -90,6 +90,54 @@ impl<'de> Deserialize<'de> for LocalizedText {
 
 // ── Personal ──────────────────────────────────────────────────────────────────
 
+/// An alternative professional summary, written up front with a name
+/// ("Platform Engineer", "Leadership-focused", …) so the Tailor page can
+/// offer it as a per-job choice alongside the base `PersonalInfo::summary`.
+/// `summary` stays the always-present "Default" version; every `NamedSummary`
+/// is extra raw material — no generation involved, just more summaries to
+/// select between. The text may contain the `{{skills}}` placeholder, which
+/// the Tailor page expands to the JD-pertinent skills at Apply time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct NamedSummary {
+    pub name: String,        // label shown in the selection list
+    pub text: LocalizedText, // en + fr versions
+}
+
+/// A ready-to-use summary variant, offered by the Personal editor as an
+/// "add from template" option. Referenced by a stable `key`; the dropdown
+/// label and the inserted variant's `name` both come from the matching i18n
+/// key (`tpl_*`), so they follow the editor's current language. The texts
+/// are example content in both languages and may use the `{{skills}}`
+/// placeholder, which the Tailor page expands to the JD-pertinent skills.
+pub struct SummaryTemplate {
+    pub key: &'static str,
+    pub name_key: &'static str,
+    pub en: &'static str,
+    pub fr: &'static str,
+}
+
+/// The pre-written variants offered by the editor's template dropdown.
+pub const SUMMARY_TEMPLATES: &[SummaryTemplate] = &[
+    SummaryTemplate {
+        key: "concise",
+        name_key: "tpl_concise",
+        en: "Engineer who ships production software with {{skills}}, on a deadline. Cuts through ambiguity fast and leaves systems easier to run than they were found.",
+        fr: "Ingénieur qui livre du logiciel en production avec {{skills}}, dans les délais. Tranche vite dans l'ambiguïté et laisse les systèmes plus simples à exploiter qu'il ne les a trouvés.",
+    },
+    SummaryTemplate {
+        key: "technical",
+        name_key: "tpl_technical",
+        en: "Hands-on with {{skills}} day to day — not just familiar with them. Cares more about systems that don't page anyone at 3am than about chasing the newest tool.",
+        fr: "Pratique {{skills}} au quotidien — pas juste familier avec. Se soucie davantage de systèmes qui ne réveillent personne à 3h du matin que de courir après le dernier outil à la mode.",
+    },
+    SummaryTemplate {
+        key: "leadership",
+        name_key: "tpl_leadership",
+        en: "Leads teams building on {{skills}}, translating a fuzzy roadmap into a plan engineers can actually execute — then stays close enough to unblock them when it slips.",
+        fr: "Dirige des équipes qui construisent sur {{skills}}, traduit une feuille de route floue en plan que les ingénieurs peuvent réellement exécuter — puis reste assez proche pour les débloquer quand ça dérape.",
+    },
+];
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PersonalInfo {
     pub name: String,
@@ -100,7 +148,11 @@ pub struct PersonalInfo {
     pub linkedin: String,
     pub github: String,
     pub website: String,
-    pub summary: LocalizedText, // 2-3 sentence bio
+    pub summary: LocalizedText, // 2-3 sentence bio; the "Default" version
+    /// Extra named summaries selectable at tailoring time — see
+    /// `NamedSummary`'s doc comment. Empty for most CVs.
+    #[serde(default)]
+    pub summaries: Vec<NamedSummary>,
 }
 
 // ── Experience ────────────────────────────────────────────────────────────────
@@ -585,6 +637,26 @@ impl LifetimeCV {
 mod tests {
     use super::*;
     use crate::i18n_core::Lang;
+
+    // ── Summary templates ────────────────────────────────────────────────────
+
+    #[test]
+    fn summary_templates_are_complete_and_documented() {
+        assert!(!SUMMARY_TEMPLATES.is_empty(), "at least one template");
+        for t in SUMMARY_TEMPLATES {
+            assert!(!t.key.is_empty(), "template key must be stable");
+            assert!(!t.name_key.is_empty(), "template label i18n key");
+            assert!(!t.en.trim().is_empty(), "EN text for {}", t.key);
+            assert!(!t.fr.trim().is_empty(), "FR text for {}", t.key);
+        }
+        let has_skills_demo = SUMMARY_TEMPLATES
+            .iter()
+            .any(|t| t.en.contains("{{skills}}") || t.fr.contains("{{skills}}"));
+        assert!(
+            has_skills_demo,
+            "a template should demo the {{skills}} placeholder"
+        );
+    }
 
     // ── LocalizedText ─────────────────────────────────────────────────────────
 

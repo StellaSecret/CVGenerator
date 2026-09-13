@@ -94,6 +94,19 @@ pub struct TailoringSession {
     /// round-trips trivially).
     #[serde(default)]
     pub checked_skill_ids: Vec<String>,
+    /// Named summary chosen for this session — `None`/missing means the
+    /// base "Default" summary. When `Some(name)` it selects the matching
+    /// `PersonalInfo::summaries` variant at Apply time (a `{{skills}}`
+    /// placeholder inside it expands to this session's JD-pertinent
+    /// skills).
+    #[serde(default)]
+    pub summary_choice: Option<String>,
+    /// `Skill` ids the person has manually chosen to fill a `{{skills}}`
+    /// placeholder in the selected summary — the auto-calculated top-5 by
+    /// relevance when empty. Kept as a `Vec` (order is meaningless, same
+    /// reasoning as `checked_skill_ids`).
+    #[serde(default)]
+    pub summary_skill_ids: Vec<String>,
     #[serde(default)]
     pub updated_at_ms: i64,
     /// Match score (0.0–1.0, the same fraction `TailoredCV.match_score`
@@ -124,6 +137,14 @@ mod tests {
         assert!(
             s.checked_skill_ids.is_empty(),
             "old JSON has no skill selection; it must deserialize to empty"
+        );
+        assert_eq!(
+            s.summary_choice, None,
+            "old JSON has no summary choice; it must default to the base summary"
+        );
+        assert!(
+            s.summary_skill_ids.is_empty(),
+            "old JSON has no summary-skill override; it must default to automatic"
         );
     }
 

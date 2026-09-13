@@ -2,7 +2,7 @@ use crate::i18n;
 use crate::router::Route;
 use cv_generator::models::LifetimeCV;
 use cv_generator::services::matcher::{
-    apply_manual_project_selection, apply_manual_skill_selection,
+    apply_manual_project_selection, apply_manual_skill_selection, resolve_summary,
 };
 use cv_generator::services::renderer::render_tailored_cv;
 use cv_generator::services::score::ScoreMode;
@@ -14,8 +14,11 @@ use std::collections::{HashMap, HashSet};
 /// Experience step's `ExpView` in cv_editor): instead of stacking the
 /// score, both adjustment panels and the rendered CV on one long page,
 /// each section is a separate view reached through clickable cards and a
-/// breadcrumb that returns to the hub. The four views:
+/// breadcrumb that returns to the hub. The five views:
 ///  - `Summary`: score banner, keyword clouds, and the section cards.
+///  - `Summaries`: pick the professional summary (Default or a named
+///    variant) and tweak its text in place; `{{skills}}` placeholders
+///    expand to the JD-pertinent skills at Apply time.
 ///  - `Projects`: the manual project selection panel, with its own
 ///    Apply/Reset/Clear row (projects only).
 ///  - `Skills`: the manual skills selection panel, with its own
@@ -26,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, PartialEq)]
 enum TailorView {
     Summary,
+    Summaries,
     Projects,
     Skills,
     Preview,
@@ -98,10 +102,10 @@ fn localized(t: &cv_generator::models::LocalizedText) -> &str {
 }
 
 /// Auto-persists the working state (JD text, job title, score mode,
-/// manual project selection) into the single "current session" storage
-/// slot — see `TailoringSession`'s doc comment for why this is kept
-/// separate from the named saved-sessions list. Called on every
-/// meaningful change (JD/job-title edits, checkbox toggles, mode
+/// manual project selection, chosen summary) into the single "current
+/// session" storage slot — see `TailoringSession`'s doc comment for why
+/// this is kept separate from the named saved-sessions list. Called on
+/// every meaningful change (JD/job-title edits, checkbox toggles, mode
 /// switches, and the Générer/Apply/Reset/Clear actions) rather than
 /// debounced: a textarea-sized write to localStorage is cheap enough
 /// that the simplicity of "just always save" wins over adding a debounce
@@ -112,6 +116,8 @@ fn persist_current_session(
     score_mode: ScoreMode,
     checked_project_ids: &std::collections::HashSet<String>,
     checked_skill_ids: &std::collections::HashSet<String>,
+    summary_choice: Option<String>,
+    summary_skill_ids: &[String],
 ) {
     let session = cv_generator::models::TailoringSession {
         id: "current".to_string(),
@@ -121,6 +127,8 @@ fn persist_current_session(
         score_mode,
         checked_project_ids: checked_project_ids.iter().cloned().collect(),
         checked_skill_ids: checked_skill_ids.iter().cloned().collect(),
+        summary_choice,
+        summary_skill_ids: summary_skill_ids.to_vec(),
         updated_at_ms: 0,
         match_score: 0.0,
         date_applied: String::new(),
@@ -148,7 +156,7 @@ fn mode_label(mode: ScoreMode, l: i18n::Lang) -> &'static str {
 
 #[component]
 pub fn Tailor() -> Element {
-    let cv: Signal<LifetimeCV> = use_context();
+    let mut cv: Signal<LifetimeCV> = use_context();
     let lang: Signal<i18n::Lang> = use_context();
     let l = *lang.read();
 
@@ -230,6 +238,14 @@ pub fn Tailor() -> Element {
     // "Générer" run resets back to it so the new score is what the person
     // lands on first.
     let mut view = use_signal(|| TailorView::Summary);
+    // Which professional summary the tailored output should use: `None` is
+    // the base "Default" summary, `Some(name)` selects a `NamedSummary`
+    // variant. Persisted per session alongside the manual selections.
+    let mut summary_choice = use_signal(|| None::<String>);
+    // Skills the person has manually chosen to fill a `{{skills}}` placeholder
+    // in the selected summary. Empty = let the algorithm auto-pick the top
+    // JD-relevant skills; non-empty = those exact skills (in CV order).
+    let mut summary_skill_ids = use_signal(Vec::<String>::new);
 
     // Named, explicitly-saved sessions (Item #3) — distinct from the
     // always-on auto-saved "current session" above; see
@@ -258,6 +274,8 @@ pub fn Tailor() -> Element {
             let restored_skills: HashSet<String> = session.checked_skill_ids.into_iter().collect();
             checked_skill_ids.set(restored_skills.clone());
             last_algo_skill_ids.set(restored_skills);
+            summary_choice.set(session.summary_choice);
+            summary_skill_ids.set(session.summary_skill_ids);
         }
         saved_sessions.set(cv_generator::services::storage::load_sessions_list());
     });
@@ -365,9 +383,20 @@ pub fn Tailor() -> Element {
     // Drill-down navigation labels (see `TailorView`).
     let t_nav_sections = i18n::tr("tl_nav_sections", l);
     let t_nav_summary = i18n::tr("tl_nav_summary", l);
+    let t_nav_summaries = i18n::tr("tl_nav_summaries", l);
     let t_nav_projects = i18n::tr("tl_nav_projects", l);
     let t_nav_skills = i18n::tr("tl_nav_skills", l);
     let t_nav_preview = i18n::tr("tl_nav_preview", l);
+    let t_section_summary = i18n::tr("tl_section_summary", l);
+    let t_section_summary_sub = i18n::tr("tl_section_summary_sub", l);
+    let t_summary_default = i18n::tr("tl_summary_default", l);
+    let t_use_default = i18n::tr("tl_use_default", l);
+    let t_summary_edit_hint = i18n::tr("tl_summary_edit_hint", l);
+    let t_summary_skills = i18n::tr("tl_summary_skills", l);
+    let t_summary_skills_sub = i18n::tr("tl_summary_skills_sub", l);
+    let t_summary_skills_reset = i18n::tr("tl_summary_skills_reset", l);
+    let t_generate_first = i18n::tr("tl_generate_first", l);
+    let t_marker_auto = i18n::tr("tl_marker_auto", l);
     let t_section_projects = i18n::tr("tl_section_projects", l);
     let t_section_skills = i18n::tr("tl_section_skills", l);
     let t_section_preview = i18n::tr("tl_section_preview", l);
@@ -405,6 +434,77 @@ pub fn Tailor() -> Element {
         .replacen("{}", &selected_skills_count.to_string(), 1)
         .replacen("{}", &total_skills.to_string(), 1);
     let t_adjust_skills = i18n::tr("tl_adjust_skills", l);
+
+    // Summary choices for the summary picker: the base "Default" summary,
+    // then one entry per named variant. Previews are truncated so the list
+    // stays scannable; the full selected text is editable in the textarea
+    // below the list instead.
+    struct SummaryOption {
+        name: Option<String>, // None = the base "Default" summary
+        label: String,
+        preview: String,
+    }
+    let summary_options: Vec<SummaryOption> = {
+        let personal = cv.read().personal.clone();
+        let truncate = |s: &str| -> String {
+            let s = s.trim();
+            if s.chars().count() > 160 {
+                format!("{}…", s.chars().take(160).collect::<String>())
+            } else {
+                s.to_string()
+            }
+        };
+        let mut opts = vec![SummaryOption {
+            name: None,
+            label: t_summary_default.to_string(),
+            preview: truncate(personal.summary.get(l)),
+        }];
+        for v in &personal.summaries {
+            opts.push(SummaryOption {
+                name: Some(v.name.clone()),
+                label: v.name.clone(),
+                preview: truncate(v.text.get(l)),
+            });
+        }
+        opts
+    };
+
+    // Skills offered in the `{{skills}}` override picker of the Summaries
+    // drill-down: the last tailored run's skills, re-scored against the JD
+    // and sorted best-first. The first `SUMMARY_SKILLS_CAP` entries are the
+    // "automatic" picks a `{{skills}}` placeholder would expand to; rows
+    // hold (id, name, in-override, is-automatic). Rows beyond the automatic
+    // slice are only listed once the person has explicitly added them.
+    let summary_skill_rows: Vec<(String, String, bool, bool)> = {
+        let over = summary_skill_ids.read();
+        let sorted = last_tailored
+            .read()
+            .as_ref()
+            .map(|t| {
+                cv_generator::services::matcher::sort_skills_by_relevance(
+                    &cv.read(),
+                    &t.skills,
+                    &jd_text.read(),
+                )
+            })
+            .unwrap_or_default();
+        let mut rows = Vec::new();
+        for (i, s) in sorted.iter().enumerate() {
+            let id = s.id.clone();
+            let automatic = i < cv_generator::services::matcher::SUMMARY_SKILLS_CAP;
+            let in_override = over.contains(&id);
+            if automatic || in_override {
+                rows.push((id, s.name.clone(), in_override, automatic));
+            }
+        }
+        rows
+    };
+    let summary_override_empty = summary_skill_ids.read().is_empty();
+    let auto_summary_skill_ids: Vec<String> = summary_skill_rows
+        .iter()
+        .filter(|(_, _, _, automatic)| *automatic)
+        .map(|(id, _, _, _)| id.clone())
+        .collect();
 
     // Skills grouped by category for the manual-selection panel, along with
     // each skill's current checked state (live override) and the algorithm's
@@ -552,6 +652,8 @@ pub fn Tailor() -> Element {
                                                                     *score_mode.read(),
                                                                     &checked_project_ids.read(),
                                                                     &checked_skill_ids.read(),
+                                                                summary_choice.read().clone(),
+                                                                &summary_skill_ids.read(),
                                                                 );
                                                             },
                                                             "{t_load}"
@@ -605,6 +707,8 @@ pub fn Tailor() -> Element {
                                                         .iter()
                                                         .cloned()
                                                         .collect(),
+                                                    summary_choice: summary_choice.read().clone(),
+                                                    summary_skill_ids: summary_skill_ids.read().clone(),
                                                     updated_at_ms: 0,
                                                     match_score: *match_score.read() as f32 / 100.0,
                                                     date_applied: today_date(),
@@ -634,6 +738,8 @@ pub fn Tailor() -> Element {
                                                 *score_mode.read(),
                                                 &checked_project_ids.read(),
                                                 &checked_skill_ids.read(),
+                                            summary_choice.read().clone(),
+                                            &summary_skill_ids.read(),
                                             );
                                         },
                                     }
@@ -652,6 +758,8 @@ pub fn Tailor() -> Element {
                                                 *score_mode.read(),
                                                 &checked_project_ids.read(),
                                                 &checked_skill_ids.read(),
+                                            summary_choice.read().clone(),
+                                            &summary_skill_ids.read(),
                                             );
                                         },
                                     }
@@ -676,6 +784,8 @@ pub fn Tailor() -> Element {
                                                         mode,
                                                         &checked_project_ids.read(),
                                                         &checked_skill_ids.read(),
+                                                    summary_choice.read().clone(),
+                                                    &summary_skill_ids.read(),
                                                     );
                                                 },
                                                 "{mode_label(mode, l)}"
@@ -911,6 +1021,8 @@ pub fn Tailor() -> Element {
                                             mode,
                                             &checked_project_ids.read(),
                                             &checked_skill_ids.read(),
+                                        summary_choice.read().clone(),
+                                        &summary_skill_ids.read(),
                                         );
                                     },
                                     "{t_gen}"
@@ -964,6 +1076,13 @@ pub fn Tailor() -> Element {
                                 div { class: "item-list",
                                     div { class: "item-card",
                                         div { class: "item-card-body clickable",
+                                            onclick: move |_| view.set(TailorView::Summaries),
+                                            div { class: "item-title", "{t_section_summary}" }
+                                            div { class: "item-sub", "{t_section_summary_sub}" }
+                                        }
+                                    }
+                                    div { class: "item-card",
+                                        div { class: "item-card-body clickable",
                                             onclick: move |_| view.set(TailorView::Projects),
                                             div { class: "item-title", "{t_section_projects}" }
                                             div { class: "item-sub", "{t_n_selected}" }
@@ -1003,6 +1122,259 @@ pub fn Tailor() -> Element {
                                         }
                                     }
                                 }
+                                }
+                            }
+
+                            if *view.read() == TailorView::Summaries {
+                                div { class: "drill",
+                                    div { class: "breadcrumb",
+                                        button { class: "btn-text breadcrumb-crumb",
+                                            onclick: move |_| view.set(TailorView::Summary),
+                                            "{t_nav_summary}"
+                                        }
+                                        span { class: "breadcrumb-sep", "›" }
+                                        span { class: "breadcrumb-current", "{t_nav_summaries}" }
+                                    }
+
+                                    div { class: "manual-selection-panel",
+                                        p { class: "manual-selection-title", "{t_section_summary}" }
+                                        p { class: "hint", "{t_score_note}" }
+                                        for opt in summary_options.iter() {
+                                            {
+                                                let opt_name = opt.name.clone();
+                                                let opt_label = opt.label.clone();
+                                                let opt_preview = opt.preview.clone();
+                                                let opt_selected = summary_choice.read().as_deref() == opt_name.as_deref();
+                                                rsx! {
+                                                    div { class: "manual-selection-exp",
+                                                        div { class: "manual-selection-exp-header",
+                                                            label { class: "skill-check",
+                                                                input {
+                                                                    r#type: "radio",
+                                                                    name: "job-summary",
+                                                                    checked: opt_selected,
+                                                                    onchange: move |_| {
+                                                                        let new_choice = opt_name.clone();
+                                                                        summary_choice.set(new_choice.clone());
+                                                                        apply_confirmed.set(false);
+                                                                        persist_current_session(
+                                                                            &job_title.read(),
+                                                                            &jd_text.read(),
+                                                                            *score_mode.read(),
+                                                                            &checked_project_ids.read(),
+                                                                            &checked_skill_ids.read(),
+                                                                            new_choice,
+                                                                        &summary_skill_ids.read(),
+                                                                        );
+                                                                    }
+                                                                }
+                                                                span { "{opt_label}" }
+                                                            }
+                                                        }
+                                                        p { class: "hint", "{opt_preview}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    div { class: "field",
+                                        label { class: "label", "{t_section_summary}" }
+                                        {
+                                            let current = match summary_choice.read().as_deref() {
+                                                None => cv.read().personal.summary.get(l).to_string(),
+                                                Some(name) => cv
+                                                    .read()
+                                                    .personal
+                                                    .summaries
+                                                    .iter()
+                                                    .find(|s| s.name == *name)
+                                                    .map(|s| s.text.get(l).to_string())
+                                                    .unwrap_or_default(),
+                                            };
+                                            let current_choice = summary_choice.read().clone();
+                                            rsx! {
+                                                textarea {
+                                                    class: "input",
+                                                    rows: 4,
+                                                    value: current,
+                                                    oninput: move |e| {
+                                                        let val = e.value();
+                                                        match current_choice.as_deref() {
+                                                            None => cv.write().personal.summary.set(l, val),
+                                                            Some(name) => {
+                                                                if let Some(v) = cv
+                                                                    .write()
+                                                                    .personal
+                                                                    .summaries
+                                                                    .iter_mut()
+                                                                    .find(|s| s.name == *name)
+                                                                {
+                                                                    v.text.set(l, val);
+                                                                }
+                                                            }
+                                                        }
+                                                        apply_confirmed.set(false);
+                                                        persist_current_session(
+                                                            &job_title.read(),
+                                                            &jd_text.read(),
+                                                            *score_mode.read(),
+                                                            &checked_project_ids.read(),
+                                                            &checked_skill_ids.read(),
+                                                            current_choice.clone(),
+                                                        &summary_skill_ids.read(),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        p { class: "hint", "{t_summary_edit_hint}" }
+                                    }
+
+                                    div { class: "field",
+                                        label { class: "label", "{t_summary_skills}" }
+                                        p { class: "hint", "{t_summary_skills_sub}" }
+                                        if summary_skill_rows.is_empty() {
+                                            p { class: "hint", "{t_generate_first}" }
+                                        } else {
+                                            for row in &summary_skill_rows {
+                                                {
+                                                    let row_id = row.0.clone();
+                                                    let row_name = row.1.clone();
+                                                    let row_auto_ids = auto_summary_skill_ids.clone();
+                                                    let in_override = row.2;
+                                                    let is_auto = row.3;
+                                                    let is_checked = in_override
+                                                        || (is_auto && summary_override_empty);
+                                                    rsx! {
+                                                        div { class: "manual-selection-exp-header",
+                                                            label { class: "skill-check",
+                                                                input {
+                                                                    r#type: "checkbox",
+                                                                    name: "job-summary-skills",
+                                                                    checked: is_checked,
+                                                                    onchange: move |e| {
+                                                                        let on = e.value() == "true";
+                                                                        let id = row_id.clone();
+                                                                        let base: Vec<String> = {
+                                                                            let cur = summary_skill_ids.read();
+                                                                            if cur.is_empty() {
+                                                                                row_auto_ids.clone()
+                                                                            } else {
+                                                                                cur.clone()
+                                                                            }
+                                                                        };
+                                                                        let updated: Vec<String> = if on {
+                                                                            if base.contains(&id) {
+                                                                                base
+                                                                            } else {
+                                                                                let mut b = base;
+                                                                                b.push(id);
+                                                                                b
+                                                                            }
+                                                                        } else {
+                                                                            base.into_iter()
+                                                                                .filter(|x| x != &id)
+                                                                                .collect()
+                                                                        };
+                                                                        summary_skill_ids.set(updated);
+                                                                        apply_confirmed.set(false);
+                                                                        persist_current_session(
+                                                                            &job_title.read(),
+                                                                            &jd_text.read(),
+                                                                            *score_mode.read(),
+                                                                            &checked_project_ids.read(),
+                                                                            &checked_skill_ids.read(),
+                                                                            summary_choice.read().clone(),
+                                                                            &summary_skill_ids.read(),
+                                                                        );
+                                                                    }
+                                                                }
+                                                                span { "{row_name}" }
+                                                                if is_auto && !summary_override_empty {
+                                                                    span { class: "hint", "({t_marker_auto})" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "manual-selection-actions",
+                                                button {
+                                                    class: "btn-text",
+                                                    disabled: summary_override_empty,
+                                                    onclick: move |_| {
+                                                        summary_skill_ids.set(Vec::new());
+                                                        apply_confirmed.set(false);
+                                                        persist_current_session(
+                                                            &job_title.read(),
+                                                            &jd_text.read(),
+                                                            *score_mode.read(),
+                                                            &checked_project_ids.read(),
+                                                            &checked_skill_ids.read(),
+                                                            summary_choice.read().clone(),
+                                                            &summary_skill_ids.read(),
+                                                        );
+                                                    },
+                                                    "{t_summary_skills_reset}"
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    div { class: "manual-selection-actions",
+                                        button {
+                                            class: "btn btn-secondary",
+                                            onclick: move |_| {
+                                                summary_choice.set(None);
+                                                apply_confirmed.set(false);
+                                                persist_current_session(
+                                                    &job_title.read(),
+                                                    &jd_text.read(),
+                                                    *score_mode.read(),
+                                                    &checked_project_ids.read(),
+                                                    &checked_skill_ids.read(),
+                                                    None,
+                                                &summary_skill_ids.read(),
+                                                );
+                                            },
+                                            "{t_use_default}"
+                                        }
+                                        button {
+                                            class: "btn btn-primary",
+                                            onclick: move |_| {
+                                                if let Some(base) = last_tailored.read().clone() {
+                                                    let mut tailored = base;
+                                                    tailored.experiences = apply_manual_project_selection(
+                                                        &cv.read(),
+                                                        &checked_project_ids.read(),
+                                                    );
+                                                    tailored.skills = apply_manual_skill_selection(
+                                                        &cv.read(),
+                                                        &checked_skill_ids.read(),
+                                                    );
+                                                    let summary_skills = cv_generator::services::matcher::summary_skills_for(
+                                                        &cv.read(),
+                                                        &tailored.skills,
+                                                        &jd_text.read(),
+                                                        &summary_skill_ids.read(),
+                                                    );
+                                                    tailored.personal.summary = resolve_summary(
+                                                        &cv.read().personal,
+                                                        summary_choice.read().as_deref(),
+                                                        &summary_skills,
+                                                    );
+                                                    let html = render_tailored_cv(&tailored, &job_title.read(), l);
+                                                    result_html.set(html);
+                                                }
+                                                apply_confirmed.set(true);
+                                            },
+                                            "{t_apply_selection}"
+                                        }
+                                    }
+                                    if *apply_confirmed.read() {
+                                        p { class: "hint hint-success manual-selection-applied", "{t_applied}" }
+                                    }
                                 }
                             }
 
@@ -1092,6 +1464,8 @@ pub fn Tailor() -> Element {
                                                                         *score_mode.read(),
                                                                         &checked_project_ids.read(),
                                                                         &checked_skill_ids.read(),
+                                                                    summary_choice.read().clone(),
+                                                                    &summary_skill_ids.read(),
                                                                     );
                                                                 },
                                                             }
@@ -1119,6 +1493,8 @@ pub fn Tailor() -> Element {
                                                     *score_mode.read(),
                                                     &checked_project_ids.read(),
                                                     &checked_skill_ids.read(),
+                                                summary_choice.read().clone(),
+                                                &summary_skill_ids.read(),
                                                 );
                                             },
                                             "{t_reset_algo}"
@@ -1134,6 +1510,8 @@ pub fn Tailor() -> Element {
                                                     *score_mode.read(),
                                                     &checked_project_ids.read(),
                                                     &checked_skill_ids.read(),
+                                                summary_choice.read().clone(),
+                                                &summary_skill_ids.read(),
                                                 );
                                             },
                                             "{t_clear_all}"
@@ -1150,6 +1528,17 @@ pub fn Tailor() -> Element {
                                                     tailored.skills = apply_manual_skill_selection(
                                                         &cv.read(),
                                                         &checked_skill_ids.read(),
+                                                    );
+                                                    let summary_skills = cv_generator::services::matcher::summary_skills_for(
+                                                        &cv.read(),
+                                                        &tailored.skills,
+                                                        &jd_text.read(),
+                                                        &summary_skill_ids.read(),
+                                                    );
+                                                    tailored.personal.summary = resolve_summary(
+                                                        &cv.read().personal,
+                                                        summary_choice.read().as_deref(),
+                                                        &summary_skills,
                                                     );
                                                     let html = render_tailored_cv(&tailored, &job_title.read(), l);
                                                     result_html.set(html);
@@ -1230,6 +1619,8 @@ pub fn Tailor() -> Element {
                                                                             *score_mode.read(),
                                                                             &checked_project_ids.read(),
                                                                             &checked_skill_ids.read(),
+                                                                        summary_choice.read().clone(),
+                                                                        &summary_skill_ids.read(),
                                                                         );
                                                                     },
                                                                 }
@@ -1257,6 +1648,8 @@ pub fn Tailor() -> Element {
                                                     *score_mode.read(),
                                                     &checked_project_ids.read(),
                                                     &checked_skill_ids.read(),
+                                                summary_choice.read().clone(),
+                                                &summary_skill_ids.read(),
                                                 );
                                             },
                                             "{t_reset_algo}"
@@ -1272,6 +1665,8 @@ pub fn Tailor() -> Element {
                                                     *score_mode.read(),
                                                     &checked_project_ids.read(),
                                                     &checked_skill_ids.read(),
+                                                summary_choice.read().clone(),
+                                                &summary_skill_ids.read(),
                                                 );
                                             },
                                             "{t_clear_all}"
@@ -1288,6 +1683,17 @@ pub fn Tailor() -> Element {
                                                     tailored.skills = apply_manual_skill_selection(
                                                         &cv.read(),
                                                         &checked_skill_ids.read(),
+                                                    );
+                                                    let summary_skills = cv_generator::services::matcher::summary_skills_for(
+                                                        &cv.read(),
+                                                        &tailored.skills,
+                                                        &jd_text.read(),
+                                                        &summary_skill_ids.read(),
+                                                    );
+                                                    tailored.personal.summary = resolve_summary(
+                                                        &cv.read().personal,
+                                                        summary_choice.read().as_deref(),
+                                                        &summary_skills,
                                                     );
                                                     let html = render_tailored_cv(&tailored, &job_title.read(), l);
                                                     result_html.set(html);

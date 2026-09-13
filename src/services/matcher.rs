@@ -1526,6 +1526,125 @@ pub fn tailor_cv_with_scorer(
     }
 }
 
+/// Placeholder a summary (the base one or a named variant) can contain:
+/// the Tailor page expands it to the JD-pertinent skills of the last run.
+pub const SUMMARY_SKILLS_PLACEHOLDER: &str = "{{skills}}";
+
+/// How many JD-pertinent skills a `{{skills}}` placeholder expands to.
+pub const SUMMARY_SKILLS_CAP: usize = 5;
+
+/// Replaces every `SUMMARY_SKILLS_PLACEHOLDER` in `text` with the first
+/// `cap` skills joined by ", ". The list comes from `TailoredCV::skills`,
+/// which has already dropped everything unrelated to the offer and is
+/// sorted best-first, so a top-`cap` slice is exactly the list the offer
+/// cares about. No-op when the placeholder is absent or when there are no
+/// skills to show (the placeholder stays literal then, so nothing vanishes
+/// silently). Language-independent: `Skill::name` is a single string.
+pub fn expand_summary_skills(text: &str, skills: &[Skill], cap: usize) -> String {
+    if !text.contains(SUMMARY_SKILLS_PLACEHOLDER) {
+        return text.to_string();
+    }
+    let list = skills
+        .iter()
+        .take(cap)
+        .map(|s| s.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if list.is_empty() {
+        return text.to_string();
+    }
+    text.replace(SUMMARY_SKILLS_PLACEHOLDER, &list)
+}
+
+/// Resolves the professional summary a tailored CV should render: either the
+/// base "Default" `personal.summary`, or the named variant selected via
+/// `choice` (falling back to Default when the name matches nothing). Both
+/// languages are run through `expand_summary_skills`, so a `{{skills}}`
+/// placeholder becomes this run's JD-pertinent skill list in each language.
+pub fn resolve_summary(
+    personal: &crate::models::PersonalInfo,
+    choice: Option<&str>,
+    skills: &[Skill],
+) -> crate::models::LocalizedText {
+    let src = choice
+        .and_then(|name| {
+            personal
+                .summaries
+                .iter()
+                .find(|s| s.name == name)
+                .map(|s| s.text.clone())
+        })
+        .unwrap_or_else(|| personal.summary.clone());
+    crate::models::LocalizedText {
+        en: expand_summary_skills(&src.en, skills, SUMMARY_SKILLS_CAP),
+        fr: expand_summary_skills(&src.fr, skills, SUMMARY_SKILLS_CAP),
+    }
+}
+
+/// Every independently-scorable block of a CV, one entry per document —
+/// the corpus `Idf` weighs keywords against. This is the same list the two
+/// tailoring entry points build inline before scoring; a dedicated helper
+/// so the `{{skills}}` auto-ordering below reuses the exact same corpus.
+fn cv_documents(cv: &LifetimeCV) -> Vec<Vec<String>> {
+    let mut documents: Vec<Vec<String>> = Vec::new();
+    for exp in &cv.experiences {
+        let shared_tools = pooled_tools(&exp.projects, &cv.skills);
+        for proj in &exp.projects {
+            documents.push(extract_terms(&experience_project_text(proj, &shared_tools)));
+        }
+    }
+    for proj in &cv.projects {
+        documents.push(extract_terms(&project_text(proj)));
+    }
+    for skill in &cv.skills {
+        documents.push(extract_terms(&skill.name));
+    }
+    documents
+}
+
+/// Re-scores `skills` against a job description with the same keyword
+/// machinery as `tailor_cv` and returns them sorted by relevance, best
+/// first, dropping anything that doesn't match (`score <= 0`). This is the
+/// "automatic" order a `{{skills}}` placeholder expands to — not the CV
+/// list order, so a skill the offer clearly wants isn't pushed out of the
+/// top-`SUMMARY_SKILLS_CAP` merely by sitting later in the CV.
+pub fn sort_skills_by_relevance(cv: &LifetimeCV, skills: &[Skill], jd_text: &str) -> Vec<Skill> {
+    let keywords = extract_keywords(jd_text);
+    let top_keywords: Vec<(String, usize)> = keywords.iter().take(40).cloned().collect();
+    let idf = Idf::build(&cv_documents(cv));
+    let mut scored: Vec<(f32, Skill)> = skills
+        .iter()
+        .map(|s| (score_skill(s, &top_keywords, &idf), s.clone()))
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored
+        .into_iter()
+        .filter(|(s, _)| *s > 0.0)
+        .map(|(_, s)| s)
+        .collect()
+}
+
+/// The skill list a `{{skills}}` placeholder expands to: the person's
+/// explicit `override_ids` when non-empty (resolved to the matching CV
+/// skills, in CV order), otherwise the algorithm's choice — `tailored_skills`
+/// re-scored against the JD, best first, via `sort_skills_by_relevance`.
+pub fn summary_skills_for(
+    cv: &LifetimeCV,
+    tailored_skills: &[Skill],
+    jd_text: &str,
+    override_ids: &[String],
+) -> Vec<Skill> {
+    if override_ids.is_empty() {
+        sort_skills_by_relevance(cv, tailored_skills, jd_text)
+    } else {
+        cv.skills
+            .iter()
+            .filter(|s| override_ids.contains(&s.id))
+            .cloned()
+            .collect()
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1621,6 +1740,188 @@ mod tests {
             "output order must match cv.experiences' own order"
         );
         assert_eq!(result[1].company, "Second");
+    }
+
+    // ── expand_summary_skills ────────────────────────────────────────────────
+
+    fn skills_named(names: &[&str]) -> Vec<Skill> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| Skill {
+                id: format!("s{i}"),
+                name: n.to_string(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn expand_summary_skills_replaces_placeholder_with_top_cap_skills() {
+        let skills = skills_named(&[
+            "Rust",
+            "Kubernetes",
+            "Docker",
+            "PostgreSQL",
+            "Terraform",
+            "AWS",
+        ]);
+        let out = expand_summary_skills(
+            "Distributed systems engineer focused on {{skills}}.",
+            &skills,
+            SUMMARY_SKILLS_CAP,
+        );
+        assert_eq!(out, "Distributed systems engineer focused on Rust, Kubernetes, Docker, PostgreSQL, Terraform.");
+    }
+
+    #[test]
+    fn expand_summary_skills_caps_and_handles_unrelated_skill_position() {
+        let skills = skills_named(&["Rust", "Docker"]);
+        let out = expand_summary_skills(
+            "Deep in {{skills}}; fan of Bash.",
+            &skills,
+            SUMMARY_SKILLS_CAP,
+        );
+        assert_eq!(out, "Deep in Rust, Docker; fan of Bash.");
+    }
+
+    #[test]
+    fn expand_summary_skills_is_noop_without_placeholder_or_without_skills() {
+        assert_eq!(
+            expand_summary_skills("No placeholder here.", &skills_named(&["Rust"]), 5),
+            "No placeholder here."
+        );
+        assert_eq!(
+            expand_summary_skills(
+                "Uses {{skills}} but none survived.",
+                &[],
+                SUMMARY_SKILLS_CAP
+            ),
+            "Uses {{skills}} but none survived.",
+            "an empty skill list must keep the placeholder literal, not vanish it"
+        );
+    }
+
+    #[test]
+    fn resolve_summary_falls_back_to_default_when_not_chosen_or_unknown() {
+        let personal = crate::models::PersonalInfo {
+            summary: crate::models::LocalizedText::same("Engineer biography"),
+            summaries: vec![crate::models::NamedSummary {
+                name: "Leadership".to_string(),
+                text: crate::models::LocalizedText::same("People-focused bio"),
+            }],
+            ..Default::default()
+        };
+        let skills = skills_named(&["Rust"]);
+        assert_eq!(
+            resolve_summary(&personal, None, &skills).en,
+            "Engineer biography"
+        );
+        assert_eq!(
+            resolve_summary(&personal, Some("DoesNotExist"), &skills).en,
+            "Engineer biography",
+            "a name that matches no variant must fall back to the default"
+        );
+    }
+
+    #[test]
+    fn resolve_summary_picks_variant_and_expands_skills_in_both_languages() {
+        let personal = crate::models::PersonalInfo {
+            summary: crate::models::LocalizedText::same("Engineer biography"),
+            summaries: vec![crate::models::NamedSummary {
+                name: "Platform".to_string(),
+                text: crate::models::LocalizedText {
+                    en: "Platform bio over {{skills}}.".to_string(),
+                    fr: "Bio plateforme sur {{skills}}.".to_string(),
+                },
+            }],
+            ..Default::default()
+        };
+        let skills = skills_named(&["Rust", "Docker"]);
+        let out = resolve_summary(&personal, Some("Platform"), &skills);
+        assert_eq!(out.en, "Platform bio over Rust, Docker.");
+        assert_eq!(out.fr, "Bio plateforme sur Rust, Docker.");
+    }
+
+    // A CV where "Ansible" sits last: if ordering were CV-list-order the
+    // Ansible pick would be pushed out of the automatic top-5 by the four
+    // skills that precede it, even though the JD is entirely about Ansible.
+    fn relevance_fixture() -> LifetimeCV {
+        LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-web".to_string(),
+                    name: "Web Development".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-ui".to_string(),
+                    name: "UI Design".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-testing".to_string(),
+                    name: "Testing".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-sql".to_string(),
+                    name: "SQL".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-ansible".to_string(),
+                    name: "Ansible".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-cooking".to_string(),
+                    name: "Baking".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sort_skills_by_relevance_orders_by_jd_match_not_cv_position() {
+        let cv = relevance_fixture();
+        let jd = "Looking for an Ansible automation expert. Ansible playbooks, Ansible roles, Ansible inventory. Ansible.";
+        let mut sorted = sort_skills_by_relevance(&cv, &cv.skills, jd);
+        assert_eq!(sorted.first().map(|s| s.id.as_str()), Some("s-ansible"));
+        assert!(
+            !sorted.iter().any(|s| s.name == "Baking"),
+            "unrelated skill must be dropped, not just sorted to the back"
+        );
+        sorted.truncate(SUMMARY_SKILLS_CAP);
+        assert!(
+            sorted.iter().any(|s| s.id == "s-ansible"),
+            "Ansible must survive the top-{} slice",
+            SUMMARY_SKILLS_CAP
+        );
+    }
+
+    #[test]
+    fn summary_skills_for_uses_override_ids_when_provided() {
+        let cv = relevance_fixture();
+        let tailored_skills = sort_skills_by_relevance(&cv, &cv.skills, "Ansible Deploy");
+        let overridden = summary_skills_for(
+            &cv,
+            &tailored_skills,
+            "Ansible Deploy",
+            &["s-sql".to_string(), "s-ui".to_string()],
+        );
+        assert_eq!(
+            overridden.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["s-ui", "s-sql"],
+            "override must win and follow CV order, not the tailored order"
+        );
+        let auto = summary_skills_for(&cv, &tailored_skills, "Ansible Deploy", &[]);
+        assert!(
+            auto.iter().any(|s| s.id == "s-ansible"),
+            "empty override must fall back to the automatic relevance order"
+        );
     }
 
     #[test]
