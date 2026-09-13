@@ -2987,7 +2987,11 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
             if name_before_bare_marker {
                 harvested_skills.push(Skill {
                     id: uuid::Uuid::new_v4().to_string(),
-                    name: format!("{} {}", trimmed, next_trimmed.unwrap()),
+                    name: format!(
+                        "{} {}",
+                        trimmed,
+                        next_trimmed.expect("name_before_bare_marker implies next line exists")
+                    ),
                     category: SkillCategory::default(),
                     level: SkillLevel::Intermediate,
                 });
@@ -3176,7 +3180,13 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
             {
                 let (company, location) = split_company_and_location(before_date);
                 consumed_role_line = true;
-                (next_line.unwrap().to_string(), company, location)
+                (
+                    next_line
+                        .expect("bare-role branch implies a next line")
+                        .to_string(),
+                    company,
+                    location,
+                )
             } else if let Some(pos) = before_date.rfind(" at ") {
                 (
                     before_date[..pos].trim().to_string(),
@@ -3357,7 +3367,10 @@ fn parse_experiences(lines: &[String]) -> (Vec<Experience>, Vec<Skill>) {
             || recent_plain.iter().any(|l| looks_like_block_label(l));
         if current_exp.is_some()
             && !current_bullets.is_empty()
-            && !ends_with_terminal_punct(&current_bullets.last().unwrap().en)
+            && current_bullets
+                .last()
+                .map(|b| !ends_with_terminal_punct(&b.en))
+                .unwrap_or(false)
             && !looks_like_block_label(trimmed)
             && !continues_pending_label
         {
@@ -3497,12 +3510,16 @@ fn commit_pending_line(context: &mut Vec<String>, tools_text: &mut String, line:
         tools_text.push_str(line);
         return;
     }
-    if !context.is_empty()
-        && !ends_with_terminal_punct(context.last().unwrap())
+    let context_continues = context
+        .last()
+        .map(|l| !ends_with_terminal_punct(l))
+        .unwrap_or(false)
         && !is_context_label(line)
-        && !is_project_header(line)
-    {
-        let last = context.last_mut().unwrap();
+        && !is_project_header(line);
+    if context_continues {
+        let last = context
+            .last_mut()
+            .expect("context_continues implies non-empty context");
         last.push(' ');
         last.push_str(line);
     } else {
@@ -4067,8 +4084,8 @@ pub(crate) fn parse_skills(lines: &[String]) -> Vec<Skill> {
                 .any(|(label, _)| lower.starts_with(&format!("{label}:")));
         if starts_new_block {
             blocks.push(vec![line.as_str()]);
-        } else {
-            blocks.last_mut().unwrap().push(line.as_str());
+        } else if let Some(block) = blocks.last_mut() {
+            block.push(line.as_str());
         }
     }
 
@@ -4130,9 +4147,10 @@ fn merge_wrapped_skill_lines(lines: &[&str]) -> Vec<String> {
             .is_some_and(|prev: &String| prev.trim_end().ends_with(','));
         let is_continuation = !merged.is_empty() && (!starts_uppercase || prev_ends_with_comma);
         if is_continuation {
-            let prev = merged.last_mut().unwrap();
-            prev.push(' ');
-            prev.push_str(trimmed);
+            if let Some(prev) = merged.last_mut() {
+                prev.push(' ');
+                prev.push_str(trimmed);
+            }
         } else {
             merged.push(trimmed.to_string());
         }
