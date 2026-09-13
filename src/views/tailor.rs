@@ -400,6 +400,7 @@ pub fn Tailor() -> Element {
     let t_section_skills = i18n::tr("tl_section_skills", l);
     let t_section_preview = i18n::tr("tl_section_preview", l);
     let t_section_preview_sub = i18n::tr("tl_section_preview_sub", l);
+    let t_go_preview = i18n::tr("tl_go_preview", l);
 
     // Saved sessions to render, narrowed by the status filter (`None` =
     // show all). Computed once here so the rsx! loop below stays a plain
@@ -1118,6 +1119,11 @@ pub fn Tailor() -> Element {
                                         onclick: move |_| { let cur = *show_debug.read(); show_debug.set(!cur); },
                                         if *show_debug.read() { "Hide score debug" } else { "Show score debug" }
                                     }
+                                    button {
+                                        class: "btn btn-primary",
+                                        onclick: move |_| view.set(TailorView::Preview),
+                                        "{t_go_preview}"
+                                    }
                                 }
 
                                 p { class: "manual-selection-title", "{t_nav_sections}" }
@@ -1555,6 +1561,11 @@ pub fn Tailor() -> Element {
                                     div { class: "manual-selection-actions",
                                         button {
                                             class: "btn btn-secondary",
+                                            onclick: move |_| view.set(TailorView::Preview),
+                                            "{t_go_preview}"
+                                        }
+                                        button {
+                                            class: "btn btn-secondary",
                                             onclick: move |_| {
                                                 *checked_project_ids.write() =
                                                     last_algo_project_ids.read().clone();
@@ -1708,6 +1719,11 @@ pub fn Tailor() -> Element {
                                         }
                                     }
                                     div { class: "manual-selection-actions",
+                                        button {
+                                            class: "btn btn-secondary",
+                                            onclick: move |_| view.set(TailorView::Preview),
+                                            "{t_go_preview}"
+                                        }
                                         button {
                                             class: "btn btn-secondary",
                                             onclick: move |_| {
