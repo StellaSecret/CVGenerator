@@ -57,6 +57,17 @@ src/
 All rendering happens in Rust — the HTML CV template is built as a
 `String` and injected into an `<iframe srcdoc>` for CSS isolation.
 
+### Optional on-device semantic matching (no server)
+
+The Tailor view also offers opt-in *Embedding* / *Hybrid* score modes that
+run a small BERT sentence model (`all-MiniLM-L6-v2`) fully in-browser via
+[candle](https://github.com/huggingface/candle). This is a one-time,
+user-initiated download (~25–90 MB, persisted in the browser's Cache
+Storage) — it never happens on app load or in the default Keyword mode,
+and no CV or JD content is ever sent anywhere. The candle crate code is
+bundled in every wasm binary, but the model *weights* are fetched only
+when the user clicks "Load model".
+
 ---
 
 ## Prerequisites

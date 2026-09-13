@@ -56,6 +56,17 @@ const CACHE_NAME: &str = "cv-generator-model-v1";
 /// from disk-backed cache with no network request at all, as long as the
 /// cache hasn't been cleared.
 ///
+/// # Bundle weight vs. download weight
+/// This fetch is fully on-demand: nothing is downloaded until the user
+/// chooses an Embedding/Hybrid score mode and clicks "Load model" (the
+/// UI block is hidden entirely in Keyword mode — see views/tailor.rs).
+/// The `candle-*` and `tokenizers` crate code IS however statically
+/// linked into the wasm binary for every build (they're plain, ungated
+/// dependencies in Cargo.toml), adding a few MB to the bundle. So on a
+/// modest connection the *initial* app load includes that crate code, but
+/// the dominant cost — the ~25-90MB model download — only happens on
+/// explicit opt-in, and then persists in Cache Storage across sessions.
+///
 /// Deliberately a free function taking no `&EmbeddingWorker` — see the
 /// doc comment on `EmbeddingWorker::load_model` for why fetching and
 /// constructing the engine are kept as two separate steps (holding a
