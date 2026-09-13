@@ -61,6 +61,13 @@ pub fn restore_from_json(json: &str) -> Result<RestoredData, String> {
 async fn check(resp: reqwest::Response) -> Result<reqwest::Response, String> {
     let status = resp.status();
     if !status.is_success() {
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            // Stored token refused: it's dead. Scrub it so the UI drops
+            // back to a clean signed-out state and the user can re-auth,
+            // instead of hitting the same 401 forever.
+            crate::services::auth::clear_token();
+            return Err(crate::services::auth::AUTH_EXPIRED_ERR.to_string());
+        }
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("HTTP {status}: {body}"));
     }

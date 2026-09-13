@@ -19,6 +19,23 @@ fn make_err(s: &str) -> String {
     format!("❌  {s}")
 }
 
+/// Shared error path for backup/restore. A Drive 401 means the stored token
+/// is dead: clear it, flip the UI back to signed-out, and tell the user to
+/// sign in again rather than echoing the raw 401 body.
+fn handle_drive_err(
+    err: &str,
+    token: &mut Signal<String>,
+    status: &mut Signal<String>,
+    expired_msg: &str,
+) {
+    if err == auth::AUTH_EXPIRED_ERR {
+        token.set(String::new());
+        status.set(make_err(expired_msg));
+    } else {
+        status.set(make_err(err));
+    }
+}
+
 #[component]
 pub fn Sync() -> Element {
     let mut cv: Signal<LifetimeCV> = use_context();
@@ -51,6 +68,7 @@ pub fn Sync() -> Element {
     let t_signin = i18n::tr("sy_sign_in", l);
     let t_signedin = i18n::tr("sy_signed_in", l);
     let t_signedout = i18n::tr("sy_signed_out", l);
+    let t_expired = i18n::tr("sy_session_expired", l);
     let t_configerr = i18n::tr("sy_config_err", l);
     let t_connect = i18n::tr("sy_connecting", l);
     let t_working = i18n::tr("sy_working", l);
@@ -132,7 +150,7 @@ pub fn Sync() -> Element {
                                 spawn(async move {
                                     match drive::drive_backup(&cv_snap, &sess, &t).await {
                                         Ok(_)  => status.set(make_ok(tok_label)),
-                                        Err(e) => status.set(make_err(&e)),
+                                        Err(e) => handle_drive_err(&e, &mut token, &mut status, t_expired),
                                     }
                                     loading.set(false);
                                 });
@@ -227,54 +245,54 @@ fn ImportButton(
         let t_import_ok = i18n::tr("sy_import_ok", l).to_string();
         let t_import = i18n::tr("sy_import", l).to_string();
         return rsx! {
-                    button {
-                        class: "btn btn-outline",
-                        onclick: move |_| {
-                            let window = web_sys::window().expect("window");
-                            let doc    = window.document().expect("document");
-                            let input  = doc.create_element("input").expect("input");
-                            let _ = input.set_attribute("type",   "file");
-                            let _ = input.set_attribute("accept", ".json");
-                            let _ = input.set_attribute("style",  "display:none");
-                            let input2 = input.clone();
-                            let ok_msg2 = t_import_ok.clone();
-                            let cb = Closure::<dyn FnMut()>::new(move || {
-                                use js_sys::Reflect;
-                                if let Some(files) = Reflect::get(&input2, &"files".into()).ok()
-                                    .and_then(|f| f.dyn_into::<web_sys::FileList>().ok())
-                                {
-        if let Some(file) = files.get(0) {
-                                    let reader = web_sys::FileReader::new().expect("FileReader");
-                                        let r2     = reader.clone();
-                                        let ok_msg3 = ok_msg2.clone();
-                                        let onload = Closure::<dyn FnMut()>::new(move || {
-                                            if let Some(text) = r2.result().ok().and_then(|r| r.as_string()) {
-                                                match drive::restore_from_json(&text) {
-                                                    Ok(restored) => {
-                                                        save_cv(&restored.cv);
-                                                        *cv.write() = restored.cv;
-                                                        save_sessions_list(&restored.saved_sessions);
-                                                        status.set(make_ok(&ok_msg3));
+                            button {
+                                class: "btn btn-outline",
+                                onclick: move |_| {
+                                    let window = web_sys::window().expect("window");
+                                    let doc    = window.document().expect("document");
+                                    let input  = doc.create_element("input").expect("input");
+                                    let _ = input.set_attribute("type",   "file");
+                                    let _ = input.set_attribute("accept", ".json");
+                                    let _ = input.set_attribute("style",  "display:none");
+                                    let input2 = input.clone();
+                                    let ok_msg2 = t_import_ok.clone();
+                                    let cb = Closure::<dyn FnMut()>::new(move || {
+                                        use js_sys::Reflect;
+                                        if let Some(files) = Reflect::get(&input2, &"files".into()).ok()
+                                            .and_then(|f| f.dyn_into::<web_sys::FileList>().ok())
+                                        {
+                if let Some(file) = files.get(0) {
+                                            let reader = web_sys::FileReader::new().expect("FileReader");
+                                                let r2     = reader.clone();
+                                                let ok_msg3 = ok_msg2.clone();
+                                                let onload = Closure::<dyn FnMut()>::new(move || {
+                                                    if let Some(text) = r2.result().ok().and_then(|r| r.as_string()) {
+                                                        match drive::restore_from_json(&text) {
+                                                            Ok(restored) => {
+                                                                save_cv(&restored.cv);
+                                                                *cv.write() = restored.cv;
+                                                                save_sessions_list(&restored.saved_sessions);
+                                                                status.set(make_ok(&ok_msg3));
+                                                            }
+        Err(e) => status.set(make_err(&e)),
+                                                        }
                                                     }
-                                                    Err(e) => status.set(make_err(&e)),
-                                                }
+                                                });
+                                                reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                                                onload.forget();
+                                                let _ = reader.read_as_text(file.unchecked_ref());
                                             }
-                                        });
-                                        reader.set_onload(Some(onload.as_ref().unchecked_ref()));
-                                        onload.forget();
-                                        let _ = reader.read_as_text(file.unchecked_ref());
-                                    }
-                                }
-                            });
-                            if let Some(body) = doc.body() { let _ = body.append_child(&input); }
-                            input.unchecked_ref::<web_sys::EventTarget>()
-                                .add_event_listener_with_callback("change", cb.as_ref().unchecked_ref()).ok();
-                            input.dyn_ref::<web_sys::HtmlElement>().map(|el| el.click());
-                            cb.forget();
-                        },
-                        "{t_import}"
-                    }
-                };
+                                        }
+                                    });
+                                    if let Some(body) = doc.body() { let _ = body.append_child(&input); }
+                                    input.unchecked_ref::<web_sys::EventTarget>()
+                                        .add_event_listener_with_callback("change", cb.as_ref().unchecked_ref()).ok();
+                                    input.dyn_ref::<web_sys::HtmlElement>().map(|el| el.click());
+                                    cb.forget();
+                                },
+                                "{t_import}"
+                            }
+                        };
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

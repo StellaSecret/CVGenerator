@@ -6,6 +6,42 @@
 
 #[cfg(target_arch = "wasm32")]
 const TOKEN_KEY: &str = "cv_generator_google_token";
+#[cfg(target_arch = "wasm32")]
+const TOKEN_EXPIRY_KEY: &str = "cv_generator_google_token_expiry";
+
+/// How far ahead of the provider's `expires_in` a token is treated as dead.
+/// Prevents a token that's about to expire from being used and then refused
+/// with a 401 right at the boundary.
+const EXPIRY_MARGIN_MS: u64 = 30_000;
+
+/// Error marker returned by drive.rs when the stored token is no longer
+/// valid (Google refuses it). sync.rs matches on it and re-prompts.
+pub const AUTH_EXPIRED_ERR: &str = "auth_expired";
+
+/// Epoch-ms timestamp at which an access token issued at `now_ms` with
+/// `expires_in` seconds of remaining life should be considered expired.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn token_expiry_ms(now_ms: u64, expires_in_secs: u64) -> u64 {
+    now_ms
+        .saturating_add(expires_in_secs.saturating_mul(1000))
+        .saturating_sub(EXPIRY_MARGIN_MS)
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn now_ms() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now() as u64
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+}
 
 // ── Token listeners (WASM only) ──────────────────────────────────────────────
 
@@ -35,6 +71,14 @@ pub fn on_token_received(cb: Box<dyn FnMut(&str)>) {
 #[cfg(target_arch = "wasm32")]
 pub fn get_token() -> Option<String> {
     use gloo_storage::{LocalStorage, Storage};
+    if let Ok(expiry) = LocalStorage::get::<u64>(TOKEN_EXPIRY_KEY) {
+        if now_ms() >= expiry {
+            // Stale cached token: drop it so the UI shows signed-out and
+            // forces a fresh sign-in instead of trusting an expired token.
+            clear_token();
+            return None;
+        }
+    }
     LocalStorage::get(TOKEN_KEY).ok()
 }
 
@@ -42,16 +86,27 @@ pub fn get_token() -> Option<String> {
 pub fn set_token(token: &str) {
     use gloo_storage::{LocalStorage, Storage};
     if token.is_empty() {
-        LocalStorage::delete(TOKEN_KEY);
+        clear_token();
     } else {
         let _ = LocalStorage::set(TOKEN_KEY, token);
     }
+}
+
+/// Persist a token together with its expiry, as provided by the OAuth
+/// response's `expires_in` (seconds). Without an expiry value the token
+/// would otherwise sit in localStorage indefinitely, long past death.
+#[cfg(target_arch = "wasm32")]
+pub fn set_token_with_expiry(token: &str, expires_in_secs: u64) {
+    use gloo_storage::{LocalStorage, Storage};
+    set_token(token);
+    let _ = LocalStorage::set(TOKEN_EXPIRY_KEY, token_expiry_ms(now_ms(), expires_in_secs));
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn clear_token() {
     use gloo_storage::{LocalStorage, Storage};
     LocalStorage::delete(TOKEN_KEY);
+    LocalStorage::delete(TOKEN_EXPIRY_KEY);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +115,8 @@ pub fn get_token() -> Option<String> {
 }
 #[cfg(not(target_arch = "wasm32"))]
 pub fn set_token(_token: &str) {}
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_token_with_expiry(_token: &str, _expires_in_secs: u64) {}
 #[cfg(not(target_arch = "wasm32"))]
 pub fn clear_token() {}
 
@@ -124,7 +181,11 @@ pub fn start_oauth(client_id: &str, _redirect_uri: &str) {
             .ok()
             .and_then(|t| t.as_string())
         {
-            set_token(&token);
+            let expires_in = js_sys::Reflect::get(&resp, &"expires_in".into())
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(3600.0) as u64;
+            set_token_with_expiry(&token, expires_in);
             TOKEN_LISTENERS.with(|listeners| {
                 for cb in listeners.borrow_mut().iter_mut() {
                     cb(&token);
@@ -205,5 +266,19 @@ mod tests {
         set_token("test");
         assert!(get_token().is_none());
         clear_token();
+    }
+
+    #[test]
+    fn token_expiry_ms_subtracts_margin() {
+        assert_eq!(
+            token_expiry_ms(1_000, 3600),
+            1_000 + 3_600_000 - EXPIRY_MARGIN_MS
+        );
+    }
+
+    #[test]
+    fn token_expiry_ms_saturates_to_zero() {
+        assert_eq!(token_expiry_ms(0, 0), 0);
+        assert_eq!(token_expiry_ms(10_000, 0), 0);
     }
 }
