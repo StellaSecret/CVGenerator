@@ -395,8 +395,7 @@ pub fn Tailor() -> Element {
     let t_summary_skills = i18n::tr("tl_summary_skills", l);
     let t_summary_skills_sub = i18n::tr("tl_summary_skills_sub", l);
     let t_summary_skills_reset = i18n::tr("tl_summary_skills_reset", l);
-    let t_generate_first = i18n::tr("tl_generate_first", l);
-    let t_marker_auto = i18n::tr("tl_marker_auto", l);
+    let t_summary_skills_none = i18n::tr("tl_summary_skills_none", l);
     let t_section_projects = i18n::tr("tl_section_projects", l);
     let t_section_skills = i18n::tr("tl_section_skills", l);
     let t_section_preview = i18n::tr("tl_section_preview", l);
@@ -469,42 +468,91 @@ pub fn Tailor() -> Element {
         opts
     };
 
-    // Skills offered in the `{{skills}}` override picker of the Summaries
-    // drill-down: the last tailored run's skills, re-scored against the JD
-    // and sorted best-first. The first `SUMMARY_SKILLS_CAP` entries are the
-    // "automatic" picks a `{{skills}}` placeholder would expand to; rows
-    // hold (id, name, in-override, is-automatic). Rows beyond the automatic
-    // slice are only listed once the person has explicitly added them.
-    let summary_skill_rows: Vec<(String, String, bool, bool)> = {
+    // Whether the currently chosen summary (Default or a named variant)
+    // contains a `{{skills}}` placeholder at all — the override picker below
+    // only makes sense then. Checks both languages: the placeholder is a
+    // language-agnostic token, so its presence is a per-variant property,
+    // not a per-language one.
+    let summary_has_skills_placeholder = {
+        let text = match summary_choice.read().as_deref() {
+            None => cv.read().personal.summary.clone(),
+            Some(name) => cv
+                .read()
+                .personal
+                .summaries
+                .iter()
+                .find(|s| s.name == *name)
+                .map(|s| s.text.clone())
+                .unwrap_or_else(|| cv.read().personal.summary.clone()),
+        };
+        text.en
+            .contains(cv_generator::services::matcher::SUMMARY_SKILLS_PLACEHOLDER)
+            || text
+                .fr
+                .contains(cv_generator::services::matcher::SUMMARY_SKILLS_PLACEHOLDER)
+    };
+
+    // The "automatic" `{{skills}}` picks: the last tailored run's skills,
+    // re-scored against the JD and truncated to `SUMMARY_SKILLS_CAP`. Empty
+    // before the first run. This is the seed used when the person starts
+    // hand-picking and the list a cleared override returns to.
+    let auto_summary_skill_ids: Vec<String> = last_tailored
+        .read()
+        .as_ref()
+        .map(|t| {
+            cv_generator::services::matcher::sort_skills_by_relevance(
+                &cv.read(),
+                &t.skills,
+                &jd_text.read(),
+            )
+        })
+        .map(|sorted| {
+            sorted
+                .iter()
+                .take(cv_generator::services::matcher::SUMMARY_SKILLS_CAP)
+                .map(|s| s.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // The hand-pickable palette for `{{skills}}`: every CV skill, grouped by
+    // category like the Skills drill-down. Rows hold
+    // (id, name, in-override, is-automatic) so the picker can both show the
+    // algorithm's pre-checks and let the person tick in/out ANY skill — not
+    // just the ones the algorithm kept. `store` order (category, then flat
+    // entries) keeps the render tree a plain `for` over already-computed
+    // groups, matching the `skill_groups` convention below.
+    type SummarySkillGroup = (String, Vec<(String, String, bool, bool)>);
+    let summary_skill_groups: Vec<SummarySkillGroup> = {
         let over = summary_skill_ids.read();
-        let sorted = last_tailored
-            .read()
-            .as_ref()
-            .map(|t| {
-                cv_generator::services::matcher::sort_skills_by_relevance(
-                    &cv.read(),
-                    &t.skills,
-                    &jd_text.read(),
-                )
+        cv_generator::models::SkillCategory::all()
+            .into_iter()
+            .map(|cat| {
+                let entries: Vec<(String, String, bool, bool)> = cv
+                    .read()
+                    .skills
+                    .iter()
+                    .filter(|s| s.category == cat)
+                    .map(|s| {
+                        let id = s.id.clone();
+                        (
+                            id.clone(),
+                            s.name.clone(),
+                            over.contains(&id),
+                            auto_summary_skill_ids.contains(&id),
+                        )
+                    })
+                    .collect();
+                let label = match l {
+                    i18n::Lang::Fr => cat.label_fr().to_string(),
+                    _ => cat.label().to_string(),
+                };
+                (label, entries)
             })
-            .unwrap_or_default();
-        let mut rows = Vec::new();
-        for (i, s) in sorted.iter().enumerate() {
-            let id = s.id.clone();
-            let automatic = i < cv_generator::services::matcher::SUMMARY_SKILLS_CAP;
-            let in_override = over.contains(&id);
-            if automatic || in_override {
-                rows.push((id, s.name.clone(), in_override, automatic));
-            }
-        }
-        rows
+            .filter(|(_, entries)| !entries.is_empty())
+            .collect()
     };
     let summary_override_empty = summary_skill_ids.read().is_empty();
-    let auto_summary_skill_ids: Vec<String> = summary_skill_rows
-        .iter()
-        .filter(|(_, _, _, automatic)| *automatic)
-        .map(|(id, _, _, _)| id.clone())
-        .collect();
 
     // Skills grouped by category for the manual-selection panel, along with
     // each skill's current checked state (live override) and the algorithm's
@@ -1231,92 +1279,116 @@ pub fn Tailor() -> Element {
                                         p { class: "hint", "{t_summary_edit_hint}" }
                                     }
 
-                                    div { class: "field",
-                                        label { class: "label", "{t_summary_skills}" }
-                                        p { class: "hint", "{t_summary_skills_sub}" }
-                                        if summary_skill_rows.is_empty() {
-                                            p { class: "hint", "{t_generate_first}" }
-                                        } else {
-                                            for row in &summary_skill_rows {
-                                                {
-                                                    let row_id = row.0.clone();
-                                                    let row_name = row.1.clone();
-                                                    let row_auto_ids = auto_summary_skill_ids.clone();
-                                                    let in_override = row.2;
-                                                    let is_auto = row.3;
-                                                    let is_checked = in_override
-                                                        || (is_auto && summary_override_empty);
-                                                    rsx! {
-                                                        div { class: "manual-selection-exp-header",
-                                                            label { class: "skill-check",
-                                                                input {
-                                                                    r#type: "checkbox",
-                                                                    name: "job-summary-skills",
-                                                                    checked: is_checked,
-                                                                    onchange: move |e| {
-                                                                        let on = e.value() == "true";
-                                                                        let id = row_id.clone();
-                                                                        let base: Vec<String> = {
-                                                                            let cur = summary_skill_ids.read();
-                                                                            if cur.is_empty() {
-                                                                                row_auto_ids.clone()
-                                                                            } else {
-                                                                                cur.clone()
-                                                                            }
-                                                                        };
-                                                                        let updated: Vec<String> = if on {
-                                                                            if base.contains(&id) {
-                                                                                base
-                                                                            } else {
-                                                                                let mut b = base;
-                                                                                b.push(id);
-                                                                                b
-                                                                            }
-                                                                        } else {
-                                                                            base.into_iter()
-                                                                                .filter(|x| x != &id)
-                                                                                .collect()
-                                                                        };
-                                                                        summary_skill_ids.set(updated);
-                                                                        apply_confirmed.set(false);
-                                                                        persist_current_session(
-                                                                            &job_title.read(),
-                                                                            &jd_text.read(),
-                                                                            *score_mode.read(),
-                                                                            &checked_project_ids.read(),
-                                                                            &checked_skill_ids.read(),
-                                                                            summary_choice.read().clone(),
-                                                                            &summary_skill_ids.read(),
-                                                                        );
+                                    if summary_has_skills_placeholder {
+                                        div { class: "field",
+                                            label { class: "label", "{t_summary_skills}" }
+                                            p { class: "hint", "{t_summary_skills_sub}" }
+                                            if cv.read().skills.is_empty() {
+                                                p { class: "hint", "{t_summary_skills_none}" }
+                                            } else {
+                                                for (cat_label, entries) in &summary_skill_groups {
+                                                    div { class: "manual-selection-exp",
+                                                        div { class: "manual-selection-exp-header", "{cat_label}" }
+                                                        for (sid, sname, in_override, is_auto) in entries {
+                                                            {
+                                                                let sid = sid.clone();
+                                                                let sname = sname.clone();
+                                                                let row_auto_ids = auto_summary_skill_ids.clone();
+                                                                let is_checked = *in_override
+                                                                    || (*is_auto && summary_override_empty);
+                                                                let marker = if is_checked && *is_auto {
+                                                                    "auto"
+                                                                } else if is_checked {
+                                                                    "added"
+                                                                } else if *is_auto {
+                                                                    "removed"
+                                                                } else {
+                                                                    "excluded"
+                                                                };
+                                                                let marker_css = match marker {
+                                                                    "added" => "hand-added",
+                                                                    "removed" => "hand-removed",
+                                                                    "excluded" => "not-selected",
+                                                                    _ => "automatic",
+                                                                };
+                                                                let marker_label = match marker {
+                                                                    "added" => i18n::tr("tl_marker_added", l),
+                                                                    "removed" => i18n::tr("tl_marker_removed", l),
+                                                                    "excluded" => i18n::tr("tl_marker_excluded", l),
+                                                                    _ => i18n::tr("tl_marker_auto", l),
+                                                                };
+                                                                rsx! {
+                                                                    label {
+                                                                        class: "manual-selection-project manual-selection-project-{marker}",
+                                                                        input {
+                                                                            r#type: "checkbox",
+                                                                            checked: is_checked,
+                                                                            onchange: move |e| {
+                                                                                let on = e.checked();
+                                                                                let id = sid.clone();
+                                                                                let base: Vec<String> = {
+                                                                                    let cur = summary_skill_ids.read();
+                                                                                    if cur.is_empty() {
+                                                                                        row_auto_ids.clone()
+                                                                                    } else {
+                                                                                        cur.clone()
+                                                                                    }
+                                                                                };
+                                                                                let updated: Vec<String> = if on {
+                                                                                    if base.contains(&id) {
+                                                                                        base
+                                                                                    } else {
+                                                                                        let mut b = base;
+                                                                                        b.push(id);
+                                                                                        b
+                                                                                    }
+                                                                                } else {
+                                                                                    base.into_iter()
+                                                                                        .filter(|x| x != &id)
+                                                                                        .collect()
+                                                                                };
+                                                                                summary_skill_ids.set(updated);
+                                                                                apply_confirmed.set(false);
+                                                                                persist_current_session(
+                                                                                    &job_title.read(),
+                                                                                    &jd_text.read(),
+                                                                                    *score_mode.read(),
+                                                                                    &checked_project_ids.read(),
+                                                                                    &checked_skill_ids.read(),
+                                                                                    summary_choice.read().clone(),
+                                                                                    &summary_skill_ids.read(),
+                                                                                );
+                                                                            },
+                                                                        }
+                                                                        span { "{sname}" }
+                                                                        span { class: "manual-selection-marker {marker_css}",
+                                                                            "{marker_label}"
+                                                                        }
                                                                     }
-                                                                }
-                                                                span { "{row_name}" }
-                                                                if is_auto && !summary_override_empty {
-                                                                    span { class: "hint", "({t_marker_auto})" }
                                                                 }
                                                             }
                                                         }
                                                     }
                                                 }
-                                            }
-                                            div { class: "manual-selection-actions",
-                                                button {
-                                                    class: "btn-text",
-                                                    disabled: summary_override_empty,
-                                                    onclick: move |_| {
-                                                        summary_skill_ids.set(Vec::new());
-                                                        apply_confirmed.set(false);
-                                                        persist_current_session(
-                                                            &job_title.read(),
-                                                            &jd_text.read(),
-                                                            *score_mode.read(),
-                                                            &checked_project_ids.read(),
-                                                            &checked_skill_ids.read(),
-                                                            summary_choice.read().clone(),
-                                                            &summary_skill_ids.read(),
-                                                        );
-                                                    },
-                                                    "{t_summary_skills_reset}"
+                                                div { class: "manual-selection-actions",
+                                                    button {
+                                                        class: "btn-text",
+                                                        disabled: summary_override_empty,
+                                                        onclick: move |_| {
+                                                            summary_skill_ids.set(Vec::new());
+                                                            apply_confirmed.set(false);
+                                                            persist_current_session(
+                                                                &job_title.read(),
+                                                                &jd_text.read(),
+                                                                *score_mode.read(),
+                                                                &checked_project_ids.read(),
+                                                                &checked_skill_ids.read(),
+                                                                summary_choice.read().clone(),
+                                                                &summary_skill_ids.read(),
+                                                            );
+                                                        },
+                                                        "{t_summary_skills_reset}"
+                                                    }
                                                 }
                                             }
                                         }

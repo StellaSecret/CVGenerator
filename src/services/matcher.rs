@@ -1922,6 +1922,24 @@ mod tests {
             auto.iter().any(|s| s.id == "s-ansible"),
             "empty override must fall back to the automatic relevance order"
         );
+        // Hand-picking is broader than the tailored list: "Baking" is never
+        // JD-related (dropped by the automatic filter), yet a manual override
+        // must still resolve it for the {{skills}} placeholder — the picker
+        // lists every CV skill, not just the algorithm's survivors.
+        let hand_picked = summary_skills_for(
+            &cv,
+            &tailored_skills,
+            "Ansible Deploy",
+            &["s-cooking".to_string()],
+        );
+        assert_eq!(
+            hand_picked
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["s-cooking"],
+            "override must be able to pull in a skill the algorithm dropped"
+        );
     }
 
     #[test]
