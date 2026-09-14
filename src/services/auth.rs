@@ -281,4 +281,12 @@ mod tests {
         assert_eq!(token_expiry_ms(0, 0), 0);
         assert_eq!(token_expiry_ms(10_000, 0), 0);
     }
+
+    #[test]
+    fn now_ms_is_epoch_millis() {
+        // Any real epoch-ms clock is many orders of magnitude above 2, so
+        // both the "replace with 0" and "replace with 1" mutations fail.
+        let now = now_ms();
+        assert!(now > 2, "now_ms must return epoch milliseconds, got {now}");
+    }
 }

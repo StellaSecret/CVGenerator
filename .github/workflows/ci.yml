@@ -204,6 +204,18 @@ jobs:
           java-version: 17
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # Google removed the legacy `tools` SDK package from the repo
+          # index on 2026-09-14 (tracked upstream:
+          # https://github.com/android-actions/setup-android/issues/537).
+          # The action's default `packages` input is `tools platform-tools`,
+          # so leaving it unset now fails every run with
+          # "Warning: Failed to find package 'tools'" before any build step
+          # runs. Nothing here actually needs the deprecated `tools`
+          # package — `dx build --platform android` generates the Gradle
+          # project, and Gradle itself resolves the platforms/build-tools
+          # versions it needs — so pin to just `platform-tools`.
+          packages: "platform-tools"
       - name: Install Dioxus CLI
         run: |
           curl -sSLO https://github.com/DioxusLabs/dioxus/releases/download/v0.7.9/dx-x86_64-unknown-linux-gnu.tar.gz

@@ -25,10 +25,10 @@ jobs:
             # Mutations that are either equivalent or float-cutoff-fragile.
             #
             # Equivalent (provably unobservable):
-            #   526: `tolerance > 0` -> `>=`: tolerance==0 only occurs for words
+            #   528: `tolerance > 0` -> `>=`: tolerance==0 only occurs for words
             #        < 5 chars, where edit distance 0 means an exact match that
             #        `a == b` already returned, so `>= 0` is identical.
-            #   585: `keywords.is_empty() || text.is_empty()` -> `&&`: both
+            #   587: `keywords.is_empty() || text.is_empty()` -> `&&`: both
             #        variants return 0.0 (empty-proceed path still yields
             #        zero matches / zero total weight).
             #
@@ -48,7 +48,14 @@ jobs:
             #               1374/1409 (cap), 1428/1429 (score blend)
             # The behavior is still covered by dedicated tailor_* unit tests,
             # so excluding the mutation here is safe.
-            exclude_re: "(matcher.rs:526|matcher.rs:585|matcher.rs:95[0-7]|matcher.rs:962|matcher.rs:966|matcher.rs:1055|matcher.rs:1077|matcher.rs:1123|matcher.rs:1191|matcher.rs:1206|matcher.rs:1211|matcher.rs:1218|matcher.rs:1226|matcher.rs:1250|matcher.rs:1260|matcher.rs:1270|matcher.rs:1316|matcher.rs:1336|matcher.rs:1374|matcher.rs:1390|matcher.rs:1394|matcher.rs:1409|matcher.rs:1428|matcher.rs:1429|matcher.rs:1451)"
+            # Note: this list otherwise tracks an older revision of the file
+            # and its line numbers have drifted (new tailor_* tests added
+            # since have made most of the "float-cutoff-fragile" entries
+            # below moot — cargo-mutants isn't currently reporting them as
+            # missed regardless of whether this stale regex still matches
+            # them), so it's left as-is rather than guessed at further; only
+            # 528/587 above were re-verified this session.
+            exclude_re: "(matcher.rs:528|matcher.rs:587|matcher.rs:95[0-7]|matcher.rs:962|matcher.rs:966|matcher.rs:1055|matcher.rs:1077|matcher.rs:1123|matcher.rs:1191|matcher.rs:1206|matcher.rs:1211|matcher.rs:1218|matcher.rs:1226|matcher.rs:1250|matcher.rs:1260|matcher.rs:1270|matcher.rs:1316|matcher.rs:1336|matcher.rs:1374|matcher.rs:1390|matcher.rs:1394|matcher.rs:1409|matcher.rs:1428|matcher.rs:1429|matcher.rs:1451)"
           - name: models-i18n
             files: src/models/cv.rs src/i18n_core.rs
             exclude_re: "i18n_core.rs:(24|27|62|97|140)"
@@ -57,7 +64,25 @@ jobs:
             exclude_re: "embeddings.rs:(157|158|159|200|31[89]|33[89])"
           - name: score-duration
             files: src/services/score.rs src/services/skill_duration.rs
-            exclude_re: "(score.rs:(98|107)|skill_duration.rs:111)"
+            # skill_duration.rs:114 (was :111 before doc-comment edits
+            # shifted it): `merge_intervals`'s `month_index(end) >
+            # month_index(last.1)` guard, flipped to `>=`. Equivalent
+            # mutation — this line is only reached once the caller has
+            # already established `start <= last.1 + 1` (the merge branch),
+            # and `month_index` is injective over valid (year, 1..=12)
+            # pairs, so the `end == last.1` case the `>=` variant newly
+            # lets through assigns `last.1` the exact value it already
+            # holds. No observable difference is possible.
+            #
+            # skill_duration.rs:255: `current_year_month`'s
+            # `#[cfg(target_arch = "wasm32")]` branch (`d.get_month() as
+            # u32 + 1`). Same native/wasm32 build-target gap as the
+            # `worker.rs` exclusion above and the pre-existing
+            # `renderer.rs` one below (that one for the same function's
+            # copy in renderer.rs) — this code isn't compiled under the
+            # native `cargo test --lib` cargo-mutants runs here, so no
+            # native test can observe a mutation to it.
+            exclude_re: "(score.rs:(98|107)|skill_duration.rs:(114|255))"
           - name: renderer
             files: src/services/renderer.rs
             # current_year_month's native branch (847-862) is a compile-only
@@ -101,7 +126,28 @@ jobs:
             exclude_re: "(pdf_import.rs:[89][0-9]:|pdf_import.rs:1[0-9][0-9]:|pdf_import.rs:2[0-7][0-9]:|pdf_import.rs:28[0-4]:|2(8[5-9]|9[0-9])|[3-9][0-9]{2}|1[0-4][0-9]{2}|15[0-2][0-9]|pdf_import.rs:20(05|14|17|26|3[01]|36|41|44|49|52|64|67|72|75)|pdf_import.rs:2126|pdf_import.rs:(2194|2197|2198|2199|221[0-9]|222[0-5])|pdf_import.rs:22(39|4[0-4]|69))"
           - name: worker
             files: src/services/worker.rs
-            exclude_re: "worker.rs:(73|77|94|117|130|214)"
+            # `.cargo/mutants.toml` pins the test command to `cargo test
+            # --lib`, a NATIVE build — so the entire
+            # `#[cfg(target_arch = "wasm32")] fn fetch_model_bytes_cached`
+            # block (currently lines 83-157: the outer function plus its
+            # get_cache/fetch_via_cache/response_bytes/response_text
+            # helpers) is compiled out entirely and literally does not exist
+            # in the binary under test. Mutating code that was never
+            # compiled can't be observed by any native test, no matter how
+            # thorough — this isn't equivalence, it's an execution-target
+            # gap. Closing it for real means adding a wasm32-targeted test
+            # run (wasm-bindgen-test + `--target wasm32-unknown-unknown`,
+            # likely a separate CI job/matrix entry, not just more #[test]
+            # fns here) — tracked as follow-up work, not done here.
+            #
+            # NOTE: these line numbers drift whenever doc comments above the
+            # block are edited — re-check them (`grep -n "async fn" worker.rs`)
+            # whenever this exclude starts reporting stale MISSEDs again.
+            # `EmbeddingWorker::load_model` (no wasm32 cfg gate) is
+            # deliberately NOT in this list — it's real, reachable, native
+            # code, and is now covered directly by
+            # `load_model_returns_err_and_leaves_worker_unready_on_bad_input`.
+            exclude_re: "worker.rs:(8[3-9]|9[0-9]|1[0-4][0-9]|15[0-7]):"
           - name: linkedin
             files: src/services/linkedin_import.rs
             # 92: unobservable equivalent mutation in the orchestrator.
@@ -140,7 +186,30 @@ jobs:
             timeout: 1200
           - name: auth-drive
             files: src/services/auth.rs src/services/drive.rs
-            exclude_re: "auth.rs:(28|37|43|53|72|95|104)|drive.rs:(48|49|63|149|201)"
+            # Both files split cleanly into a `#[cfg(target_arch =
+            # "wasm32")]` half (real GIS OAuth / localStorage / Drive HTTP
+            # calls) and a `#[cfg(not(target_arch = "wasm32"))]` half (the
+            # inert stubs actually exercised by `cargo test --lib`, per
+            # `.cargo/mutants.toml`'s native-only test command). Same
+            # build-target gap as the `worker` shard above, not equivalence
+            # — these lines simply aren't compiled into the binary under
+            # test, so no native test can observe a mutation to them.
+            # Closing this for real needs a wasm32-targeted test run
+            # (wasm-bindgen-test etc.), tracked as follow-up, not done here.
+            #
+            # These line numbers drift whenever doc comments shift (the
+            # previous list here was stale against both files by the time
+            # this comment was written) — re-check with
+            # `grep -n '#\[cfg(target_arch = "wasm32")\]' auth.rs drive.rs`
+            # whenever this exclude starts reporting fresh MISSEDs.
+            #
+            # auth.rs: on_token_received(64), get_token(73, plus its
+            # expiry-check `>= ` at 75), set_token(87),
+            # set_token_with_expiry(100), clear_token(107), init(129),
+            # get_gis_oauth2(152), start_oauth(161).
+            # drive.rs: check(81), drive_backup(104), drive_restore(194),
+            # local_export(246).
+            exclude_re: "auth.rs:(64|73|75|87|100|107|129|152|161):|drive.rs:(81|104|194|246):"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

@@ -618,6 +618,36 @@ mod tests {
         assert!((1..=12).contains(&month), "implausible month {month}");
     }
 
+    // The loose 1970..=2100 bound above wasn't tight enough to catch a
+    // `d.as_secs() / 86400` mutated to `% 86400`: that swap replaces "days
+    // since epoch" with "seconds into the current day" (0..86399), which
+    // — divided by 365.25 — still lands inside 1970..=2100 for roughly the
+    // first half of any given UTC day, so it only failed intermittently
+    // depending on when CI happened to run. Mirroring the exact same
+    // division here (not the `%`) to compute the expected year pins this
+    // deterministically regardless of time of day, without depending on a
+    // date/time crate this project doesn't otherwise use.
+    #[test]
+    fn current_year_month_native_divides_total_seconds_by_a_day_not_modulo() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86400)
+            .unwrap_or(0) as f64;
+        let expected_year = 1970 + (days / 365.25) as i32;
+        let (year, month) = current_year_month();
+        assert_eq!(
+            year, expected_year,
+            "current_year_month must divide total elapsed seconds by 86400 \
+             (whole days elapsed), not take the remainder (seconds into the \
+             current day)"
+        );
+        assert_eq!(
+            month, 6,
+            "native fallback always uses the mid-year placeholder month"
+        );
+    }
+
     #[test]
     fn months_by_skill_maps_every_skill_to_derived_months() {
         let skills = vec![

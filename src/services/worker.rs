@@ -289,11 +289,9 @@ mod tests {
     /// no-op waker is sufficient; no need to pull in `pollster`/`futures`
     /// just for this).
     ///
-    /// Currently unused (the wiring test below uses `inject_engine_for_test`
-    /// instead, to avoid depending on real candle model loading), but kept
-    /// available — useful once real weights are available for a test that
-    /// exercises the actual `load_model`/`fetch_and_load_model` async path.
-    #[allow(dead_code)]
+    /// Used by `load_model_returns_err_and_leaves_worker_unready_on_bad_input`
+    /// below to drive the real (non-mocked) `load_model` async path without
+    /// pulling in `pollster`/`futures` just for one test.
     fn block_on<F: std::future::Future>(mut fut: F) -> F::Output {
         use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
         fn noop(_: *const ()) {}
@@ -382,6 +380,32 @@ mod tests {
         assert!(
             worker.is_ready(),
             "worker must still own its engine after tailor_with_embeddings"
+        );
+    }
+
+    // `load_model` itself has no `#[cfg(target_arch = "wasm32")]` gate — only
+    // `fetch_model_bytes_cached` (which supplies its bytes) does — so, unlike
+    // that function, it's fully reachable from a native `cargo test`. Every
+    // other test above deliberately bypasses it via `inject_engine_for_test`
+    // to avoid exercising real candle model loading, which left it as the
+    // one mutant `cargo-mutants` could reach but nothing actually called:
+    // stubbing its whole body to `Ok(())` compiled and passed the rest of
+    // the suite. Malformed `config_json` fails fast in
+    // `EmbeddingEngine::load`'s first parsing step (before touching
+    // `model_bytes`/`tokenizer_json` at all — see embeddings.rs), so this
+    // needs no real model weights to genuinely exercise the function and
+    // distinguish it from an unconditional `Ok(())`.
+    #[test]
+    fn load_model_returns_err_and_leaves_worker_unready_on_bad_input() {
+        let mut worker = EmbeddingWorker::new();
+        let result = block_on(worker.load_model(&[], "not valid json", "not valid json"));
+        assert!(
+            result.is_err(),
+            "malformed config must fail to load, got {result:?}"
+        );
+        assert!(
+            !worker.is_ready(),
+            "a failed load must not leave the worker holding an engine"
         );
     }
 

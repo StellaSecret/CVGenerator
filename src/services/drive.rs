@@ -57,21 +57,37 @@ pub fn restore_from_json(json: &str) -> Result<RestoredData, String> {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+/// Triage a Drive HTTP status into the error to surface, or `None` for
+/// success. Kept free of `reqwest` types (a wasm-only dependency) so it
+/// compiles and is unit-testable on native, where the async `check` wrapper
+/// can't run.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn drive_error_from_status(status: u16, body: &str) -> Option<String> {
+    if (200..400).contains(&status) {
+        return None;
+    }
+    if status == 401 {
+        // Stored token refused: it's dead. Scrub it so the UI drops back
+        // to a clean signed-out state and the user can re-auth, instead of
+        // hitting the same 401 forever.
+        crate::services::auth::clear_token();
+        return Some(crate::services::auth::AUTH_EXPIRED_ERR.to_string());
+    }
+    Some(format!("HTTP {status}: {body}"))
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn check(resp: reqwest::Response) -> Result<reqwest::Response, String> {
     let status = resp.status();
-    if !status.is_success() {
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            // Stored token refused: it's dead. Scrub it so the UI drops
-            // back to a clean signed-out state and the user can re-auth,
-            // instead of hitting the same 401 forever.
-            crate::services::auth::clear_token();
-            return Err(crate::services::auth::AUTH_EXPIRED_ERR.to_string());
-        }
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {status}: {body}"));
+    if status.is_success() {
+        return Ok(resp);
     }
-    Ok(resp)
+    let body = resp.text().await.unwrap_or_default();
+    match drive_error_from_status(status.as_u16(), &body) {
+        Some(err) => Err(err),
+        // `None` is unreachable for a non-success status; kept for totality.
+        None => Err(format!("HTTP {status}: {body}")),
+    }
 }
 
 // ── Drive: backup ─────────────────────────────────────────────────────────────
@@ -441,5 +457,28 @@ mod tests {
             now > 60_000,
             "now_ms must return real epoch milliseconds, got {now}"
         );
+    }
+
+    #[test]
+    fn drive_error_marks_401_as_expired() {
+        // The mutated `status == 401` → `status != 401` branch would answer
+        // a generic "HTTP 401" message instead of the expiry marker.
+        assert_eq!(
+            drive_error_from_status(401, "Token expired"),
+            Some(crate::services::auth::AUTH_EXPIRED_ERR.to_string())
+        );
+    }
+
+    #[test]
+    fn drive_error_accepts_success_statuses() {
+        assert_eq!(drive_error_from_status(200, ""), None, "200 must pass");
+        assert_eq!(drive_error_from_status(299, "x"), None, "299 must pass");
+    }
+
+    #[test]
+    fn drive_error_reports_other_statuses() {
+        let err = drive_error_from_status(404, "gone").expect("404 must error");
+        assert!(err.contains("404"), "got {err}");
+        assert!(err.contains("gone"), "got {err}");
     }
 }

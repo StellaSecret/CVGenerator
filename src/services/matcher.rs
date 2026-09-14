@@ -3479,4 +3479,581 @@ mod tests {
         let result = tailor_cv(&cv, "rust");
         assert_exactly_two_without_fallback(&result);
     }
+
+    // ── `tailor_cv`'s inline mean-floor cutoff (mean_score / cutoff math) ─────
+    //
+    // Deliberately declared out of score order (mid, low, top1, top2) so that
+    // the experience-selection fallback (`selected_ids.len() < 2` — see
+    // below) would pick a visibly *different* pair (mid, low) than the
+    // correct relevance-based pair (top1, top2) if it wrongly fired. That
+    // makes this fixture sensitive to several distinct mutations at once:
+    //   - `mean_score = sum / len` corrupted to `sum * len` or `sum % len`
+    //     inflates the cutoff far past every real score (all scores are
+    //     bounded in [0, 1], but a product/modulo of them against `len` is
+    //     not), so nothing clears it and the fallback wrongly fires.
+    //   - `max_score * REL_THRESHOLD` corrupted to `+` or `/` similarly
+    //     produces a fixed-cutoff component far outside [0, 1], forcing the
+    //     same wrong fallback.
+    //   - the experience filter's `&&` loosened to `||` wrongly keeps `mid`
+    //     (it clears the `> 0.0` guard even though it doesn't clear the
+    //     cutoff).
+    //   - the filter's first `> 0.0` flipped to `==`/`<` wrongly excludes
+    //     everything (top1/top2 are nonzero, so they fail `== 0.0`/`< 0.0`),
+    //     which also wrongly fires the fallback.
+    //   - the filter's `>= cutoff` flipped to `< cutoff` inverts who passes,
+    //     wrongly keeping `mid` and dropping `top1`/`top2`.
+    //   - the fallback guard `< 2` loosened to `<= 2` wrongly re-triggers
+    //     even though exactly 2 experiences already passed, pulling in the
+    //     first two *declared* experiences (mid, low) on top of the correct
+    //     pair.
+    // Any one of these collapses the result away from the exact {top1, top2}
+    // pair asserted below.
+    fn mean_floor_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            experiences: vec![
+                Experience {
+                    id: "e-mid".to_string(),
+                    company: "Mid".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-low".to_string(),
+                    company: "Low".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("delta")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-top1".to_string(),
+                    company: "Top1".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta gamma")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-top2".to_string(),
+                    company: "Top2".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta gamma")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_plain_mean_floor_cutoff_selects_exactly_the_full_matches() {
+        let cv = mean_floor_fixture();
+        let result = tailor_cv(&cv, "alpha beta gamma");
+        let mut ids: Vec<&str> = result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["e-top1", "e-top2"],
+            "mean-floor cutoff must exclude the partial ('e-mid') and \
+             non-matching ('e-low') experiences, got {ids:?}"
+        );
+    }
+
+    // Pins the `> 0.0` half of the experience filter specifically against a
+    // `>= 0.0` mutation. With every experience scoring exactly 0.0 (no JD
+    // keyword present anywhere), `max_score` and `cutoff` are both 0.0, so a
+    // `>= 0.0` guard would wrongly let every zero-scoring experience through
+    // (0.0 >= 0.0 is true), instead of correctly falling through to the
+    // "keep first two declared" fallback.
+    #[test]
+    fn tailor_plain_all_zero_scores_uses_fallback_not_a_zero_cutoff_pass() {
+        use crate::models::cv::LocalizedText as LT;
+        let cv = LifetimeCV {
+            experiences: vec![
+                Experience {
+                    id: "e1".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("accounting")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e2".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("bookkeeping")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e3".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("taxes")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let result = tailor_cv(&cv, "rust");
+        assert_eq!(
+            result.tailored.experiences.len(),
+            2,
+            "with a 0.0 cutoff, `> 0.0` must still exclude every zero-scoring \
+             experience and fall back to keeping exactly the first two \
+             declared, not let all of them through"
+        );
+    }
+
+    // ── `tailor_cv`'s top-level project filter (`score > 0.0`) ────────────────
+    #[test]
+    fn tailor_plain_top_level_projects_filtered_by_positive_score() {
+        let cv = LifetimeCV {
+            projects: vec![
+                Project {
+                    id: "p-match".to_string(),
+                    name: "alpha project".to_string(),
+                    ..Default::default()
+                },
+                Project {
+                    id: "p-nomatch".to_string(),
+                    name: "unrelated".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let result = tailor_cv(&cv, "alpha");
+        let ids: Vec<&str> = result
+            .tailored
+            .projects
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["p-match"],
+            "only the positively-scoring project must survive; a `>` flipped \
+             to `<` would drop every project (scores are never negative), \
+             got {ids:?}"
+        );
+    }
+
+    // ── `tailor_cv_with_scorer`'s mode gate on the experience mean floor ──────
+    //
+    // Rather than hand-predicting exact scores (stemming/bigram-trigram
+    // term extraction and TF-IDF weighting make that unreliable to do by
+    // hand — an earlier version of this test tried and got it wrong), this
+    // derives the expected floor-vs-no-floor selection by calling the same
+    // `score_experience`/`select_by_relative_cutoff` primitives
+    // `tailor_cv_with_scorer` itself calls, independent of its mode-gate
+    // wiring (the one piece actually under test). It self-checks that the
+    // fixture genuinely exercises a floor-vs-no-floor difference before
+    // asserting anything about `tailor_cv_with_scorer`, so a fixture that
+    // stops producing that difference fails loudly with a diagnosis rather
+    // than silently passing (or wrongly failing) mutant-blind.
+    //
+    // Exactly 2 full matches ("top") and 2 identical partial matches
+    // ("mid", missing only the JD's last word) is deliberate, not just a
+    // round number: with N identical top scores (all == max) and M
+    // identical mid scores (all == some value < max), the mean is exactly
+    // the count-weighted average of max and mid, which — for ANY mid <
+    // max — always lands strictly between them. So "mid" is guaranteed to
+    // sit below the mean-floor cutoff without needing to predict its exact
+    // score by hand (multi-word term extraction and TF-IDF weighting make
+    // that unreliable — see the two earlier, wrong attempts at this test).
+    // The only thing that must hold empirically is that "mid" (missing
+    // just one of five words) still clears the much lower *fixed* cutoff
+    // (0.5 * max) — checked by the self-check assertion below rather than
+    // assumed.
+    fn mode_gate_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            experiences: vec![
+                // Declared mid-first, top-last: deliberate, not arbitrary —
+                // `tailor_scorer_exactly_two_selected_does_not_trigger_min_two_fallback`
+                // below relies on the fallback's "first two *declared*"
+                // pick being visibly wrong (mid1, mid2) if it wrongly
+                // fires, which only works if the correct answer (top1,
+                // top2) ISN'T also the first two in declaration order.
+                Experience {
+                    id: "e-mid1".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta gamma delta")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-mid2".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta gamma delta")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-top1".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta gamma delta epsilon")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Experience {
+                    id: "e-top2".to_string(),
+                    projects: vec![ExperienceProject {
+                        bullets: vec![LT::same("alpha beta gamma delta epsilon")],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_scorer_keyword_mode_keeps_strictly_more_than_hybrid_mode() {
+        use crate::services::score::{ScoreMode, Scorer};
+        let cv = mode_gate_fixture();
+        let jd = "alpha beta gamma delta epsilon";
+
+        // Reconstruct the real per-experience keyword scores exactly the
+        // way `tailor_cv_with_scorer` does internally (same top_keywords
+        // and corpus-built Idf), then apply `select_by_relative_cutoff`
+        // with the floor on and off directly — this exercises the shared
+        // cutoff helper (already covered by its own dedicated tests) but
+        // NOT the mode-gate line inside `tailor_cv_with_scorer`, keeping
+        // that one thing genuinely independent of what's under test.
+        let keywords = extract_keywords(jd);
+        let top_keywords: Vec<(String, usize)> = keywords.iter().take(40).cloned().collect();
+        let mut probe = Scorer::new(ScoreMode::Keyword);
+        probe.idf = Idf::build(&cv_documents(&cv));
+        let scores: Vec<f32> = cv
+            .experiences
+            .iter()
+            .map(|e| probe.score_experience(e, &top_keywords, None, &cv.skills))
+            .collect();
+        const REL_THRESHOLD: f32 = 0.5;
+        let no_floor = select_by_relative_cutoff(&scores, REL_THRESHOLD, false);
+        let with_floor = select_by_relative_cutoff(&scores, REL_THRESHOLD, true);
+        assert!(
+            no_floor.len() > with_floor.len() && with_floor.len() >= 2,
+            "fixture must exercise a floor-vs-no-floor difference without \
+             either side needing the separate min-two fallback (which would \
+             make this test's comparison meaningless): scores={scores:?} \
+             no_floor={no_floor:?} with_floor={with_floor:?} — adjust the \
+             fixture if this fails"
+        );
+
+        // With that confirmed, `tailor_cv_with_scorer` in Keyword mode
+        // (no floor) must select strictly more experiences than in Hybrid
+        // mode (floor applied) — Hybrid's embedding term is 0 with no
+        // engine/jd_embedding here, which uniformly scales every keyword
+        // score by the same constant and so cannot itself change which
+        // experiences clear the cutoff; only the mode gate can.
+        let mut kw = Scorer::new(ScoreMode::Keyword);
+        let mut hybrid = Scorer::new(ScoreMode::Hybrid);
+        let kw_result = tailor_cv_with_scorer(&cv, jd, &mut kw, None);
+        let hy_result = tailor_cv_with_scorer(&cv, jd, &mut hybrid, None);
+        let kw_ids: HashSet<&str> = kw_result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        let hy_ids: HashSet<&str> = hy_result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        assert!(
+            kw_ids.len() > hy_ids.len(),
+            "Keyword mode (no mean floor) must keep strictly more \
+             experiences than Hybrid mode (mean floor applied) here: \
+             kw={kw_ids:?} hy={hy_ids:?}"
+        );
+    }
+
+    // ── `tailor_cv_with_scorer`'s min-two fallback guard (`< 2`) ──────────────
+    //
+    // There's already a `tailor_scorer_exactly_two_selected_does_not_trigger_
+    // min_two_fallback` test (Keyword mode, `three_tier_fixture`) covering
+    // this same line — this one is kept alongside it, not merged in, because
+    // it exercises the same guard via a genuinely different path: Hybrid
+    // mode's mean floor (rather than Keyword's fixed-fraction cutoff)
+    // landing on exactly 2, using `mode_gate_fixture` in a mode the other
+    // test doesn't touch.
+    //
+    // Reuses `mode_gate_fixture` in Hybrid mode, where the mean floor
+    // already trims it to exactly the two full matches (top1, top2) — see
+    // the self-check in the test above. Exactly 2 is the boundary value: a
+    // `< 2` guard flipped to `<= 2` would wrongly re-fire here even though
+    // two experiences already legitimately passed, pulling in the fixture's
+    // first two *declared* experiences (mid1, mid2 — see the comment on
+    // `mode_gate_fixture` for why it's ordered that way) on top of the
+    // correct pair.
+    #[test]
+    fn tailor_scorer_hybrid_exactly_two_selected_does_not_trigger_min_two_fallback() {
+        use crate::services::score::{ScoreMode, Scorer};
+        let cv = mode_gate_fixture();
+        let jd = "alpha beta gamma delta epsilon";
+        let mut hybrid = Scorer::new(ScoreMode::Hybrid);
+        let result = tailor_cv_with_scorer(&cv, jd, &mut hybrid, None);
+        let mut ids: Vec<&str> = result
+            .tailored
+            .experiences
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["e-top1", "e-top2"],
+            "exactly two experiences pass the mean-floor cutoff; the `< 2` \
+             fallback guard must not re-fire and pull in extra \
+             declared-order experiences, got {ids:?}"
+        );
+    }
+
+    // ── `tailor_cv_with_scorer`'s mode gate on the *project*-level mean floor ─
+    //
+    // Same "always strictly between" trick as the experience-level mode-gate
+    // test above, one level down: within a single experience's projects,
+    // 2 full matches + 2 identical partial matches means the mean is
+    // guaranteed to sit strictly between them, so "mid" always falls below
+    // the floor regardless of its exact score. The self-check below still
+    // verifies empirically that "mid" clears the (higher, 0.7×max) fixed
+    // cutoff used at the project level before asserting anything about
+    // `tailor_cv_with_scorer` — an 8-word JD with "mid" missing only the
+    // last word keeps its fractional loss small, but this is exactly the
+    // kind of assumption that's gone wrong twice already in this file, so
+    // it isn't trusted blindly here either.
+    fn project_mode_gate_fixture() -> LifetimeCV {
+        use crate::models::cv::LocalizedText as LT;
+        LifetimeCV {
+            experiences: vec![Experience {
+                id: "e1".to_string(),
+                // >1 project is required for the project-level cutoff loop
+                // to run at all (`if exp.projects.len() <= 1 { continue }`).
+                projects: vec![
+                    ExperienceProject {
+                        id: "p-top1".to_string(),
+                        bullets: vec![LT::same("alpha beta gamma delta epsilon zeta eta theta")],
+                        ..Default::default()
+                    },
+                    ExperienceProject {
+                        id: "p-top2".to_string(),
+                        bullets: vec![LT::same("alpha beta gamma delta epsilon zeta eta theta")],
+                        ..Default::default()
+                    },
+                    ExperienceProject {
+                        id: "p-mid1".to_string(),
+                        bullets: vec![LT::same("alpha beta gamma delta epsilon zeta eta")],
+                        ..Default::default()
+                    },
+                    ExperienceProject {
+                        id: "p-mid2".to_string(),
+                        bullets: vec![LT::same("alpha beta gamma delta epsilon zeta eta")],
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tailor_scorer_project_keyword_mode_keeps_strictly_more_than_hybrid_mode() {
+        use crate::services::score::{ScoreMode, Scorer};
+        let cv = project_mode_gate_fixture();
+        let jd = "alpha beta gamma delta epsilon zeta eta theta";
+        const PROJECT_REL_THRESHOLD: f32 = 0.7;
+
+        // Reconstruct the real per-project keyword scores the same way
+        // `tailor_cv_with_scorer` does internally, independent of its
+        // project-level mode gate (the one thing actually under test).
+        let keywords = extract_keywords(jd);
+        let top_keywords: Vec<(String, usize)> = keywords.iter().take(40).cloned().collect();
+        let mut probe = Scorer::new(ScoreMode::Keyword);
+        probe.idf = Idf::build(&cv_documents(&cv));
+        let exp = &cv.experiences[0];
+        let shared_tools = pooled_tools(&exp.projects, &cv.skills);
+        let scores: Vec<f32> = exp
+            .projects
+            .iter()
+            .map(|p| probe.score_experience_project(p, &top_keywords, None, &shared_tools))
+            .collect();
+        let no_floor = select_by_relative_cutoff(&scores, PROJECT_REL_THRESHOLD, false);
+        let with_floor = select_by_relative_cutoff(&scores, PROJECT_REL_THRESHOLD, true);
+        assert!(
+            no_floor.len() > with_floor.len(),
+            "fixture must exercise a project-level floor-vs-no-floor \
+             difference: scores={scores:?} no_floor={no_floor:?} \
+             with_floor={with_floor:?} — adjust the fixture if this fails"
+        );
+
+        let mut kw = Scorer::new(ScoreMode::Keyword);
+        let mut hybrid = Scorer::new(ScoreMode::Hybrid);
+        let kw_result = tailor_cv_with_scorer(&cv, jd, &mut kw, None);
+        let hy_result = tailor_cv_with_scorer(&cv, jd, &mut hybrid, None);
+        let kw_proj_ids: HashSet<&str> = kw_result.tailored.experiences[0]
+            .projects
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        let hy_proj_ids: HashSet<&str> = hy_result.tailored.experiences[0]
+            .projects
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(
+            kw_proj_ids.len() > hy_proj_ids.len(),
+            "Keyword mode (no project-level mean floor) must keep strictly \
+             more projects than Hybrid mode (floor applied) here: \
+             kw={kw_proj_ids:?} hy={hy_proj_ids:?}"
+        );
+    }
+
+    // ── `tailor_cv_with_scorer`'s top-level project filter (`score > 0.0`) ────
+    #[test]
+    fn tailor_scorer_top_level_projects_filtered_by_positive_score() {
+        let cv = LifetimeCV {
+            projects: vec![
+                Project {
+                    id: "p-match".to_string(),
+                    name: "alpha project".to_string(),
+                    ..Default::default()
+                },
+                Project {
+                    id: "p-nomatch".to_string(),
+                    name: "unrelated".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, "alpha", &mut scorer, None);
+        let ids: Vec<&str> = result
+            .tailored
+            .projects
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["p-match"],
+            "only the positively-scoring project must survive; a `>` flipped \
+             to `<` would drop every project (scores are never negative), \
+             got {ids:?}"
+        );
+    }
+
+    // ── `mean_skill_score` must be a true average, not a product ─────────────
+    //
+    // With exactly one contributing skill, `sum / len` and `sum * len`
+    // coincide (dividing or multiplying by 1 is a no-op), so a single-skill
+    // fixture can't distinguish them — this needs at least two skills with
+    // nonzero, unequal-looking scores. Rather than hand-predicting exact
+    // scores (stemming/synonym normalization and multi-word term extraction
+    // make that unreliable by hand — an earlier version of this test tried
+    // and got the wrong constant), this derives the expected mean by calling
+    // `score_skill` directly with the same keywords/Idf construction
+    // `tailor_cv_with_scorer` uses internally, then compares that
+    // independently-derived mean against the actual `match_score`. With no
+    // experiences or projects in this fixture, skills are the only
+    // contributor to `match_score`, so it equals `mean_skill_score` exactly.
+    #[test]
+    fn tailor_scorer_mean_skill_score_is_a_true_average_not_a_product() {
+        let cv = LifetimeCV {
+            skills: vec![
+                Skill {
+                    id: "s-alpha".to_string(),
+                    name: "alpha".to_string(),
+                    ..Default::default()
+                },
+                Skill {
+                    id: "s-beta".to_string(),
+                    name: "beta".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let jd = "alpha beta";
+        let keywords = extract_keywords(jd);
+        let idf = Idf::build(&cv_documents(&cv));
+        let scores: Vec<f32> = cv
+            .skills
+            .iter()
+            .map(|s| score_skill(s, &keywords, &idf))
+            .collect();
+        assert!(
+            scores.iter().all(|&s| s > 0.0),
+            "fixture must produce nonzero per-skill scores to test with: {scores:?}"
+        );
+        let expected_mean = scores.iter().sum::<f32>() / scores.len() as f32;
+
+        let mut scorer = scorer_keyword();
+        let result = tailor_cv_with_scorer(&cv, jd, &mut scorer, None);
+        assert!(
+            (result.tailored.match_score - expected_mean).abs() < 1e-4,
+            "match_score must equal the true average of per-skill scores \
+             ({expected_mean}), got {} (per-skill scores were {scores:?})",
+            result.tailored.match_score
+        );
+    }
+
+    // ── `cv_documents` ─────────────────────────────────────────────────────
+    //
+    // Pins that it actually walks the CV and returns one real document per
+    // scorable block, not a stub. `vec![]`, `vec![vec![]]`, and
+    // `vec![vec![String::new()]]` are all caught by the emptiness/content
+    // checks below; `vec![vec!["xyzzy".into()]]` is caught by checking the
+    // returned terms actually reflect the CV's own text, not fixed filler.
+    #[test]
+    fn cv_documents_returns_one_real_document_per_scorable_block() {
+        let cv = fixture_cv();
+        let docs = cv_documents(&cv);
+        // fixture_cv has 2 experience-project bullets-blocks (one per
+        // experience), 1 top-level project, and 3 skills = 6 scorable
+        // blocks.
+        assert_eq!(
+            docs.len(),
+            6,
+            "expected one document per scorable block, got {docs:?}"
+        );
+        assert!(
+            docs.iter().all(|d| !d.is_empty()),
+            "every document must contain real extracted terms, not be empty: {docs:?}"
+        );
+        assert!(
+            docs.iter()
+                .any(|d| d.iter().any(|t| t.contains("rust") || t == "rust")),
+            "documents must reflect the CV's actual text, not fixed filler: {docs:?}"
+        );
+        assert!(
+            docs.iter().all(|d| !d.iter().any(|t| t == "xyzzy")),
+            "documents must not contain unrelated filler text: {docs:?}"
+        );
+    }
 }
