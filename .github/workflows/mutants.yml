@@ -21,7 +21,7 @@ jobs:
       matrix:
         include:
           - name: matcher
-            files: src/services/matcher.rs
+            files: src/services/matcher/mod.rs
             # Mutations that are either equivalent or float-cutoff-fragile.
             #
             # Equivalent (provably unobservable):
@@ -55,7 +55,7 @@ jobs:
             # missed regardless of whether this stale regex still matches
             # them), so it's left as-is rather than guessed at further; only
             # 528/587 above were re-verified this session.
-            exclude_re: "(matcher.rs:528|matcher.rs:587|matcher.rs:95[0-7]|matcher.rs:962|matcher.rs:966|matcher.rs:1055|matcher.rs:1077|matcher.rs:1123|matcher.rs:1191|matcher.rs:1206|matcher.rs:1211|matcher.rs:1218|matcher.rs:1226|matcher.rs:1250|matcher.rs:1260|matcher.rs:1270|matcher.rs:1316|matcher.rs:1336|matcher.rs:1374|matcher.rs:1390|matcher.rs:1394|matcher.rs:1409|matcher.rs:1428|matcher.rs:1429|matcher.rs:1451)"
+            exclude_re: "(matcher/mod.rs:528|matcher/mod.rs:587|matcher/mod.rs:95[0-7]|matcher/mod.rs:962|matcher/mod.rs:966|matcher/mod.rs:1055|matcher/mod.rs:1077|matcher/mod.rs:1123|matcher/mod.rs:1191|matcher/mod.rs:1206|matcher/mod.rs:1211|matcher/mod.rs:1218|matcher/mod.rs:1226|matcher/mod.rs:1250|matcher/mod.rs:1260|matcher/mod.rs:1270|matcher/mod.rs:1316|matcher/mod.rs:1336|matcher/mod.rs:1374|matcher/mod.rs:1390|matcher/mod.rs:1394|matcher/mod.rs:1409|matcher/mod.rs:1428|matcher/mod.rs:1429|matcher/mod.rs:1451)"
           - name: models-i18n
             files: src/models/cv.rs src/i18n_core.rs
             exclude_re: "i18n_core.rs:(24|27|62|97|140)"

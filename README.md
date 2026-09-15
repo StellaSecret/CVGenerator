@@ -36,7 +36,7 @@ src/
 │   └── cv.rs             All data structs (LifetimeCV, Experience, Skill…)
 ├── services/
 │   ├── storage.rs        localStorage (web) / JSON file (mobile)
-│   ├── matcher.rs        JD keyword extraction + relevance scoring
+│   ├── matcher/           JD keyword extraction + relevance scoring (mod.rs + tests.rs)
 │   └── renderer.rs       HTML CV template generator
 └── views/
     ├── home.rs           Dashboard with completion status
