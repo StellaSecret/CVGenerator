@@ -383,6 +383,14 @@ fn ExpExperienceView(
     let eid_loop = exp_id.clone();
 
     let all_skills = cv.read().skills.clone();
+    // `exp_i.unwrap()` appears in several onclick closures below (project
+    // reorder/delete). That's safe: `exp_i` and `exp` are both derived from
+    // the identical `id == exp_id` predicate over the same `cv.read()`
+    // snapshot, so the `let Some(exp) = ... else { return ... }` guard just
+    // below proves `exp_i` is `Some` for the rest of this render — and the
+    // buttons that close over it can only be clicked while this same
+    // component instance (for this exact `exp_id`) is still mounted, before
+    // any experience-list-level deletion elsewhere could invalidate it.
     let exp_i = cv.read().experiences.iter().position(|e| e.id == exp_id);
     let Some(exp) = cv
         .read()

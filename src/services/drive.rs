@@ -35,6 +35,16 @@ pub fn build_backup(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) -> Str
         cv: cv.clone(),
         saved_sessions: saved_sessions.to_vec(),
     };
+    // `.expect()` here (rather than propagating a `Result`, as this file's
+    // Drive-facing functions below do) is deliberate, not an oversight:
+    // `serde_json::to_string_pretty` can only fail on a plain derived-
+    // `Serialize` struct tree like `BackupData` if it contains a non-finite
+    // float or a non-string map key. The only `f32` reachable from here is
+    // `TailoringSession::match_score`/`TailoredCV::match_score`, and both
+    // are computed exclusively through `matcher.rs`'s `weight_total > 0.0`-
+    // guarded division (see `mean_score`/`mean_skill_score`/`match_score`
+    // in matcher/mod.rs), so it can never be NaN — this really is
+    // infallible in practice, not just assumed to be.
     serde_json::to_string_pretty(&data).expect("BackupData serialization failed")
 }
 

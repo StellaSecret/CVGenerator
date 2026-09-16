@@ -9,7 +9,17 @@ const CV_KEY: &str = "cv_generator_lifetime_cv";
 #[cfg(target_arch = "wasm32")]
 pub fn save_cv(cv: &LifetimeCV) {
     use gloo_storage::{LocalStorage, Storage};
-    LocalStorage::set(CV_KEY, cv).expect("Failed to persist CV to localStorage");
+    // Was `.expect(...)`, which panicked the whole tab on any storage
+    // failure (quota exceeded, private-browsing restrictions, storage
+    // disabled by the user/browser) — the single most consequential write
+    // in the app (the person's actual CV, vs. the auto-saved session state
+    // below) was the one place that could still crash on a failed save,
+    // inconsistent with every sibling function in this file already
+    // degrading gracefully. A failed save here means the in-memory CV
+    // (still fully usable for the rest of the session) just won't survive
+    // a reload — worth surfacing to the person eventually, but silently
+    // dropping it is strictly better than losing the whole app to a panic.
+    let _ = LocalStorage::set(CV_KEY, cv);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -78,8 +88,15 @@ fn data_path() -> std::path::PathBuf {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_cv(cv: &LifetimeCV) {
-    let json = serde_json::to_string_pretty(cv).expect("serialisation failed");
-    std::fs::write(data_path(), json).expect("failed to write CV file");
+    // See the wasm32 `save_cv` above for why this degrades gracefully
+    // instead of `.expect()`-panicking: a failed write (disk full,
+    // permissions, missing directory) shouldn't crash the app over a save
+    // that can just be retried, and every sibling function in this file
+    // (`save_current_session`, `save_sessions_list`) already follows this
+    // same pattern.
+    if let Ok(json) = serde_json::to_string_pretty(cv) {
+        let _ = std::fs::write(data_path(), json);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
