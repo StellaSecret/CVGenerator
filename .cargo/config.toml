@@ -1,2 +1,12 @@
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+# Lets `cargo test --target wasm32-unknown-unknown` (and `cargo mutants
+# ... -C --target=wasm32-unknown-unknown`, used by the `wasm-*` shards in
+# .github/workflows/mutants.yml) actually run the `#[wasm_bindgen_test]`
+# tests in auth.rs/drive.rs/worker.rs/skill_duration.rs, instead of failing
+# to find a way to execute a wasm32 test binary at all. Picks up a
+# `chromedriver`/`geckodriver` on PATH or pointed to by the CHROMEDRIVER
+# env var; CI sets that up before running the wasm shards. Needs
+# `wasm-bindgen-cli` installed (matching the project's `wasm-bindgen`
+# version) for the `wasm-bindgen-test-runner` binary to exist at all.
+runner = "wasm-bindgen-test-runner"

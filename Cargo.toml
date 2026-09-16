@@ -69,3 +69,21 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# Enables real-browser `#[wasm_bindgen_test]` tests for the localStorage/
+# CacheStorage/DOM-touching code in auth.rs, worker.rs, drive.rs, and
+# skill_duration.rs that `#[cfg(not(target_arch = "wasm32"))]`-gates away
+# from a native `cargo test --lib` entirely — run via
+# `wasm-pack test --headless --chrome` (see the `wasm-*` shards in
+# `.github/workflows/mutants.yml`).
+wasm-bindgen-test = "0.3"
+# Lets `#[cfg_attr(test, mutants::skip)]` compile: with the cfg_attr form
+# (as opposed to a bare `#[mutants::skip]`), the `mutants` crate only needs
+# to be a dev-dependency, not a full one — see https://mutants.rs/attrs.html.
+# Needed here specifically because `cfg(test)` only becomes true (and so
+# `mutants::skip` only needs to resolve at all) for the wasm32 *test*
+# build, not the normal wasm32 app build — hence scoping it to this
+# wasm32-only dev-dependencies table rather than the top-level one.
+mutants = "0.0.3"
+

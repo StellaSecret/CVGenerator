@@ -87,6 +87,14 @@ fn drive_error_from_status(status: u16, body: &str) -> Option<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
+// Takes a `reqwest::Response`, which — unlike `web_sys::Response` in
+// worker.rs — has no public constructor for a synthetic instance outside
+// an actual `reqwest::Client` request/response round trip, so there's no
+// equivalent to worker.rs's `synthetic_response` helper available here
+// without either a real network call or a mock HTTP server. Skipped for
+// that reason, same as `drive_backup`/`drive_restore` below (its only
+// callers), all of which hit the real Google Drive API.
+#[cfg_attr(test, mutants::skip)]
 async fn check(resp: reqwest::Response) -> Result<reqwest::Response, String> {
     let status = resp.status();
     if status.is_success() {
@@ -106,6 +114,9 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response, String> {
 /// Creates the file on first run; patches it on subsequent runs.
 /// Returns the Drive file ID on success.
 #[cfg(target_arch = "wasm32")]
+// Real network call to the Google Drive API — see `check`'s comment above
+// for why that's not mockable here yet.
+#[cfg_attr(test, mutants::skip)]
 pub async fn drive_backup(
     cv: &LifetimeCV,
     saved_sessions: &[TailoringSession],
@@ -200,6 +211,8 @@ pub async fn drive_backup(
 
 /// Download the backup from Google Drive `appDataFolder` and return the CV.
 #[cfg(target_arch = "wasm32")]
+// Real network call to the Google Drive API — see `check`'s comment above.
+#[cfg_attr(test, mutants::skip)]
 pub async fn drive_restore(token: &str) -> Result<RestoredData, String> {
     let client = reqwest::Client::new();
 
@@ -490,5 +503,44 @@ mod tests {
         let err = drive_error_from_status(404, "gone").expect("404 must error");
         assert!(err.contains("404"), "got {err}");
         assert!(err.contains("gone"), "got {err}");
+    }
+}
+
+// ── WASM-only tests ──────────────────────────────────────────────────────────
+//
+// `local_export` above is `#[cfg(target_arch = "wasm32")]` and purely
+// DOM-based (Blob + object URL + a temporary anchor's `.click()`) — no
+// network involved, unlike `check`/`drive_backup`/`drive_restore` (see
+// their `#[cfg_attr(test, mutants::skip)]` comments), so it's reachable
+// here without a mock server.
+#[cfg(all(test, target_arch = "wasm32"))]
+// cargo-mutants only auto-skips functions carrying an attribute
+// whose last path segment is literally `test` (`#[test]`,
+// `#[tokio::test]`, ...) or an enclosing `#[cfg(test)]` it detects
+// directly on that item — `#[wasm_bindgen_test]`'s path doesn't
+// match that check, and the `cfg(test)` on this module wasn't
+// enough either in practice, so without this every helper and
+// test function below got "mutated" to `()` and reported as a
+// missed mutant (trivially: a test that asserts nothing passes).
+#[cfg_attr(test, mutants::skip)]
+mod wasm_tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test]
+    fn local_export_runs_without_panicking() {
+        // Deliberately a smoke test, not a full behavioral one: verifying
+        // the download actually happened would mean intercepting
+        // `Blob`/`URL.createObjectURL`/the anchor's `.click()`, and a
+        // headless-Chrome `.click()` on a `download`-attributed anchor may
+        // or may not be observable depending on the test runner's download
+        // handling — not something to depend on here. This still catches
+        // gross breakage (e.g. a panic from a bad `.expect()` on
+        // `web_sys::window()`), just not the "replace local_export with
+        // ()" mutant specifically.
+        let cv = LifetimeCV::default();
+        local_export(&cv, &[]);
     }
 }

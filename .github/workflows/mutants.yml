@@ -77,11 +77,12 @@ jobs:
             # skill_duration.rs:255: `current_year_month`'s
             # `#[cfg(target_arch = "wasm32")]` branch (`d.get_month() as
             # u32 + 1`). Same native/wasm32 build-target gap as the
-            # `worker.rs` exclusion above and the pre-existing
-            # `renderer.rs` one below (that one for the same function's
-            # copy in renderer.rs) — this code isn't compiled under the
-            # native `cargo test --lib` cargo-mutants runs here, so no
-            # native test can observe a mutation to it.
+            # `worker.rs` exclusion above and the `renderer.rs` one below
+            # (that one for the same function's copy in renderer.rs) — not
+            # compiled under this shard's native `cargo test --lib`. Now
+            # closed for real by the `wasm-skill-duration` shard below,
+            # which runs `current_year_month_wasm_matches_js_date_now`
+            # through a real `#[wasm_bindgen_test]` instead.
             exclude_re: "(score.rs:(98|107)|skill_duration.rs:(114|255))"
           - name: renderer
             files: src/services/renderer.rs
@@ -92,62 +93,85 @@ jobs:
             # Excluded like drive.rs's wasm-only clock stub.
             exclude_re: "renderer.rs:84[2-9]|renderer.rs:85[0-9]|renderer.rs:86[0-2]"
           - name: pdf-import
-            files: src/services/pdf_import.rs
-            # The binary-PDF extraction layer (matrix composition, resource/cmap
-            # resolution, raw content-stream extraction, glyph positioning,
-            # column/row grouping of positioned lines, operator dispatch, and
-            # content-stream decompression) is only reachable through real,
-            # binary PDF documents. The test suite drives parsing from extracted
-            # text fixtures, so this layer is excluded; the string-level helpers
-            # above it (emails, phones, URLs, date ranges, name/title guessing,
-            # section splitting) are covered by unit tests.
+            # Since 2b85323 (refactor: split the 8k-line pdf_import.rs
+            # monolith into submodules) the old `src/services/pdf_import.rs`
+            # path no longer exists -- this shard was silently finding 0
+            # mutants and reporting a hollow "pass" ever since, until
+            # someone noticed. `tests.rs`/`regression_corpus.rs` are
+            # `#[cfg(test)]`-only (fixtures + test fns, see mod.rs) and
+            # deliberately excluded from `files:` below, not from
+            # `exclude_re` -- cargo-mutants wouldn't generate mutants for
+            # `#[cfg(test)]` code anyway, but there's no reason to even scan
+            # them.
+            files: src/services/pdf_import/mod.rs src/services/pdf_import/dates.rs src/services/pdf_import/experience.rs src/services/pdf_import/harvest.rs src/services/pdf_import/sections.rs src/services/pdf_import/text_extraction.rs
+            # text_extraction.rs: the binary-PDF extraction layer (matrix
+            # composition, resource/cmap resolution, raw content-stream
+            # extraction, glyph positioning, column/row grouping of
+            # positioned lines, operator dispatch, content-stream
+            # decompression) is only reachable through real, binary PDF
+            # documents -- the test suite drives parsing from extracted-text
+            # fixtures instead, so this whole file is excluded EXCEPT
+            # `run_operations` (1082-1297), which now has two direct tests
+            # (`run_operations_inserts_spaces_and_newlines_for_positioned_
+            # runs`, `run_operations_ligature_glyph_does_not_insert_
+            # spurious_space`) and so is deliberately carved out of the
+            # range below rather than excluded.
             #
-            # The date-range/label heuristic lines below are equivalently
-            # unobservable or guarded-by-tests-only:
-            #   - find_date_range_span (2005-2075) and
-            #     extract_trailing_date_range_from_title (2126): bounds-check
-            #     arithmetic (`<` vs `<=`, `+` vs `*`) whose flips would panic
-            #     on out-of-range token reads rather than change output —
-            #     behavior pinned by the find_date_range_span_* boundary tests.
-            #   - guess_name (2194-2225): email/phone/URL lines always fail the
-            #     is_alphabetic name-char check, and every accented char is
-            #     already alphabetic, so deleting/reshaping those ||/== clauses
-            #     is observationally identical.
-            #   - guess_title (2239-2269): name-line-boundary arithmetic masked
-            #     by the unwrap_or(0) fallback; behavior pinned by tests.
-            #   - The struct field-deletion mutants (delete field … from
-            #     struct … literal) are NOT filterable by exclude_re at all
-            #     (cargo-mutants 27 does not apply exclude-name matching to
-            #     Genre::StructField), so they must instead be eliminated by
-            #     source/tests: redundant default-valued fields (role/company
-            #     empty literals) are removed from the literal, and every
-            #     populated field is pinned by the parse_* / build_* unit
-            #     tests below.
-            exclude_re: "(pdf_import.rs:[89][0-9]:|pdf_import.rs:1[0-9][0-9]:|pdf_import.rs:2[0-7][0-9]:|pdf_import.rs:28[0-4]:|2(8[5-9]|9[0-9])|[3-9][0-9]{2}|1[0-4][0-9]{2}|15[0-2][0-9]|pdf_import.rs:20(05|14|17|26|3[01]|36|41|44|49|52|64|67|72|75)|pdf_import.rs:2126|pdf_import.rs:(2194|2197|2198|2199|221[0-9]|222[0-5])|pdf_import.rs:22(39|4[0-4]|69))"
+            # dates.rs: find_date_range_span (169-275) and
+            # extract_trailing_date_range_from_title (288-329) -- bounds-
+            # check arithmetic (`<` vs `<=`, `+` vs `*`) whose flips would
+            # panic on out-of-range token reads rather than change output,
+            # behavior pinned by the find_date_range_span_*/
+            # extract_trailing_date_range_from_title_* boundary tests.
+            #
+            # sections.rs: guess_name (283-343) -- email/phone/URL lines
+            # always fail the is_alphabetic name-char check, and every
+            # accented char is already alphabetic, so deleting/reshaping
+            # those ||/== clauses is observationally identical; guess_title
+            # (346-387) -- name-line-boundary arithmetic masked by an
+            # unwrap_or(0) fallback, behavior pinned by tests.
+            #
+            # Struct field-deletion mutants (delete field ... from struct ...
+            # literal, in experience.rs/harvest.rs) are NOT filterable by
+            # exclude_re at all (cargo-mutants 27 does not apply
+            # exclude-name matching to Genre::StructField), so they're
+            # instead eliminated by source/tests: redundant default-valued
+            # fields are removed from struct literals, and every populated
+            # field is pinned by the parse_*/build_* unit tests.
+            #
+            # Re-derive these ranges with
+            # `awk '/^pub\(super\) fn NAME/{print NR}' file.rs` (find the
+            # opening line) and read forward to the matching closing brace
+            # if this exclude starts reporting stale MISSEDs again -- they
+            # drift whenever a doc comment above these functions changes.
+            exclude_re: "text_extraction.rs:([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|108[0-1]|10[0-7][0-9]|129[8-9]|154[0-2]|15[0-3][0-9]|1[3-4][0-9][0-9]):|dates.rs:(169|1[7-9][0-9]|27[0-5]|2[0-6][0-9]|28[8-9]|29[0-9]|3[0-2][0-9]):|sections.rs:(28[3-9]|29[0-9]|34[0-3]|3[0-3][0-9]|34[6-9]|38[0-7]|3[5-7][0-9]):"
           - name: worker
             files: src/services/worker.rs
-            # `.cargo/mutants.toml` pins the test command to `cargo test
-            # --lib`, a NATIVE build — so the entire
-            # `#[cfg(target_arch = "wasm32")] fn fetch_model_bytes_cached`
-            # block (currently lines 83-157: the outer function plus its
-            # get_cache/fetch_via_cache/response_bytes/response_text
-            # helpers) is compiled out entirely and literally does not exist
-            # in the binary under test. Mutating code that was never
-            # compiled can't be observed by any native test, no matter how
-            # thorough — this isn't equivalence, it's an execution-target
-            # gap. Closing it for real means adding a wasm32-targeted test
-            # run (wasm-bindgen-test + `--target wasm32-unknown-unknown`,
-            # likely a separate CI job/matrix entry, not just more #[test]
-            # fns here) — tracked as follow-up work, not done here.
+            # `.cargo/mutants.toml` pins this shard's test command to
+            # `cargo test --lib` (a NATIVE build) — so the entire
+            # `#[cfg(target_arch = "wasm32")]` block (get_cache,
+            # response_bytes, response_text; currently lines 83-151) is
+            # compiled out entirely here and literally does not exist in the
+            # binary under test. That's now closed for real, not just
+            # documented: the `wasm-worker` shard below runs these same
+            # lines through real `#[wasm_bindgen_test]`s in a headless
+            # Chrome instead. `fetch_via_cache`/`fetch_model_bytes_cached`
+            # (the two functions in this same block that DON'T have real
+            # tests — they need a live network fetch, not mockable yet) are
+            # excluded from mutation entirely via a source-level
+            # `#[cfg_attr(test, mutants::skip)]` on each, which is honoured
+            # by both this shard and `wasm-worker` automatically, so they
+            # need no entry here.
             #
             # NOTE: these line numbers drift whenever doc comments above the
-            # block are edited — re-check them (`grep -n "async fn" worker.rs`)
+            # block are edited — re-check with
+            # `grep -n "^async fn get_cache\|^async fn response_bytes\|^async fn response_text" worker.rs`
             # whenever this exclude starts reporting stale MISSEDs again.
             # `EmbeddingWorker::load_model` (no wasm32 cfg gate) is
             # deliberately NOT in this list — it's real, reachable, native
             # code, and is now covered directly by
             # `load_model_returns_err_and_leaves_worker_unready_on_bad_input`.
-            exclude_re: "worker.rs:(8[3-9]|9[0-9]|1[0-4][0-9]|15[0-7]):"
+            exclude_re: "worker.rs:(8[3-9]|9[0-9]|1[0-4][0-9]|15[01]):"
           - name: linkedin
             files: src/services/linkedin_import.rs
             # 92: unobservable equivalent mutation in the orchestrator.
@@ -186,37 +210,98 @@ jobs:
             timeout: 1200
           - name: auth-drive
             files: src/services/auth.rs src/services/drive.rs
-            # Both files split cleanly into a `#[cfg(target_arch =
-            # "wasm32")]` half (real GIS OAuth / localStorage / Drive HTTP
-            # calls) and a `#[cfg(not(target_arch = "wasm32"))]` half (the
-            # inert stubs actually exercised by `cargo test --lib`, per
-            # `.cargo/mutants.toml`'s native-only test command). Same
-            # build-target gap as the `worker` shard above, not equivalence
-            # — these lines simply aren't compiled into the binary under
-            # test, so no native test can observe a mutation to them.
-            # Closing this for real needs a wasm32-targeted test run
-            # (wasm-bindgen-test etc.), tracked as follow-up, not done here.
+            # Same build-target gap as the `worker` shard above (`.cargo/
+            # mutants.toml` pins this shard to a native `cargo test --lib`,
+            # so the `#[cfg(target_arch = "wasm32")]` half of both files
+            # doesn't exist in the binary under test) — now closed for real
+            # rather than just documented, for the parts that have a real
+            # test: `wasm-auth-drive` below runs get_token/set_token/
+            # set_token_with_expiry/clear_token/on_token_received/
+            # get_gis_oauth2 (auth.rs) and local_export (drive.rs) through
+            # real `#[wasm_bindgen_test]`s. `init`/`start_oauth` (auth.rs,
+            # need the real Google GIS script + user OAuth consent) and
+            # `check`/`drive_backup`/`drive_restore` (drive.rs, need a real
+            # Google Drive API call) don't have that yet and are instead
+            # excluded from mutation entirely via a source-level
+            # `#[cfg_attr(test, mutants::skip)]` on each — honoured by both
+            # this shard and `wasm-auth-drive` automatically, so none of
+            # them need an entry here.
             #
-            # These line numbers drift whenever doc comments shift (the
-            # previous list here was stale against both files by the time
-            # this comment was written) — re-check with
-            # `grep -n '#\[cfg(target_arch = "wasm32")\]' auth.rs drive.rs`
-            # whenever this exclude starts reporting fresh MISSEDs.
+            # These line numbers drift whenever doc comments shift — re-check
+            # with `grep -n '^pub fn \|^fn get_gis_oauth2\|^pub async fn '
+            # auth.rs drive.rs` whenever this exclude starts reporting fresh
+            # MISSEDs.
             #
-            # auth.rs: on_token_received(64), get_token(73, plus its
-            # expiry-check `>= ` at 75), set_token(87),
-            # set_token_with_expiry(100), clear_token(107), init(129),
-            # get_gis_oauth2(152), start_oauth(161).
-            # drive.rs: check(81), drive_backup(104), drive_restore(194),
-            # local_export(246).
-            exclude_re: "auth.rs:(64|73|75|87|100|107|129|152|161):|drive.rs:(81|104|194|246):"
+            # auth.rs: on_token_received(63-67), get_token(82-92),
+            # set_token(96-103), set_token_with_expiry(109-113),
+            # clear_token(116-121), get_gis_oauth2(168-171).
+            # drive.rs: local_export(268-297).
+            exclude_re: "auth.rs:(6[3-9]|[7-9][0-9]|1[01][0-9]|12[01]|16[89]|17[01]):|drive.rs:(26[89]|2[7-8][0-9]|29[0-7]):"
+          # ── WASM SHARDS (need Chrome + chromedriver) ──
+          # Runs `#[wasm_bindgen_test]`s in real headless Chrome instead of
+          # `cargo test --lib`'s native build, so these can actually reach
+          # the `#[cfg(target_arch = "wasm32")]` code the native shards
+          # above (worker, auth-drive, score-duration) exclude as
+          # unreachable. No `exclude_re` needed for the functions that are
+          # still untested (fetch_via_cache, fetch_model_bytes_cached,
+          # init, start_oauth, check, drive_backup, drive_restore) — their
+          # source-level `#[cfg_attr(test, mutants::skip)]` attributes are
+          # honoured here the same as in the native shards.
+          - name: wasm-worker
+            files: src/services/worker.rs
+            wasm: true
+            timeout: 600
+          - name: wasm-auth-drive
+            files: src/services/auth.rs src/services/drive.rs
+            wasm: true
+            timeout: 600
+          - name: wasm-skill-duration
+            files: src/services/skill_duration.rs
+            wasm: true
+            timeout: 600
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.wasm && 'wasm32-unknown-unknown' || '' }}
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-mutants
+      - name: Install matching wasm-bindgen-cli
+        if: matrix.wasm
+        # `wasm-bindgen-test-runner` (from wasm-bindgen-cli) must be the
+        # EXACT same version as the `wasm-bindgen` crate this project
+        # resolves to, or it refuses to run at all. Reading the version
+        # `cargo metadata` actually resolves (rather than hard-coding one,
+        # which silently goes stale the moment Cargo.toml's
+        # `wasm-bindgen = "0.2"` range resolves to a newer patch) keeps
+        # this correct automatically. No `Cargo.lock` is committed to this
+        # repo, so this also generates one as a side effect — the same
+        # resolution `cargo mutants` below will then reuse.
+        run: |
+          WBG_VERSION=$(cargo metadata --format-version=1 \
+            | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version' \
+            | head -n1)
+          echo "Installing wasm-bindgen-cli $WBG_VERSION to match Cargo.lock"
+          cargo install wasm-bindgen-cli --version "$WBG_VERSION" --locked
+      - name: Setup Chrome
+        if: matrix.wasm
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+      - name: Setup chromedriver
+        if: matrix.wasm
+        run: |
+          CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+')
+          MAJOR=${CHROME_VERSION%%.*}
+          DRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json" \
+            | python3 -c "import sys,json; versions=[v for v in json.load(sys.stdin)['versions'] if v['version'].startswith('${MAJOR}.')]; print(versions[-1]['version'])")
+          curl -sL "https://storage.googleapis.com/chrome-for-testing-public/${DRIVER_VERSION}/linux64/chromedriver-linux64.zip" -o /tmp/cd.zip
+          unzip -o /tmp/cd.zip -d /tmp/cd
+          chmod +x /tmp/cd/chromedriver-linux64/chromedriver
+          echo "/tmp/cd/chromedriver-linux64" >> $GITHUB_PATH
+          echo "CHROMEDRIVER=/tmp/cd/chromedriver-linux64/chromedriver" >> $GITHUB_ENV
       - name: "Run mutation tests (${{ matrix.name }})"
         id: mutants
         run: |
@@ -226,12 +311,16 @@ jobs:
           EXCLUDE_RE="${{ matrix.exclude_re }}"
           TIMEOUT="${{ matrix.timeout }}"
           TIMEOUT="${TIMEOUT:-600}"
+          CARGO_ARGS=()
+          if [ "${{ matrix.wasm }}" = "true" ]; then
+            CARGO_ARGS=(-C --target=wasm32-unknown-unknown)
+          fi
           for f in ${{ matrix.files }}; do
             echo "::group::$f"
             if [ -n "$EXCLUDE_RE" ]; then
-              cargo mutants -f "$f" --no-times --in-place -o "work-$i" --timeout "$TIMEOUT" --exclude-re "$EXCLUDE_RE" && ec=0 || ec=$?
+              cargo mutants -f "$f" --no-times --in-place -o "work-$i" --timeout "$TIMEOUT" "${CARGO_ARGS[@]}" --exclude-re "$EXCLUDE_RE" && ec=0 || ec=$?
             else
-              cargo mutants -f "$f" --no-times --in-place -o "work-$i" --timeout "$TIMEOUT" && ec=0 || ec=$?
+              cargo mutants -f "$f" --no-times --in-place -o "work-$i" --timeout "$TIMEOUT" "${CARGO_ARGS[@]}" && ec=0 || ec=$?
             fi
             echo "::endgroup::"
             if [ "$ec" -ne 0 ]; then
