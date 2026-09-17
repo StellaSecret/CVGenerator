@@ -679,9 +679,32 @@ pub(crate) fn parse_certifications(lines: &[String]) -> Vec<Certification> {
         // dateless certifications is untouched, and a short 1–2 line
         // buffer, more likely a single name+issuer pair than two
         // unrelated certifications, still merges as before.)
-        for line in &buffer {
-            if let Some(cert) = build_certification_from_buffer(std::slice::from_ref(line), None) {
+        //
+        // One shape the per-line default would garble: a single
+        // certification whose lines are `name`, a bare 4-digit issue year,
+        // and an issuer — e.g. "AWS Certified Solutions Architect" /
+        // "2022" / "Amazon". That's three lines and no date range, so it
+        // used to fall into one-per-line and split one certification into
+        // three. The bare year is the tell: a line that is exactly four
+        // ASCII digits (after the first, name, line) only ever appears
+        // here as a certification's issue year, never as a certification
+        // name of its own, so its presence means the whole buffer is a
+        // single record (the same rule `build_certification_from_buffer`
+        // itself uses to fold the year onto the name).
+        if buffer[1..]
+            .iter()
+            .any(|l| l.len() == 4 && l.chars().all(|c| c.is_ascii_digit()))
+        {
+            if let Some(cert) = build_certification_from_buffer(&buffer, None) {
                 certs.push(cert);
+            }
+        } else {
+            for line in &buffer {
+                if let Some(cert) =
+                    build_certification_from_buffer(std::slice::from_ref(line), None)
+                {
+                    certs.push(cert);
+                }
             }
         }
     } else if let Some(cert) = build_certification_from_buffer(&buffer, None) {

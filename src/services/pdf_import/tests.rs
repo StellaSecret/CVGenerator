@@ -2473,3 +2473,89 @@ fn built_structs_populate_ids() {
     .expect("education should build");
     assert!(!edu.id.is_empty(), "education id must be populated");
 }
+
+// ── parse_cv section wiring ──────────────────────────────────────────────────
+//
+// `parse_projects`/`parse_certifications` themselves are already unit
+// tested above with direct line-array input — these two instead pin the
+// *wiring* in `parse_cv`'s section-header match: that a "Projects"/
+// "Certifications" header in real extracted text actually routes its
+// lines to those parsers and lands in `cv.projects`/`cv.certifications`,
+// not just that the parsers work in isolation.
+#[test]
+fn parse_cv_routes_projects_section_into_cv_projects() {
+    let text = "Jane Doe\n\nProjects\nSide Tracker: personal habit tracker\n• built with Rust\n";
+    let cv = parse_cv(text);
+    assert_eq!(
+        cv.projects.len(),
+        1,
+        "expected the Projects section to populate cv.projects, got {:?}",
+        cv.projects.iter().map(|p| &p.name).collect::<Vec<_>>()
+    );
+    assert_eq!(cv.projects[0].name, "Side Tracker");
+}
+
+#[test]
+fn parse_cv_routes_certifications_section_into_cv_certifications() {
+    let text = "Jane Doe\n\nCertifications\nAWS Certified Solutions Architect\n2022\nAmazon\n";
+    let cv = parse_cv(text);
+    assert_eq!(
+        cv.certifications.len(),
+        1,
+        "expected the Certifications section to populate cv.certifications, got {:?}",
+        cv.certifications
+            .iter()
+            .map(|c| &c.name)
+            .collect::<Vec<_>>()
+    );
+}
+
+// ── resolve_project_skill_ids ────────────────────────────────────────────────
+
+#[test]
+fn resolve_project_skill_ids_maps_skill_names_to_ids_case_insensitively() {
+    let mut cv = LifetimeCV {
+        skills: vec![Skill {
+            id: "s-rust".to_string(),
+            name: "Rust".to_string(),
+            ..Default::default()
+        }],
+        experiences: vec![Experience {
+            projects: vec![ExperienceProject {
+                // Deliberately different case from the skill's own name,
+                // to pin the `eq_ignore_ascii_case` matching specifically.
+                skill_ids: vec!["rust".to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    resolve_project_skill_ids(&mut cv);
+    assert_eq!(
+        cv.experiences[0].projects[0].skill_ids,
+        vec!["s-rust".to_string()],
+        "the raw name \"rust\" must resolve to the real skill id \"s-rust\""
+    );
+}
+
+#[test]
+fn resolve_project_skill_ids_drops_names_with_no_matching_skill() {
+    let mut cv = LifetimeCV {
+        skills: vec![],
+        experiences: vec![Experience {
+            projects: vec![ExperienceProject {
+                skill_ids: vec!["nonexistent".to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    resolve_project_skill_ids(&mut cv);
+    assert!(
+        cv.experiences[0].projects[0].skill_ids.is_empty(),
+        "an unresolvable raw skill name must be dropped, not kept as-is: {:?}",
+        cv.experiences[0].projects[0].skill_ids
+    );
+}
