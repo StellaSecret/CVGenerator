@@ -16,6 +16,17 @@
 
 use crate::models::{Experience, Skill, SkillCategory};
 
+// The `#[cfg(target_arch = "wasm32")]` clock read (the `js_sys::Date`-
+// backed branch of `current_year_month`) lives in `skill_duration_wasm.rs`,
+// declared here under the same cfg — kept in its own module so the wasm
+// mutation-testing shard in `.github/workflows/mutants.yml` can target a
+// file whose every function is either wasm-testable or
+// `#[cfg_attr(test, mutants::skip)]`-attributed (native `#[test]`s don't
+// execute under the wasm harness). Everything else in this file is pure
+// platform-neutral logic, covered by this file's native tests.
+#[cfg(target_arch = "wasm32")]
+mod skill_duration_wasm;
+
 /// A (year, month) pair, month 1-12. Only calendar-month granularity is
 /// needed since CV dates are always "Month Year", never exact days.
 pub type YearMonth = (i32, u32);
@@ -251,8 +262,7 @@ fn format_years_with(months: i64, under_one: &str, exactly_one: &str, plural_uni
 pub fn current_year_month() -> YearMonth {
     #[cfg(target_arch = "wasm32")]
     {
-        let d = js_sys::Date::new_0();
-        (d.get_full_year() as i32, d.get_month() as u32 + 1)
+        return skill_duration_wasm::current_year_month_wasm();
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -672,45 +682,5 @@ mod tests {
             measured.iter().map(|(id, m)| (id.as_str(), *m)).collect();
         assert_eq!(by_id["s-rust"], 12);
         assert_eq!(by_id["s-k8s"], 0);
-    }
-}
-
-// ── WASM-only tests ──────────────────────────────────────────────────────────
-//
-// `current_year_month` isn't itself `#[cfg(target_arch = "wasm32")]`-gated
-// (only its internal branch is), but its wasm32 branch — the one real code
-// path this project's `js_sys::Date` clock access actually runs through in
-// production — is still invisible to native `cargo test --lib`. Directly
-// mirrors `js_sys::Date::new_0()` here to derive an independently-computed
-// expected value, the same way the native
-// `current_year_month_native_divides_total_seconds_by_a_day_not_modulo`
-// test above mirrors `SystemTime::now()`.
-#[cfg(all(test, target_arch = "wasm32"))]
-// cargo-mutants only auto-skips functions carrying an attribute
-// whose last path segment is literally `test` (`#[test]`,
-// `#[tokio::test]`, ...) or an enclosing `#[cfg(test)]` it detects
-// directly on that item — `#[wasm_bindgen_test]`'s path doesn't
-// match that check, and the `cfg(test)` on this module wasn't
-// enough either in practice, so without this every helper and
-// test function below got "mutated" to `()` and reported as a
-// missed mutant (trivially: a test that asserts nothing passes).
-#[cfg_attr(test, mutants::skip)]
-mod wasm_tests {
-    use super::*;
-    use wasm_bindgen_test::*;
-
-    wasm_bindgen_test_configure!(run_in_browser);
-
-    #[wasm_bindgen_test]
-    fn current_year_month_wasm_matches_js_date_now() {
-        let expected = js_sys::Date::new_0();
-        let (year, month) = current_year_month();
-        assert_eq!(year, expected.get_full_year() as i32);
-        // JS `Date.getMonth()` is 0-indexed; `current_year_month` converts
-        // to the 1-12 calendar convention this codebase uses everywhere
-        // else (see e.g. `YearMonth`'s own doc comment) — pins that `+ 1`
-        // conversion specifically, distinct from the native side's
-        // `/`-vs-`%` day-count mutant.
-        assert_eq!(month, expected.get_month() as u32 + 1);
     }
 }
