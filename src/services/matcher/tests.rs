@@ -120,7 +120,10 @@ fn expand_summary_skills_replaces_placeholder_with_top_cap_skills() {
         &skills,
         SUMMARY_SKILLS_CAP,
     );
-    assert_eq!(out, "Distributed systems engineer focused on Rust, Kubernetes, Docker, PostgreSQL, Terraform.");
+    assert_eq!(
+        out,
+        "Distributed systems engineer focused on Rust, Kubernetes, Docker, PostgreSQL, Terraform."
+    );
 }
 
 #[test]
@@ -2205,16 +2208,12 @@ fn project_mode_gate_fixture() -> LifetimeCV {
             projects: vec![
                 ExperienceProject {
                     id: "p-top1".to_string(),
-                    bullets: vec![LT::same(
-                        "alpha beta gamma delta epsilon zeta eta theta",
-                    )],
+                    bullets: vec![LT::same("alpha beta gamma delta epsilon zeta eta theta")],
                     ..Default::default()
                 },
                 ExperienceProject {
                     id: "p-top2".to_string(),
-                    bullets: vec![LT::same(
-                        "alpha beta gamma delta epsilon zeta eta theta",
-                    )],
+                    bullets: vec![LT::same("alpha beta gamma delta epsilon zeta eta theta")],
                     ..Default::default()
                 },
                 ExperienceProject {
@@ -2390,7 +2389,11 @@ fn cv_documents_returns_one_real_document_per_scorable_block() {
     // fixture_cv has 2 experience-project bullets-blocks (one per
     // experience), 1 top-level project, and 3 skills = 6 scorable
     // blocks.
-    assert_eq!(docs.len(), 6, "expected one document per scorable block, got {docs:?}");
+    assert_eq!(
+        docs.len(),
+        6,
+        "expected one document per scorable block, got {docs:?}"
+    );
     assert!(
         docs.iter().all(|d| !d.is_empty()),
         "every document must contain real extracted terms, not be empty: {docs:?}"

@@ -188,7 +188,28 @@ pub async fn drive_restore(token: &str) -> Result<RestoredData, String> {
 
 // ── Local export (browser download) ──────────────────────────────────────────
 
-pub fn local_export(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) {
+// Test-only observation point. Headless browsers give no reliable way to
+// assert that a `download`-attributed anchor's `.click()` actually
+// triggered a download, but the wasm `#[wasm_bindgen_test]` below must
+// still be able to tell a real `local_export` run apart from
+// cargo-mutants' "return true"/"return false"/inlined-`()` replacement
+// variants — flipping this on the genuine path (right where the anchor is
+// clicked, see `local_export`) gives the test a hard observable it can
+// reset and assert across runs. `mutants::skip` keeps cargo-mutants from
+// mutating the flag's own initializer into a spurious, unkillable miss.
+#[cfg(test)]
+#[cfg_attr(test, mutants::skip)]
+pub(crate) static DID_RUN_DOWNLOAD_FLOW: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Exports the CV backup as a browser download (Blob → object URL →
+/// temporary `download`-attributed anchor appended to the body and
+/// clicked, then removed; the object URL is revoked afterwards). Returns
+/// `true` iff that full flow ran — i.e. the backup was serialized, a blob
+/// URL was created, and an anchor was actually clicked — so the browser
+/// test (and callers, if they care) can tell a completed download apart
+/// from a silent no-op.
+pub fn local_export(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) -> bool {
     use js_sys::Array;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
@@ -207,16 +228,23 @@ pub fn local_export(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) {
                     let _ = a.set_attribute("download", "cv_generator_backup.json");
                     if let Some(body) = doc.body() {
                         let _ = body.append_child(&a);
+                        let mut clicked = false;
                         if let Some(el) = a.dyn_ref::<web_sys::HtmlElement>() {
                             el.click();
+                            clicked = true;
                         }
                         let _ = body.remove_child(&a);
+                        Url::revoke_object_url(&url).ok();
+                        #[cfg(test)]
+                        DID_RUN_DOWNLOAD_FLOW.store(true, std::sync::atomic::Ordering::SeqCst);
+                        return clicked;
                     }
                 }
             }
             Url::revoke_object_url(&url).ok();
         }
     }
+    false
 }
 
 // ── WASM-only tests ──────────────────────────────────────────────────────────
@@ -243,17 +271,29 @@ mod wasm_tests {
     wasm_bindgen_test_configure!(run_in_browser);
 
     #[wasm_bindgen_test]
-    fn local_export_runs_without_panicking() {
-        // Deliberately a smoke test, not a full behavioral one: verifying
-        // the download actually happened would mean intercepting
-        // `Blob`/`URL.createObjectURL`/the anchor's `.click()`, and a
-        // headless-Chrome `.click()` on a `download`-attributed anchor may
-        // or may not be observable depending on the test runner's download
-        // handling — not something to depend on here. This still catches
-        // gross breakage (e.g. a panic from a bad `.expect()` on
-        // `web_sys::window()`), just not the "replace local_export with
-        // ()" mutant specifically.
+    fn local_export_runs_the_full_download_flow() {
+        // `local_export` now returns whether the whole flow "claimed to"
+        // complete, and independently sets `DID_RUN_DOWNLOAD_FLOW` only on
+        // the genuine path (after the anchor's `.click()`) — the two
+        // together pin the end-to-end flow in a way the old smoke test
+        // (and a plain `-> bool`) could not: cargo-mutants' "return true"
+        // variant returns true without ever running the body, so the flag
+        // stays unset and this test fails it, and "return false" and any
+        // inner-statement deletion fail on the return/flag assertions too.
+        // It still avoids asserting on the actual browser download
+        // (headless Chromium's handling of a clicked `download` anchor is
+        // not something to depend on), but pins every step up to and
+        // including the click.
         let cv = LifetimeCV::default();
-        local_export(&cv, &[]);
+        DID_RUN_DOWNLOAD_FLOW.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            local_export(&cv, &[]),
+            "expected local_export to create a blob URL, append a download \
+             anchor, and click it in the browser"
+        );
+        assert!(
+            DID_RUN_DOWNLOAD_FLOW.load(std::sync::atomic::Ordering::SeqCst),
+            "expected the download flow to actually reach the anchor click"
+        );
     }
 }

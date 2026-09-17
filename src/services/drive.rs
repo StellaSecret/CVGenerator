@@ -118,7 +118,9 @@ pub async fn drive_restore(_token: &str) -> Result<RestoredData, String> {
 // ── Local export (browser download) ──────────────────────────────────────────
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn local_export(_cv: &LifetimeCV, _saved_sessions: &[TailoringSession]) {}
+pub fn local_export(_cv: &LifetimeCV, _saved_sessions: &[TailoringSession]) -> bool {
+    false
+}
 
 // ── Time helper ───────────────────────────────────────────────────────────────
 

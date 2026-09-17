@@ -654,15 +654,19 @@ pub(super) fn rejoin_fragmented_date_lines(lines: &[String]) -> Vec<String> {
     };
 
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let line = &lines[i];
+    // Consume the slice through an iterator rather than a `while i < len`
+    // counter: each "skip the joined partner line" step is `iter.next()`
+    // (structural, can't regress), so cargo-mutants has no arithmetic
+    // index whose `+=`→`*=` (e.g. `i *= 2` on `i == 0`) turns the loop
+    // non-terminating and hangs the whole mutation shard. The peek/next
+    // pairing below mirrors the old `lines.get(i + 1)` / `i += 2` exactly.
+    let mut iter = lines.iter().peekable();
+    while let Some(line) = iter.next() {
         if is_lone_icon_glyph(line) {
-            let next = lines.get(i + 1);
+            let next = iter.peek().copied();
             if next.is_some_and(|n| is_lone_month(n) || starts_with_year(n)) {
                 // Confirmed decorative calendar icon directly preceding a
                 // date fragment — safe to drop.
-                i += 1;
                 continue;
             }
             // Otherwise this is just some lone symbol character that
@@ -675,32 +679,30 @@ pub(super) fn rejoin_fragmented_date_lines(lines: &[String]) -> Vec<String> {
             // visually and in the source content.
             if let Some(next) = next {
                 out.push(format!("{}{}", line.trim(), next.trim()));
-                i += 2;
+                iter.next();
                 continue;
             }
-            i += 1;
             continue;
         }
         if is_lone_month(line) {
-            if let Some(next) = lines.get(i + 1) {
+            if let Some(next) = iter.peek().copied() {
                 if starts_with_year(next) {
                     out.push(format!("{} {}", line.trim(), next.trim()));
-                    i += 2;
+                    iter.next();
                     continue;
                 }
             }
         }
         if starts_with_bare_year_then_dash(line) {
-            if let Some(next) = lines.get(i + 1) {
+            if let Some(next) = iter.peek().copied() {
                 if let Some(month) = month_after_optional_icon(next) {
                     out.push(format!("{} {}", month, line.trim()));
-                    i += 2;
+                    iter.next();
                     continue;
                 }
             }
         }
         out.push(line.clone());
-        i += 1;
     }
     out
 }
