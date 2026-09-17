@@ -63,6 +63,116 @@ fn run_operations_inserts_spaces_and_newlines_for_positioned_runs() {
     );
 }
 
+/// Pins the Td/TD same-line-vs-new-line boundary at exactly `ty.abs() ==
+/// 0.1` (the threshold itself, not just values comfortably above/below
+/// it) — a `>` flipped to `>=` here would wrongly start a new line right
+/// at the boundary instead of treating it as still the same line.
+#[test]
+fn run_operations_td_boundary_ty_of_exactly_0_1_stays_on_same_line() {
+    use lopdf::content::Operation;
+    use lopdf::Dictionary;
+
+    let ops = vec![
+        Operation::new("BT", vec![]),
+        Operation::new(
+            "Tf",
+            vec![Object::Name(b"F1".to_vec()), Object::Integer(10)],
+        ),
+        Operation::new("Td", vec![Object::Integer(50), Object::Integer(700)]),
+        Operation::new("Tj", vec![Object::string_literal("alpha")]),
+        // Exactly the threshold, not comfortably past it.
+        Operation::new("Td", vec![Object::Integer(20), Object::Real(0.1)]),
+        Operation::new("Tj", vec![Object::string_literal("beta")]),
+        Operation::new("ET", vec![]),
+    ];
+
+    let doc = Document::new();
+    let resources = Dictionary::new();
+    let encodings = std::collections::BTreeMap::new();
+    let mut visited = Vec::new();
+    let mut lines: Vec<PositionedLine> = Vec::new();
+    run_operations(
+        &doc,
+        &ops,
+        &resources,
+        &encodings,
+        Matrix::identity(),
+        &mut visited,
+        &mut lines,
+    );
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec!["alpha beta"],
+        "ty.abs() == 0.1 exactly must NOT cross the new-line threshold, got {texts:?}"
+    );
+}
+
+/// Same boundary pin as the Td/TD test above, but for the `Tm` (set text
+/// matrix) operator's `dy` comparison, which is a structurally different
+/// mutant site even though it uses the same `> 0.1` threshold.
+#[test]
+fn run_operations_tm_boundary_dy_of_exactly_0_1_stays_on_same_line() {
+    use lopdf::content::Operation;
+    use lopdf::Dictionary;
+
+    let ops = vec![
+        Operation::new("BT", vec![]),
+        Operation::new(
+            "Tf",
+            vec![Object::Name(b"F1".to_vec()), Object::Integer(10)],
+        ),
+        Operation::new(
+            "Tm",
+            vec![
+                Object::Integer(1),
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(50),
+                Object::Integer(0),
+            ],
+        ),
+        Operation::new("Tj", vec![Object::string_literal("alpha")]),
+        // Exactly the threshold: 0.1f32 widened to f64, not the f64
+        // literal 0.1 (which lopdf's f32 storage can't hit exactly).
+        Operation::new(
+            "Tm",
+            vec![
+                Object::Integer(1),
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(70),
+                Object::Real(0.1),
+            ],
+        ),
+        Operation::new("Tj", vec![Object::string_literal("beta")]),
+        Operation::new("ET", vec![]),
+    ];
+
+    let doc = Document::new();
+    let resources = Dictionary::new();
+    let encodings = std::collections::BTreeMap::new();
+    let mut visited = Vec::new();
+    let mut lines: Vec<PositionedLine> = Vec::new();
+    run_operations(
+        &doc,
+        &ops,
+        &resources,
+        &encodings,
+        Matrix::identity(),
+        &mut visited,
+        &mut lines,
+    );
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec!["alpha beta"],
+        "dy.abs() == 0.1 exactly must NOT cross the new-line threshold, got {texts:?}"
+    );
+}
+
 /// Regression test for the idempotence bug where a font's ligature
 /// glyph ("ﬀ", U+FB00) — rendered as a single character position in
 /// the PDF, but whose ToUnicode CMap decodes it to the 2-character
@@ -115,6 +225,331 @@ fn run_operations_ligature_glyph_does_not_insert_spurious_space() {
     let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
 
     assert_eq!(texts, vec!["offboarding"]);
+}
+
+// ── decode_content_raw ───────────────────────────────────────────────────────
+
+/// Bytes inside a `BT`/`ET` block that are neither a `(...)` string literal
+/// nor a `<...>` hex string (e.g. operator keywords, numbers, whitespace)
+/// must simply be skipped one byte at a time so the scan still reaches the
+/// following string literal and the closing `ET`. This pins the tail
+/// `else { i += 1; }` advance inside the BT/ET loop: a mutant that stalls
+/// or jumps that index would either hang or skip/duplicate content.
+#[test]
+fn decode_content_raw_skips_unrecognized_bytes_between_bt_and_et() {
+    let content = b"BT /F1 12 Tf 50 700 Td (Hello) Tj ET";
+    let text = decode_content_raw(content);
+    assert_eq!(text, "Hello");
+}
+
+/// Multiple unrelated operator tokens (numbers, names, bare keywords)
+/// between two string literals must all be skipped without corrupting or
+/// dropping either literal.
+#[test]
+fn decode_content_raw_skips_multiple_unrecognized_tokens_between_literals() {
+    let content = b"BT (One) 12 0 0 12 50 700 Tm /F2 10 Tf (Two) Tj ET";
+    let text = decode_content_raw(content);
+    assert_eq!(text, "One Two");
+}
+
+/// Content bytes that appear *before* any `BT` marker (or between an `ET`
+/// and the next `BT`) must be scanned byte-by-byte without ever being
+/// mistaken for text. This pins the outer `else { i += 1; }` advance used
+/// while searching for the next `BT` marker.
+#[test]
+fn decode_content_raw_skips_bytes_outside_bt_et_blocks() {
+    let content = b"q 1 0 0 1 0 0 cm Q BT (Only this) Tj ET S";
+    let text = decode_content_raw(content);
+    assert_eq!(text, "Only this");
+}
+
+/// Two separate BT/ET blocks separated by non-text operators: the scan
+/// must advance past the gap and pick up the second block's literal too.
+#[test]
+fn decode_content_raw_handles_multiple_bt_et_blocks() {
+    let content = b"BT (First) Tj ET 0 0 0 rg BT (Second) Tj ET";
+    let text = decode_content_raw(content);
+    assert_eq!(text, "First Second");
+}
+
+/// A `BT`/`ET` block with no string literals at all (only operator noise)
+/// must terminate cleanly and contribute no text -- this only happens if
+/// every non-literal byte in between is actually advanced past.
+#[test]
+fn decode_content_raw_empty_block_produces_no_text() {
+    let content = b"BT 1 0 0 1 50 700 Tm /F1 12 Tf ET";
+    let text = decode_content_raw(content);
+    assert_eq!(text, "");
+}
+
+// ── run_operations: stateful operators ───────────────────────────────────────
+//
+// The text-content tests above only feed BT/Tf/Td/Tj/TJ/ET. The content
+// stream's other operators (q/Q/cm CTM save/restore, BT reset, T* newline,
+// Tm matrix, the `'` text-show operator, Do XObject invocation) mutate
+// parser state that these tests pin directly — including the positions
+// recorded on each PositionedLine, and the exact threshold boundaries of
+// the same-line word-gap heuristics — so a deleted match arm or flipped
+// comparison cannot silently pass.
+
+fn run_ops(ops: Vec<lopdf::content::Operation>) -> Vec<PositionedLine> {
+    let doc = Document::new();
+    let resources = lopdf::Dictionary::new();
+    let encodings = std::collections::BTreeMap::new();
+    let mut visited = Vec::new();
+    let mut lines = Vec::new();
+    run_operations(
+        &doc,
+        &ops,
+        &resources,
+        &encodings,
+        Matrix::identity(),
+        &mut visited,
+        &mut lines,
+    );
+    lines
+}
+
+fn cm_op(x: i64, y: i64) -> lopdf::content::Operation {
+    lopdf::content::Operation::new(
+        "cm",
+        vec![
+            Object::Integer(1),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(1),
+            Object::Integer(x),
+            Object::Integer(y),
+        ],
+    )
+}
+
+fn tm_op(f_y: i64) -> lopdf::content::Operation {
+    lopdf::content::Operation::new(
+        "Tm",
+        vec![
+            Object::Integer(1),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(1),
+            Object::Integer(0),
+            Object::Integer(f_y),
+        ],
+    )
+}
+
+fn tstr(s: &str) -> Object {
+    Object::string_literal(s)
+}
+
+/// The `q`/`Q`/`cm` state-saving operators must compose against the CTM
+/// stack's CURRENT top and return to the saved entry on `Q` — and a `Q`
+/// on an already-restored (single-entry) stack must be a no-op. Pins the
+/// deleted-arm mutants for all three plus the `len() > 1` guard flips on
+/// `Q` (a `> 1` → `>= 1` flip pops the last real entry, so the trailing
+/// `cm` then can't touch anything and the second line lands at the base).
+#[test]
+fn run_operations_ctm_save_restore_and_guard() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("q", vec![]),
+        cm_op(100, 0),
+        lopdf::content::Operation::new("Q", vec![]),
+        lopdf::content::Operation::new("Tj", vec![tstr("A")]),
+        lopdf::content::Operation::new("T*", vec![]),
+        lopdf::content::Operation::new("q", vec![]),
+        lopdf::content::Operation::new("q", vec![]),
+        cm_op(50, 0),
+        lopdf::content::Operation::new("Q", vec![]),
+        lopdf::content::Operation::new("Q", vec![]),
+        lopdf::content::Operation::new("Q", vec![]),
+        cm_op(25, 0),
+        lopdf::content::Operation::new("Tj", vec![tstr("B")]),
+        lopdf::content::Operation::new("T*", vec![]),
+    ]);
+    assert_eq!(lines.len(), 2, "got: {lines:?}");
+    assert_eq!(lines[0].text, "A");
+    assert_eq!(lines[0].x, 0.0, "A must land at base, got: {lines:?}");
+    assert_eq!(lines[1].text, "B");
+    assert_eq!(lines[1].x, 25.0, "B must land at +25, got: {lines:?}");
+}
+
+/// A vertical `Tm` shift must flush the accumulated line; a shifted-offset
+/// `Tm` does not. Pins the deleted-`Tm`-arm and the `dy.abs() > 0.1` →
+/// `==`/`<` flips on the flush branch.
+#[test]
+fn run_operations_tm_vertical_shift_flushes_line() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("A")]),
+        tm_op(-100),
+        lopdf::content::Operation::new("Tj", vec![tstr("B")]),
+        lopdf::content::Operation::new("T*", vec![]),
+    ]);
+    assert_eq!(lines.len(), 2, "got: {lines:?}");
+    assert_eq!(lines[0].text, "A");
+    assert_eq!(lines[1].text, "B");
+}
+
+/// `dy.abs() > 0.1` in the `Tm` arm must stay strict: a zero-shift `Tm` is
+/// same-line, and a single-glyph previous run must not trigger the
+/// pending-space heuristic (`last_run_chars > 1` stays strict too — kills
+/// the `>=` flip, which would inject a space after every single glyph).
+#[test]
+fn run_operations_tm_zero_shift_single_glyph_no_space() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("A")]),
+        tm_op(0),
+        lopdf::content::Operation::new("Tj", vec![tstr("B")]),
+    ]);
+    assert_eq!(lines.len(), 1, "got: {lines:?}");
+    assert_eq!(lines[0].text, "AB");
+}
+
+/// A multi-glyph run followed by a same-line `Tm` gets a synthetic space
+/// (`last_run_chars > 1` on the pending-space branch) — pins the `>` →
+/// `==`/`<` flips there.
+#[test]
+fn run_operations_tm_same_line_run_gap() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("AB")]),
+        tm_op(0),
+        lopdf::content::Operation::new("Tj", vec![tstr("C")]),
+    ]);
+    assert_eq!(lines.len(), 1, "got: {lines:?}");
+    assert_eq!(lines[0].text, "AB C");
+}
+
+/// `dy = new_tm.f - text_matrix.f` must be a subtraction: an equal-`f`
+/// `Tm` drifts by 0 (no flush), while a `+` (50 + 50 = 100) or `/`
+/// (50 / 50 = 1) mutant turns that into a phantom flush.
+#[test]
+fn run_operations_tm_dy_is_subtraction() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("A")]),
+        tm_op(50), // dy = 50 - 0 → flush line "A"
+        lopdf::content::Operation::new("Tj", vec![tstr("B")]),
+        tm_op(50), // dy = 50 - 50 = 0 → same line
+        lopdf::content::Operation::new("Tj", vec![tstr("C")]),
+    ]);
+    assert_eq!(lines.len(), 2, "expected [A, BC], got: {lines:?}");
+    assert_eq!(lines[0].text, "A");
+    assert_eq!(lines[1].text, "BC");
+}
+
+/// `BT` must flush the pending accumulated line before resetting the text
+/// matrix — not silently merge the runs that span it.
+#[test]
+fn run_operations_bt_flushes_pending_line() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("A")]),
+        lopdf::content::Operation::new("BT", vec![]),
+        lopdf::content::Operation::new("Tj", vec![tstr("B")]),
+    ]);
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts, vec!["A", "B"]);
+}
+
+/// `T*` must start a new visual line (flush the pending run).
+#[test]
+fn run_operations_tstar_starts_new_line() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("A")]),
+        lopdf::content::Operation::new("T*", vec![]),
+        lopdf::content::Operation::new("Tj", vec![tstr("B")]),
+    ]);
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts, vec!["A", "B"]);
+}
+
+/// The `'` text-showing operator writes its string operand as its own line.
+#[test]
+fn run_operations_apostrophe_shows_text_line() {
+    let lines = run_ops(vec![lopdf::content::Operation::new("'", vec![tstr("X")])]);
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts, vec!["X"]);
+}
+
+/// A `Do` invocation must recurse into the named Form XObject and extract
+/// its content-stream text.
+#[test]
+fn run_operations_do_invokes_form_xobject() {
+    use lopdf::Stream;
+
+    let mut doc = Document::new();
+    let form_id = doc.add_object(Object::Stream(Stream::new(
+        {
+            let mut d = lopdf::Dictionary::new();
+            d.set(b"Subtype", Object::Name(b"Form".to_vec()));
+            d
+        },
+        b"BT /F1 12 Tf 0 20 Td (XOBJ TEXT) Tj ET".to_vec(),
+    )));
+    let mut xobjs = lopdf::Dictionary::new();
+    xobjs.set(b"Fm1", Object::Reference(form_id));
+    let mut resources = lopdf::Dictionary::new();
+    resources.set(b"XObject", Object::Dictionary(xobjs));
+
+    let encodings = std::collections::BTreeMap::new();
+    let mut visited = Vec::new();
+    let mut lines = Vec::new();
+    run_operations(
+        &doc,
+        &[lopdf::content::Operation::new(
+            "Do",
+            vec![Object::Name(b"Fm1".to_vec())],
+        )],
+        &resources,
+        &encodings,
+        Matrix::identity(),
+        &mut visited,
+        &mut lines,
+    );
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts, vec!["XOBJ TEXT"]);
+}
+
+/// The `Tj` pending-space guard is a conjunction: with no pending same-line
+/// jump, a fresh word run must NOT get a synthetic space (an `&&` → `||`
+/// mutant would inject one).
+#[test]
+fn run_operations_tj_space_guard_is_conjunction() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("AB")]),
+        lopdf::content::Operation::new("Tj", vec![tstr("C")]),
+    ]);
+    assert_eq!(lines.len(), 1, "got: {lines:?}");
+    assert_eq!(lines[0].text, "ABC");
+}
+
+/// A small negative TJ kerning number (above the word-gap threshold) is not
+/// a space: the `n < -threshold && have_text` guard stays a conjunction
+/// (kills the `&&` → `||` flip) and keeps its leading minus sign (kills the
+/// `delete -` flip, which would let `-5 < 180` through).
+#[test]
+fn run_operations_tj_small_negative_kerning_is_not_space() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("AB")]),
+        lopdf::content::Operation::new(
+            "TJ",
+            vec![Object::Array(vec![Object::Integer(-5), tstr("CD")])],
+        ),
+    ]);
+    assert_eq!(lines.len(), 1, "got: {lines:?}");
+    assert_eq!(lines[0].text, "ABCD");
+}
+
+/// A TJ kerning number exactly at the word-gap threshold is not a space —
+/// the `n < -TJ_WORD_GAP_THRESHOLD` comparison stays strict.
+#[test]
+fn run_operations_tj_kerning_at_threshold_is_not_space() {
+    let lines = run_ops(vec![
+        lopdf::content::Operation::new("Tj", vec![tstr("AB")]),
+        lopdf::content::Operation::new(
+            "TJ",
+            vec![Object::Array(vec![Object::Integer(-180), tstr("CD")])],
+        ),
+    ]);
+    assert_eq!(lines.len(), 1, "got: {lines:?}");
+    assert_eq!(lines[0].text, "ABCD");
 }
 
 #[test]
@@ -2345,6 +2780,23 @@ fn parse_projects_multiple_and_bullet_context() {
     assert_eq!(projects[1].bullets.len(), 1);
 }
 
+#[test]
+fn parse_projects_recognizes_dash_and_asterisk_bullets() {
+    // "•" is already covered above — this pins the other two `||`
+    // branches in the bullet-prefix chain specifically. With `||`->`&&`,
+    // no single prefix could ever satisfy all four checks at once, so
+    // NOTHING would be recognized as a bullet at all.
+    let projects = parse_projects(&[
+        "Alpha".to_string(),
+        "- dash bullet".to_string(),
+        "* star bullet".to_string(),
+    ]);
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].bullets.len(), 2);
+    assert_eq!(projects[0].bullets[0].en, "dash bullet");
+    assert_eq!(projects[0].bullets[1].en, "star bullet");
+}
+
 // ── build_education_institution_first (delete-field mutants) ──────────
 
 #[test]
@@ -2374,6 +2826,27 @@ fn build_education_institution_first_embedded_field_en() {
         "2015".to_string(),
         "2019".to_string(),
         &["Bachelor of Arts in Economics".to_string()],
+    )
+    .expect("education should build");
+    assert_eq!(edu.degree.en, "Bachelor of Arts");
+    assert_eq!(edu.field.en, "Economics");
+}
+
+// Pins the `pos + 3` byte offset used for the " · " (middle-dot) degree/
+// field separator — untested until now. "·" (U+00B7) is a 2-byte UTF-8
+// character, so " · " is 4 bytes total; `+ 3` deliberately lands on the
+// separator's own trailing space (relying on the immediate `.trim()` to
+// clean it up) rather than `+ 4`. That's not itself a bug, but it does
+// mean a `+` mutated to `-`/`*` here is the only thing standing between
+// this working and either a wrong split or an out-of-bounds/non-char-
+// boundary panic.
+#[test]
+fn build_education_institution_first_embedded_field_middle_dot() {
+    let edu = build_education_institution_first(
+        "MIT".to_string(),
+        "2015".to_string(),
+        "2019".to_string(),
+        &["Bachelor of Arts · Economics".to_string()],
     )
     .expect("education should build");
     assert_eq!(edu.degree.en, "Bachelor of Arts");
@@ -2472,6 +2945,66 @@ fn built_structs_populate_ids() {
     )
     .expect("education should build");
     assert!(!edu.id.is_empty(), "education id must be populated");
+    // "Univ" (not "University") matches no INSTITUTION_KEYWORDS entry, so
+    // this hits the `None => ...` fallback arm (last line = institution,
+    // everything before = field), not the `Some(idx) => ...` arm. Asserts
+    // that split exactly, which also pins the `None if rest.is_empty()`
+    // guard: mutated to `true`, this non-empty-rest case would wrongly
+    // take the empty-institution/empty-field arm instead.
+    assert_eq!(edu.institution, "Univ");
+    assert_eq!(edu.field.en, "in Mathematics");
+}
+
+// Pins the exact byte offset used to split an embedded "X in Y"/"X en Y"
+// degree line, rather than just checking the education entry built at
+// all — a `pos + 4` ("in "/"en " are both 4 bytes) miscounted as `pos - 4`
+// or `pos * 4` produces a wrong split (or, for `* 4`, an out-of-bounds
+// slice panic) that a looser assertion wouldn't catch.
+#[test]
+fn build_education_from_buffer_splits_embedded_in_degree_and_field() {
+    let edu = build_education_from_buffer(
+        &["Bachelor of Science in Computer Science".to_string()],
+        "2017".to_string(),
+        "2020".to_string(),
+    )
+    .expect("education should build");
+    assert_eq!(edu.degree.en, "Bachelor of Science");
+    assert_eq!(edu.field.en, "Computer Science");
+}
+
+#[test]
+fn build_education_from_buffer_splits_embedded_en_degree_and_field() {
+    let edu = build_education_from_buffer(
+        &["Licence en Droit".to_string()],
+        "2017".to_string(),
+        "2020".to_string(),
+    )
+    .expect("education should build");
+    assert_eq!(edu.degree.en, "Licence");
+    assert_eq!(edu.field.en, "Droit");
+}
+
+// Pins `inst_end`'s STARTING value (`idx + 1`, not `idx`) specifically.
+// `looks_like_institution_line` matches by case-insensitive keyword
+// containment, not by requiring the line to start uppercase — so a
+// lowercase-starting institution line (unusual, but real: an OCR'd PDF
+// or an all-lowercase-styled resume) both satisfies `looks_like_
+// institution_line` AND fails the loop's own `is_uppercase` check on its
+// character. A `+` mutated to `*` here makes `inst_end` start at
+// `idx` instead of `idx + 1`; since the loop condition is checked BEFORE
+// incrementing, that's the difference between the institution line
+// itself being included in `institution_lines` (correct) or immediately
+// excluded and folded into `field` instead (wrong).
+#[test]
+fn build_education_from_buffer_inst_end_starts_past_the_institution_line() {
+    let edu = build_education_from_buffer(
+        &["BSc".to_string(), "the university of paris".to_string()],
+        "2017".to_string(),
+        "2020".to_string(),
+    )
+    .expect("education should build");
+    assert_eq!(edu.institution, "the university of paris");
+    assert_eq!(edu.field.en, "");
 }
 
 // ── parse_cv section wiring ──────────────────────────────────────────────────
@@ -2507,6 +3040,24 @@ fn parse_cv_routes_certifications_section_into_cv_certifications() {
             .iter()
             .map(|c| &c.name)
             .collect::<Vec<_>>()
+    );
+}
+
+/// Regression test for `parse_cv`'s harvested-skill merge: skills recovered
+/// from sidebar tool/skill bleed inside the Experience section must land in
+/// `cv.skills` unless a case-insensitive duplicare already exists — pinning
+/// the `!` on `if !cv.skills.iter().any(...)` (a `delete !` mutant flips it
+/// to "only push a duplicate", silently dropping every harvested entry when
+/// the list is otherwise empty).
+#[test]
+fn parse_cv_merges_harvested_skill_lines_into_cv_skills() {
+    let text = "Jane Doe\nDeveloper\n\nExperience\nSome Role at Acme - Jan 2021 - Present\n• A genuine accomplishment bullet.\nTOOLS Kustomize2+ yrs\n• Another genuine bullet.\n\nSkills\nKubernetes\n";
+    let cv = parse_cv(text);
+    let names: Vec<&str> = cv.skills.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Kubernetes", "TOOLS Kustomize 2+ yrs"],
+        "harvested skill from Experience must be merged into cv.skills, got: {names:?}"
     );
 }
 
@@ -2557,5 +3108,1675 @@ fn resolve_project_skill_ids_drops_names_with_no_matching_skill() {
         cv.experiences[0].projects[0].skill_ids.is_empty(),
         "an unresolvable raw skill name must be dropped, not kept as-is: {:?}",
         cv.experiences[0].projects[0].skill_ids
+    );
+}
+
+// ── sections.rs mutation-coverage tests ──────────────────────────────
+//
+// A final standalone date-range row (this app's own renderer shape) used
+// by the split_into_sections resumption-recovery tests below.
+const SECTIONS_STANDALONE_DATE: &str = "\u{0011} May 2021 – October 2022 ½ Bangkok, Thailand";
+
+#[test]
+fn extract_urls_linkedin_dot_non_com_domain_sets_linkedin() {
+    // Kills `||` -> `&&` at extract_urls's linkedin check: a domain that
+    // contains "linkedin." but is not "linkedin.com" (e.g. linkedin.fr)
+    // must still be recognized as the LinkedIn URL via the second clause.
+    let (li, _gh, web) = extract_urls("linkedin.fr/in/john");
+    assert_eq!(li, Some("linkedin.fr/in/john".to_string()));
+    assert_eq!(web, None);
+}
+
+#[test]
+fn extract_urls_https_prefix_sets_website() {
+    // Kills `||` -> `&&` between the https:// and www. clauses: a bare
+    // "https://" URL (which never also starts with "www.") must still be
+    // recognized as the website.
+    let (_li, _gh, web) = extract_urls("https://example.com");
+    assert_eq!(web, Some("https://example.com".to_string()));
+}
+
+#[test]
+fn detect_section_inline_content_at_limit_is_header() {
+    // Kills `<=` -> `>` on SECTION_HEADER_INLINE_CONTENT_LIMIT: exactly the
+    // limit (40) still counts as a header, one past it does not.
+    let at_limit = format!("Skills:{}", "a".repeat(40));
+    assert_eq!(detect_section(&at_limit), Some("skills"));
+    let over_limit = format!("Skills:{}", "a".repeat(41));
+    assert_eq!(detect_section(&over_limit), None);
+}
+
+#[test]
+fn looks_like_bare_role_line_exactly_100_chars_true() {
+    // Kills `>` -> `>=` on the max-length guard: exactly 100 chars is still
+    // a plausible role line; only >100 is rejected.
+    assert!(looks_like_bare_role_line(&"A".repeat(100)));
+}
+
+#[test]
+fn split_into_sections_globales_swallow_only_after_competences() {
+    // Kills the `==` -> `!=` on `trimmed.to_lowercase() == "compétences"`
+    // (413) and the `&&` -> `||` joining it to the "globales" lookahead
+    // (414): a NORMAL header immediately followed by "globales" must still
+    // open its section, not be swallowed by the false-positive guard.
+    let sections = split_into_sections("Experience\nGlobales\nEngineer");
+    assert_eq!(
+        sections,
+        vec![(
+            "experience",
+            vec!["Globales".to_string(), "Engineer".to_string()]
+        )]
+    );
+}
+
+#[test]
+fn split_into_sections_competences_globales_is_not_a_header() {
+    // "Compétences" immediately followed by "Globales" is the false-positive
+    // two-line label, not a real Skills header, so no skills section may be
+    // opened. This kills the bounds/negation/equality mutants on lines
+    // 413/414/417/418 (lookahead index arithmetic, the `!l.is_empty()`
+    // negation, and the `== "globales"` check).
+    let sections = split_into_sections("Experience\nRust dev\nCompétences\nGlobales\nGo");
+    assert!(
+        !sections.iter().any(|(s, _)| *s == "skills"),
+        "Compétences Globales must not open a skills section, got: {:?}",
+        sections
+    );
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0].0, "experience");
+}
+
+#[test]
+fn split_into_sections_recovers_last_role_company_before_date() {
+    // When a standalone job-header date line is found outside "experience",
+    // the recovery scan must pick the LAST two non-bleed lines (the genuine
+    // role+company immediately preceding it) — not the first two, and not
+    // every line. Kills the `!=`/`&&`/boundary mutants on 455/458/465.
+    let text = format!("SKILLS\nRole A\nCompany A\nRole B\nCompany B\n{SECTIONS_STANDALONE_DATE}");
+    let sections = split_into_sections(&text);
+    let exp = sections
+        .iter()
+        .find(|(s, _)| *s == "experience")
+        .unwrap_or_else(|| panic!("expected a recovered experience section, got: {sections:?}"));
+    assert_eq!(exp.1[0], "Role B");
+    assert_eq!(exp.1[1], "Company B");
+    assert_eq!(exp.1[2], SECTIONS_STANDALONE_DATE);
+}
+
+#[test]
+fn split_into_sections_no_recovery_with_fewer_than_two_preceding_lines() {
+    // Kills `>` -> `>=` on the `idx > 0` walk guard: with only one preceding
+    // non-bleed line the scan must stop at the start of the buffer instead
+    // of decrementing past index 0 (which would underflow and panic).
+    let text = format!("SKILLS\nDevOps Engineer\n{SECTIONS_STANDALONE_DATE}");
+    let sections = split_into_sections(&text);
+    assert!(
+        !sections.iter().any(|(s, _)| *s == "experience"),
+        "a single preceding line is not a role+company pair, got: {:?}",
+        sections
+    );
+}
+
+#[test]
+fn split_into_sections_recovery_keeps_buffered_lines_in_old_section() {
+    // Before switching to the recovered experience entry, the accumulated
+    // lines must be flushed to the section they belonged to. With no section
+    // header before them yet, that is the initial "header" section. Kills
+    // the `!`-deletion on 483:24 and the `||` -> `&&` on 483:50.
+    let text = format!("Role A\nCompany A\nRole B\nCompany B\n{SECTIONS_STANDALONE_DATE}");
+    let sections = split_into_sections(&text);
+    let header = sections
+        .iter()
+        .find(|(s, _)| *s == "header")
+        .unwrap_or_else(|| {
+            panic!("expected the buffered lines in a header section, got: {sections:?}")
+        });
+    assert_eq!(
+        header.1,
+        vec![
+            "Role A".to_string(),
+            "Company A".to_string(),
+            "Role B".to_string(),
+            "Company B".to_string()
+        ]
+    );
+}
+
+#[test]
+fn split_into_sections_consecutive_headers_keep_empty_non_header_section() {
+    // Kills the `!=` -> `==` on the `current_section != "header"` clause of
+    // the boundary guard (495): an empty section that is not "header" must
+    // still be emitted when the next header arrives.
+    let sections = split_into_sections("SKILLS\nEXPERIENCE");
+    assert_eq!(sections.len(), 1, "got: {sections:?}");
+    assert_eq!(sections[0].0, "skills");
+    assert!(sections[0].1.is_empty());
+}
+
+// ── dates.rs mutation-coverage tests ─────────────────────────────────
+
+fn lines_of(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn extract_date_range_from_end_empty_before_start_is_not_a_range() {
+    // Kills `&&` -> `||` on the fast-path emptiness guard (38): when the
+    // same separator repeats but the text before the first one is empty,
+    // the fast path must be rejected and the fallback (bare leading year)
+    // must produce the start instead.
+    assert_eq!(
+        extract_date_range_from_end(" - Jan 2021 - Present"),
+        Some(("2021".to_string(), "Present".to_string()))
+    );
+}
+
+#[test]
+fn extract_date_range_from_end_end_exactly_three_words_proceeds() {
+    // Kills `>` -> `==`/`>=` on the "end is too long" guard (63): exactly
+    // three words is still a valid end, not trailing junk.
+    assert_eq!(
+        extract_date_range_from_end("Acme France December 2024 – February 2026 (Remote)"),
+        Some((
+            "December 2024".to_string(),
+            "February 2026 (Remote)".to_string()
+        ))
+    );
+}
+
+#[test]
+fn extract_date_range_from_end_loose_month_requires_all_four_conditions() {
+    // Kills the `&&` -> `||` flips in the abbreviated-month branch
+    // (92/93/94): a non-month penultimate token must fall through to the
+    // bare-year branch, not be read as a start month.
+    assert_eq!(
+        extract_date_range_from_end("Acme France Rust 2024 – February 2026"),
+        Some(("2024".to_string(), "February 2026".to_string()))
+    );
+}
+
+#[test]
+fn extract_date_range_from_end_abbrev_month_before_real_background() {
+    // Kills `-` -> `/` on the abbreviation branch's `words[..len-2]` split
+    // (97): the background check must include the whole pre-month prefix.
+    assert_eq!(
+        extract_date_range_from_end("1 · Paris Dec 2024 – February 2026"),
+        Some(("Dec 2024".to_string(), "February 2026".to_string()))
+    );
+}
+
+#[test]
+fn extract_date_range_from_end_non_4_digit_year_is_not_a_date() {
+    // Kills `&&` -> `||` on the bare-year branch guard (109): a token that
+    // is not 4 digits long must not be accepted as a bare year.
+    assert_eq!(
+        extract_date_range_from_end("Acme France 20x4 – February 2026"),
+        None
+    );
+}
+
+#[test]
+fn extract_date_range_from_end_bare_year_with_short_background() {
+    // Kills `-` -> `/` on the bare-year branch's `words[..len-1]` split
+    // (110): the background check must include every word before the year.
+    assert_eq!(
+        extract_date_range_from_end("1 · Paris Acme 2024 – February 2026"),
+        Some(("2024".to_string(), "February 2026".to_string()))
+    );
+}
+
+#[test]
+fn extract_trailing_date_range_loose_basic() {
+    // Kills the function-is-None replacement (547) plus the `+`/skip/negation
+    // mutants on the separator-length, present/year guard and the `>`-limit
+    // guard (551/555/563).
+    assert_eq!(
+        extract_trailing_date_range_loose("University X, City Sept 2014 – Oct 2017"),
+        Some((
+            "University X, City".to_string(),
+            "Sept 2014".to_string(),
+            "Oct 2017".to_string()
+        ))
+    );
+}
+
+#[test]
+fn extract_trailing_date_range_loose_present() {
+    // Kills the `!`-deletion on the `!is_present` guard (555:16): an
+    // open-ended "Present" end must still be accepted.
+    assert_eq!(
+        extract_trailing_date_range_loose("University X Sept 2014 – Present"),
+        Some((
+            "University X".to_string(),
+            "Sept 2014".to_string(),
+            "Present".to_string()
+        ))
+    );
+}
+
+#[test]
+fn extract_trailing_date_range_loose_end_exactly_three_words_proceeds() {
+    // Kills `>` -> `==`/`>=` on the length guard (563): exactly three words
+    // is a valid end.
+    assert_eq!(
+        extract_trailing_date_range_loose("University X Sept 2014 – Oct 2017 (Remote)"),
+        Some((
+            "University X".to_string(),
+            "Sept 2014".to_string(),
+            "Oct 2017 (Remote)".to_string()
+        ))
+    );
+}
+
+#[test]
+fn extract_trailing_date_range_loose_loose_month_requires_both_conditions() {
+    // Kills `&&` -> `||` on the loose-month branch (569): a non-month
+    // penultimate token must fall through to the bare-year branch.
+    assert_eq!(
+        extract_trailing_date_range_loose("Acme France Rust 2024 – February 2026"),
+        Some((
+            "Acme France Rust".to_string(),
+            "2024".to_string(),
+            "February 2026".to_string()
+        ))
+    );
+}
+
+#[test]
+fn extract_trailing_date_range_loose_non_4_digit_year_is_not_a_date() {
+    // Kills the `||`/`==` flips on the bare-year guard (576): a 5-digit run
+    // must not be treated as a year.
+    assert_eq!(
+        extract_trailing_date_range_loose("Acme France 20245 – February 2026"),
+        None
+    );
+}
+
+#[test]
+fn extract_trailing_date_range_loose_bare_year_with_short_background() {
+    // Kills `-` -> `/` on the bare-year branch's split (577).
+    assert_eq!(
+        extract_trailing_date_range_loose("1 · Paris Acme 2024 – February 2026"),
+        Some((
+            "1 · Paris Acme".to_string(),
+            "2024".to_string(),
+            "February 2026".to_string()
+        ))
+    );
+}
+
+#[test]
+fn rejoin_fragmented_date_lines_drops_icon_before_month_and_joins_year() {
+    // Kills the icon-arm deletion and the `!`-deletion in the glyph check
+    // (610), the empty-check negation (616) and the `||` -> `&&` in the
+    // month-name/abbreviation membership check (618).
+    let out = rejoin_fragmented_date_lines(&lines_of(&["\u{0011}", "Sept", "2014 – Oct 2017"]));
+    assert_eq!(out, vec!["Sept 2014 – Oct 2017".to_string()]);
+}
+
+#[test]
+fn rejoin_fragmented_date_lines_reverse_order_month_after_year_range() {
+    // Kills the `!`-deletion in month_after_optional_icon (628), the
+    // `>=` -> `<` length guard (637) and the always-false guard replacement
+    // (648:28 false).
+    let out = rejoin_fragmented_date_lines(&lines_of(&["2014 – Oct 2017", "Sept"]));
+    assert_eq!(out, vec!["Sept 2014 – Oct 2017".to_string()]);
+}
+
+#[test]
+fn rejoin_fragmented_date_lines_lone_month_then_year_range() {
+    // Also pins the `>=` -> `<` length guard (637) via the forward order.
+    let out = rejoin_fragmented_date_lines(&lines_of(&["Sept", "2014 – Oct 2017"]));
+    assert_eq!(out, vec!["Sept 2014 – Oct 2017".to_string()]);
+}
+
+#[test]
+fn rejoin_fragmented_date_lines_non_year_first_token_is_not_joined() {
+    // Kills the always-true guard replacement (648:28 true) and the `&&` ->
+    // `||` in the 4-digit/all-digit guard (648:45): a non-numeric first
+    // token must not trigger the reverse-order join.
+    let input = lines_of(&["abcd – Oct 2017", "Sept"]);
+    assert_eq!(rejoin_fragmented_date_lines(&input), input);
+}
+
+#[test]
+fn rejoin_fragmented_date_lines_five_digit_first_token_is_not_joined() {
+    // Kills the `==` -> `!=` in the 4-digit guard (648:40): a 5-digit first
+    // token is not a year prefix for this pattern.
+    let input = lines_of(&["20145 – Oct 2017", "Sept"]);
+    assert_eq!(rejoin_fragmented_date_lines(&input), input);
+}
+
+// ── push_skill_entry ──────────────────────────────────────────────────────
+
+#[test]
+fn push_skill_entry_rejects_a_single_character() {
+    let mut skills = Vec::new();
+    push_skill_entry("a", SkillCategory::default(), &mut skills);
+    assert!(
+        skills.is_empty(),
+        "a 1-char entry must be rejected by `trimmed.len() < 2`, got {skills:?}"
+    );
+}
+
+#[test]
+fn push_skill_entry_accepts_exactly_two_characters() {
+    // Pins the `< 2` boundary itself, not just "short vs long" in general
+    // — `==`/`<=` mutants would both wrongly reject exactly-2-char input.
+    let mut skills = Vec::new();
+    push_skill_entry("Go", SkillCategory::default(), &mut skills);
+    assert_eq!(skills.len(), 1, "a 2-char entry must be accepted");
+    assert_eq!(skills[0].name, "Go");
+}
+
+#[test]
+fn push_skill_entry_rejects_header_lines_case_insensitively() {
+    // A single one of the four header strings deliberately doesn't match
+    // any of the other three — under a `||`->`&&` mutation on this chain,
+    // NO input could ever satisfy all four equalities simultaneously, so
+    // nothing would ever be recognized as a header at all.
+    for header in [
+        "Skills",
+        "COMPÉTENCES",
+        "Technical Skills",
+        "compétences techniques",
+    ] {
+        let mut skills = Vec::new();
+        push_skill_entry(header, SkillCategory::default(), &mut skills);
+        assert!(
+            skills.is_empty(),
+            "header line {header:?} must be skipped, not added as a skill: {skills:?}"
+        );
+    }
+}
+
+#[test]
+fn push_skill_entry_accepts_a_normal_skill_name() {
+    let mut skills = Vec::new();
+    push_skill_entry("• Rust", SkillCategory::default(), &mut skills);
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].name, "Rust");
+}
+
+// ── parse_education boundary/entry-split coverage ─────────────────────────
+
+#[test]
+fn parse_education_year_only_line_requires_exactly_four_digits() {
+    let lines = vec![
+        "BSc".to_string(),
+        "MIT".to_string(),
+        "202".to_string(),
+        "2017".to_string(),
+    ];
+    let edus = parse_education(&lines);
+    assert_eq!(
+        edus.len(),
+        1,
+        "expected exactly one entry, got {:?}",
+        edus.iter().map(|e| &e.degree.en).collect::<Vec<_>>()
+    );
+    assert_eq!(edus[0].start_year, "2017");
+    assert!(
+        edus[0].institution.contains("202")
+            || edus[0].field.en.contains("202")
+            || edus[0].degree.en.contains("202"),
+        "the 3-digit line must be folded into buffered text, not treated \
+         as a (premature, wrong) year-only trigger: {edus:?}"
+    );
+}
+
+#[test]
+fn parse_education_year_only_line_requires_all_ascii_digits() {
+    let lines = vec![
+        "BSc".to_string(),
+        "acme".to_string(),
+        "MIT".to_string(),
+        "2017".to_string(),
+    ];
+    let edus = parse_education(&lines);
+    assert_eq!(
+        edus.len(),
+        1,
+        "a 4-char non-digit line must not be treated as a year-only \
+         trigger, got {:?}",
+        edus.iter().map(|e| &e.degree.en).collect::<Vec<_>>()
+    );
+    assert_eq!(edus[0].start_year, "2017");
+}
+
+#[test]
+fn parse_education_starts_new_degree_first_entry_flushes_without_date_range() {
+    let lines = vec![
+        "Master of Science".to_string(),
+        "University X".to_string(),
+        "Bachelor of Science".to_string(),
+        "University Y".to_string(),
+    ];
+    let edus = parse_education(&lines);
+    assert_eq!(
+        edus.len(),
+        2,
+        "a new degree line while the buffer already holds a complete \
+         degree+institution entry must flush it as its own entry, got {:?}",
+        edus.iter().map(|e| &e.degree.en).collect::<Vec<_>>()
+    );
+    assert_eq!(edus[0].degree.en, "Master of Science");
+    assert_eq!(edus[1].degree.en, "Bachelor of Science");
+}
+
+#[test]
+fn parse_education_flushes_buffered_degree_first_entry_before_institution_date_row() {
+    let lines = vec![
+        "Bachelor of Science".to_string(),
+        "MIT".to_string(),
+        "Some College – Jan 2015 – Jun 2018".to_string(),
+    ];
+    let edus = parse_education(&lines);
+    assert_eq!(
+        edus.len(),
+        2,
+        "the buffered degree-first entry must be flushed, not silently \
+         dropped, when an institution+date row starts before it ever got \
+         a date range of its own: got {:?}",
+        edus.iter().map(|e| &e.degree.en).collect::<Vec<_>>()
+    );
+    assert_eq!(edus[0].degree.en, "Bachelor of Science");
+}
+
+// ── looks_like_stray_heading ────────────────────────────────────────────────
+
+#[test]
+fn looks_like_stray_heading_two_words_all_caps_is_true() {
+    assert!(looks_like_stray_heading("TOOLS SKILLS"));
+}
+
+#[test]
+fn looks_like_stray_heading_three_words_is_false() {
+    // Pins the `words.len() > 2` half of the early-return guard: with
+    // `||`->`&&`, an all-caps 3-word line couldn't ever satisfy BOTH
+    // `is_empty()` and `len() > 2` at once, so it would wrongly fall
+    // through and return true instead of the correct false.
+    assert!(!looks_like_stray_heading("TOOLS SKILLS USED"));
+}
+
+#[test]
+fn looks_like_stray_heading_mixed_case_is_false() {
+    // Pins the `&&` between has_letters and all-uppercase: with `||`, a
+    // mixed-case (but letter-containing) short line would wrongly count.
+    assert!(!looks_like_stray_heading("Tools Skills"));
+}
+
+#[test]
+fn looks_like_stray_heading_digits_only_is_false() {
+    // Pins the same `&&` from the other side: `has_letters` is false here,
+    // and `.all()` on the (now-empty, since there are no alphabetic
+    // chars) uppercase-filter is vacuously true — with `||`, `false ||
+    // true` wrongly returns true instead of the correct false.
+    assert!(!looks_like_stray_heading("123"));
+}
+
+// ── commit_pending_line ─────────────────────────────────────────────────────
+
+#[test]
+fn commit_pending_line_separates_successive_tools_entries_with_a_space() {
+    let mut context = Vec::new();
+    let mut tools_text = String::new();
+    commit_pending_line(&mut context, &mut tools_text, "Techs: Rust");
+    commit_pending_line(&mut context, &mut tools_text, "Docker");
+    assert_eq!(
+        tools_text, "Techs: Rust Docker",
+        "successive tools_text appends must be space-separated, not run \
+         together, and the first append must not have a leading space"
+    );
+}
+
+// ── flush_project ────────────────────────────────────────────────────────
+
+fn flush_project_context(context_lines: &[&str]) -> Vec<String> {
+    let mut exp = Experience::default();
+    let mut name: Option<String> = Some("proj".to_string());
+    let mut start_date = String::new();
+    let mut end_date = String::new();
+    let mut context: Vec<String> = context_lines.iter().map(|s| s.to_string()).collect();
+    let mut tools_text = String::new();
+    let mut bullets = Vec::new();
+    flush_project(
+        &mut exp,
+        &mut name,
+        &mut start_date,
+        &mut end_date,
+        &mut context,
+        &mut tools_text,
+        &mut bullets,
+    );
+    exp.projects[0]
+        .context
+        .iter()
+        .map(|c| c.en.clone())
+        .collect()
+}
+
+#[test]
+fn flush_project_drops_a_stray_all_caps_heading_from_context() {
+    let kept = flush_project_context(&["TOOLS", "Built a thing."]);
+    assert_eq!(kept, vec!["Built a thing.".to_string()]);
+}
+
+#[test]
+fn flush_project_drops_a_short_bare_label_from_context() {
+    let kept = flush_project_context(&["Situation:", "Built a thing."]);
+    assert_eq!(kept, vec!["Built a thing.".to_string()]);
+}
+
+#[test]
+fn flush_project_bare_label_length_boundary_is_inclusive_at_40() {
+    // Exactly 40 chars (including the trailing ':') must still be
+    // dropped as a bare label — pins `<= BARE_LABEL_MAX_LEN` specifically
+    // against a `>` mutation, which would wrongly keep it.
+    let exactly_40 = "x".repeat(39) + ":";
+    assert_eq!(exactly_40.chars().count(), 40);
+    let kept = flush_project_context(&[&exactly_40, "Built a thing."]);
+    assert_eq!(kept, vec!["Built a thing.".to_string()]);
+}
+
+#[test]
+fn flush_project_keeps_a_long_colon_ending_sentence() {
+    // 41 chars: one over the boundary, so this must be KEPT (it's the
+    // "long sentence that happens to end in a colon" case the doc
+    // comment on BARE_LABEL_MAX_LEN describes, not a bare label).
+    let exactly_41 = "x".repeat(40) + ":";
+    assert_eq!(exactly_41.chars().count(), 41);
+    let kept = flush_project_context(&[&exactly_41]);
+    assert_eq!(kept, vec![exactly_41]);
+}
+
+// ── Test helpers ─────────────────────────────────────────────────────────────
+
+fn long_prose() -> String {
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit sed do eiusmod tempor".to_string()
+}
+
+// ── parse_certifications (645, 670, 703) ─────────────────────────────────────
+
+#[test]
+fn parse_certifications_flattened_two_alnum_segments_are_kept() {
+    // 645: `>= 2` in the flattening filter must keep a segment with
+    // exactly 2 alphanumeric characters. Under `>=`→`<`, "C2" (count 2)
+    // would be dropped, changing the issuer field.
+    let lines = vec!["K8s · C2 · Bar · Jan 2020 – Dec 2021".to_string()];
+    let certs = parse_certifications(&lines);
+    assert_eq!(certs.len(), 1);
+    assert_eq!(certs[0].name, "K8s");
+    assert_eq!(
+        certs[0].issuer, "C2 · Bar",
+        "the 2-alnum segment 'C2' must survive the flattening filter"
+    );
+}
+
+#[test]
+fn parse_certifications_two_dateless_lines_merges_as_one() {
+    // 670: `buffer.len() > 2` boundary at 2: exactly 2 dateless lines with
+    // no dates anywhere must be merged as a single cert (name + issuer),
+    // not split per-line. Under `>`→`==` or `>`→`>=`, the condition
+    // becomes true and the lines are wrongly split into 2 certs.
+    let lines = vec!["AWS Certified".to_string(), "Amazon".to_string()];
+    let certs = parse_certifications(&lines);
+    assert_eq!(
+        certs.len(),
+        1,
+        "exactly-2 dateless lines must merge into one cert, got {:?}",
+        certs.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
+    assert_eq!(certs[0].name, "AWS Certified");
+    assert_eq!(certs[0].issuer, "Amazon");
+}
+
+#[test]
+fn parse_certifications_three_dateless_lines_splits_per_line() {
+    // 670: > 2: three dateless lines must be split one-per-line (3 certs).
+    // Under `>`→`<`, the guard flips to false and the lines merge as 1.
+    let lines = vec![
+        "AWS Certified".to_string(),
+        "GCP Certified".to_string(),
+        "Azure Certified".to_string(),
+    ];
+    let certs = parse_certifications(&lines);
+    assert_eq!(
+        certs.len(),
+        3,
+        "three dateless lines should become three separate certs, got {:?}",
+        certs.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
+    assert_eq!(certs[0].name, "AWS Certified");
+    assert_eq!(certs[1].name, "GCP Certified");
+    assert_eq!(certs[2].name, "Azure Certified");
+}
+
+#[test]
+fn parse_certifications_deferred_when_section_has_dated_entries() {
+    // 670: `&&`→`||` — when the section already produced a dated cert
+    // AND there are >2 trailing dateless lines, the deferred path should
+    // merge them as one cert. Under `||`, it wrongly splits per-line.
+    let lines = vec![
+        "AWS Certified".to_string(),
+        "Jan 2020 – Dec 2021".to_string(),
+        "Foo".to_string(),
+        "Bar".to_string(),
+        "Baz".to_string(),
+    ];
+    let certs = parse_certifications(&lines);
+    assert_eq!(
+        certs.len(),
+        2,
+        "must produce 1 dated cert + 1 merged trailing cert, got {:?}",
+        certs
+            .iter()
+            .map(|c| (&c.name, &c.issuer))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(certs[0].name, "AWS Certified");
+    assert_eq!(certs[1].name, "Foo");
+}
+
+#[test]
+fn parse_certifications_dateless_buffer_with_year_only_is_single_record() {
+    // 703: `&&`→`||` in the "bare-year in trailing lines" check. A 4-digit
+    // non-digit line (like a bare year) signals a single record. Under
+    // `||`, a 4-char non-digit line would wrongly trigger the merged path.
+    let lines = vec![
+        "AWS Certified".to_string(),
+        "20ab".to_string(),
+        "Amazon".to_string(),
+    ];
+    let certs = parse_certifications(&lines);
+    assert_eq!(
+        certs.len(),
+        3,
+        "a 4-char NON-digit line must NOT trigger the bare-year merge, got {:?}",
+        certs.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
+}
+
+// ── build_certification_from_buffer (747) ────────────────────────────────────
+
+#[test]
+fn build_certification_from_buffer_only_folds_real_digit_year() {
+    // 747: `&&`→`||` — a 4-char NON-digit line (no `is_ascii_digit`) must
+    // be folded into `issuer`, not appended to `name` as a "(year)".
+    let cert = build_certification_from_buffer(
+        &[
+            "AWS Certified".to_string(),
+            "abcd".to_string(),
+            "Amazon".to_string(),
+        ],
+        None,
+    )
+    .expect("cert should build");
+    assert_eq!(
+        cert.name, "AWS Certified",
+        "a non-digit 4-char line must become an issuer part, not a year on the name"
+    );
+    assert_eq!(cert.issuer, "abcd · Amazon");
+}
+
+// ── is_dots_only (774, 775, 778) ────────────────────────────────────────────
+
+#[test]
+fn is_dots_only_pure_dots_true() {
+    assert!(is_dots_only("○ ○ ○"));
+}
+
+#[test]
+fn is_dots_only_mixed_dot_types_true() {
+    // 778: the three `||`→`&&` mutants each break for at least one char
+    // in this mixed set — each glyph class is only true on the branch it
+    // tests, and the `&&` mutants demand ALL branches simultaneously.
+    assert!(is_dots_only("● ○ ● •"));
+}
+
+#[test]
+fn is_dots_only_non_dots_false() {
+    assert!(!is_dots_only("English"));
+    assert!(!is_dots_only(""));
+}
+
+// ── looks_like_interest_heading (795, 796, 803) ─────────────────────────────
+
+#[test]
+fn looks_like_interest_heading_prose_following_bare_word_is_true() {
+    // 795: `replace fn return with false` — any true-returning call kills it.
+    let next = long_prose();
+    assert!(looks_like_interest_heading("Musique", Some(&next)));
+    assert!(!looks_like_interest_heading("Musique", None));
+}
+
+#[test]
+fn looks_like_interest_heading_recognizes_dash_as_marker() {
+    // 796: first `||` (between " - " and " (") flipped to `&&` would make
+    // a dash-only line no longer count as having a proficiency marker.
+    assert!(!looks_like_interest_heading(
+        "French - Native",
+        Some(&long_prose())
+    ));
+}
+
+#[test]
+fn looks_like_interest_heading_recognizes_comma_as_marker() {
+    // 796: second `||` (between " (" and ", ") flipped to `&&`.
+    assert!(!looks_like_interest_heading(
+        "French, Native",
+        Some(&long_prose())
+    ));
+}
+
+#[test]
+fn looks_like_interest_heading_recognizes_colon_as_marker() {
+    // 796: third `||` (between ", " and ':') flipped to `&&`.
+    assert!(!looks_like_interest_heading(
+        "Français : courant",
+        Some(&long_prose())
+    ));
+}
+
+#[test]
+fn looks_like_interest_heading_long_next_alone_is_enough() {
+    // 803: first `||` in the next-match clause (len>50 || count>=2).
+    // Only len>50 is true here — kills `||`→`&&` on that operator.
+    assert!(looks_like_interest_heading("Musique", Some(&long_prose())));
+}
+
+#[test]
+fn looks_like_interest_heading_two_commas_alone_are_enough() {
+    // 803: second `||` in the next-match clause (count>=2 || punct).
+    // Only count>=2 is true here — kills `||`→`&&` on that operator.
+    assert!(looks_like_interest_heading(
+        "Musique",
+        Some(&"a, b, c, d".to_string())
+    ));
+}
+
+#[test]
+fn looks_like_interest_heading_next_of_exactly_50_chars_is_not_prose() {
+    // 803: `>`→`==` and `>`→`>=` — exactly 50 chars (not >50) must be
+    // treated as non-prose (short), returning false.
+    let next = "abcdefghij".repeat(5); // exactly 50 characters
+    assert_eq!(next.len(), 50);
+    assert!(!looks_like_interest_heading("Musique", Some(&next)));
+}
+
+// ── parse_languages interest-heading boundary (816) ──────────────────────────
+
+#[test]
+fn parse_languages_stops_at_interests_blurb_after_real_language() {
+    // 816: `delete !` in `!langs.is_empty()` — when `langs` is empty
+    // (i=0), a lookalike interest-heading line would wrongly cause a
+    // break instead of being parsed; when `langs` is non-empty, the
+    // `+`→`-` or `+`→`*` on `lines.get(i + 1)` reads the prev/same
+    // line instead of next and the heading is no longer recognized,
+    // allowing the blurb to be parsed as a language entry.
+    let lines = vec!["English".to_string(), "Musique".to_string(), long_prose()];
+    let langs = parse_languages(&lines);
+    assert_eq!(
+        langs.len(),
+        1,
+        "only 'English' should be kept; 'Musique' + prose = interest blurb, got {:?}",
+        langs.iter().map(|l| &l.name).collect::<Vec<_>>()
+    );
+    assert_eq!(langs[0].name, "English");
+}
+
+// ── split_paren_segments (861, 878) ─────────────────────────────────────────
+
+#[test]
+fn split_paren_segments_nested_parens_first_segment_includes_outer_parens() {
+    // 861: delete the '(' match arm (or `+=`→`-=`/`*=`) — without '('
+    // incrementing depth, every ')' immediately closes the current
+    // segment at the first ')', splitting nested parens differently.
+    let segs = split_paren_segments("A (B (C) D) E");
+    assert_eq!(segs, vec!["A (B (C) D)", "E"]);
+}
+
+#[test]
+fn split_paren_segments_keeps_trailing_text_after_last_close_paren() {
+    // 878: delete `!` in `if !tail.is_empty()` — would skip the
+    // non-empty trailing segment "Anglais".
+    let segs = split_paren_segments("Français (Native / Bilingual) Anglais");
+    assert_eq!(segs, vec!["Français (Native / Bilingual)", "Anglais"]);
+}
+
+// ── parse_single_language_entry level markers (890, 894, 895) ────────────────
+
+#[test]
+fn parse_single_language_entry_bilingue_yields_native() {
+    // 890: ||→&& on the second || (between bilingue and maternelle).
+    // "bilingue" as the sole truth makes that `&&` false, wrongly
+    // dropping the entry to Conversational.
+    let lang = parse_single_language_entry("Français (Bilingue)");
+    let lang = lang.expect("should parse");
+    assert_eq!(lang.level, LanguageLevel::Native);
+}
+
+#[test]
+fn parse_single_language_entry_maternelle_yields_native() {
+    let lang = parse_single_language_entry("Français (Maternelle)");
+    let lang = lang.expect("should parse");
+    assert_eq!(lang.level, LanguageLevel::Native);
+}
+
+#[test]
+fn parse_single_language_entry_fluent_yields_professional() {
+    // 894: ||→&& between "professionnel" and "fluent".
+    let lang = parse_single_language_entry("Anglais (Fluent)");
+    let lang = lang.expect("should parse");
+    assert_eq!(lang.level, LanguageLevel::Professional);
+}
+
+#[test]
+fn parse_single_language_entry_courant_yields_professional() {
+    // 895: ||→&& between "fluent" and "courant".
+    let lang = parse_single_language_entry("Anglais (Courant)");
+    let lang = lang.expect("should parse");
+    assert_eq!(lang.level, LanguageLevel::Professional);
+}
+
+// ── is_bare_years_marker (989, 1002) ────────────────────────────────────────
+
+#[test]
+fn is_bare_years_marker_digits_without_plus_false() {
+    // 989:26: `&&`→`||` between `ends_with('+')` and `len > 1` — "22"
+    // (no '+') would wrongly make `digits_plus` return true.
+    assert!(!is_bare_years_marker("22 yrs"));
+}
+
+#[test]
+fn is_bare_years_marker_plus_without_digits_false() {
+    // 989:37: `>`→`>=` and 989:41: `&&`→`||` — "+" (len 1, no digits
+    // before '+') would wrongly pass the guard.
+    assert!(!is_bare_years_marker("+ yrs"));
+}
+
+#[test]
+fn is_bare_years_marker_digits_without_plus_two_token_false() {
+    // 1002:41: `&&`→`||` in the [num, unit] arm — "22" (digits_plus
+    // false) OR "yrs" (is_years_word true) would wrongly match.
+    assert!(!is_bare_years_marker("22 yrs"));
+}
+
+// ── harvest_skill_segments (1088–1132) ──────────────────────────────────────
+
+#[test]
+fn harvest_skill_segments_two_token_yrs_variant() {
+    // 1088: `==`→`!=` on "yrs" in is_years_word.
+    assert_eq!(
+        harvest_skill_segments("Docker 3+ yrs"),
+        Some(vec!["Docker 3+ yrs".to_string()])
+    );
+}
+
+#[test]
+fn harvest_skill_segments_two_token_yr_variant() {
+    // 1088: `==`→`!=` on "yr".
+    assert_eq!(
+        harvest_skill_segments("Docker 3+ yr"),
+        Some(vec!["Docker 3+ yr".to_string()])
+    );
+}
+
+#[test]
+fn harvest_skill_segments_two_token_years_variant() {
+    // 1088: `==`→`!=` on "years"; also kills the `||`→`&&` at 1088:35
+    // (between "yr" and "years") — "years" relies solely on the 3rd
+    // clause; flipping it to `&&` makes the check false.
+    assert_eq!(
+        harvest_skill_segments("Docker 3+ years"),
+        Some(vec!["Docker 3+ years".to_string()])
+    );
+}
+
+#[test]
+fn harvest_skill_segments_two_token_year_variant() {
+    // 1088: `==`→`!=` on "year"; also kills the `||`→`&&` at 1088:52
+    // (between "years" and "year").
+    assert_eq!(
+        harvest_skill_segments("Docker 3+ year"),
+        Some(vec!["Docker 3+ year".to_string()])
+    );
+}
+
+#[test]
+fn harvest_skill_segments_digits_plus_requires_plus_suffix() {
+    // 1091:26/37/41 — `digits_plus` guards: a bare "22" or "+" without a
+    // trailing '+' must NOT pass; "22" OR'd instead of AND'd at any guard
+    // position flips the result.
+    assert_eq!(harvest_skill_segments("Something 22 yrs"), None);
+    assert_eq!(harvest_skill_segments("Something + yrs"), None);
+}
+
+#[test]
+fn harvest_skill_segments_years_word_at_index_zero_ignored() {
+    // 1096:37: `&&`→`||` would short-circuit with i=0 and attempt to
+    // read `tokens[i-1]` (panic); 1096:42: `>`→`>=` same effect.
+    assert_eq!(harvest_skill_segments("yrs 3+"), None);
+}
+
+#[test]
+fn harvest_skill_segments_fused_marker_requires_digits() {
+    // 1103:20: delete `!` in `!digits.is_empty()` — would skip valid
+    // fused markers like "3+yrs"; 1103:39: `&&`→`||` — would let non-
+    // digit strings like "3a+yrs" pass as markers.
+    assert_eq!(
+        harvest_skill_segments("Docker 3+yrs"),
+        Some(vec!["Docker 3+yrs".to_string()])
+    );
+    assert_eq!(harvest_skill_segments("Docker 3a+yrs"), None);
+}
+
+#[test]
+fn harvest_skill_segments_slash_instead_of_minus_index() {
+    // 1097: `-`→`/` on `tokens[i - 1]` — becomes `tokens[i / 1]` which
+    // is the years-word itself, not the digit-plus token.
+    assert_eq!(
+        harvest_skill_segments("Docker 3+ yrs"),
+        Some(vec!["Docker 3+ yrs".to_string()])
+    );
+}
+
+#[test]
+fn harvest_skill_segments_overlapping_markers_produce_no_output() {
+    // 1118: `<`→`==`/`<=` and 1132: `&&`→`||` — when markers start at
+    // index 0, the first marker's name is empty and must be skipped;
+    // overlapping/duplicate markers with empty names must still produce
+    // no skill entries (not a panic or spurious push).
+    assert_eq!(harvest_skill_segments("3+ yrs 2+ yrs"), None);
+}
+
+// ── parse_experiences: targeted mutation-kill tests ──────────────────────────
+//
+// The mutants below are all in the `parse_experiences`/`reclaim_stray_
+// experience_content`/`find_duplicate_job_boundary` family and were reported
+// MISSED by `cargo mutants -f src/services/pdf_import/experience.rs` (this
+// file has no `exclude_re` in .github/workflows/mutants.yml — every mutant
+// here is meant to be genuinely killed by a test, not excluded).
+
+/// 36:48: `line.split_whitespace().count() > 20` replaced with `==`, `<`,
+/// or `>=`. Only reachable for a line whose date range isn't already at the
+/// very end (so `extract_date_range_from_end` misses it) but which does
+/// have one findable mid-line by `find_date_range_span` with trailing text
+/// after it (e.g. "- CDI - City"), matching this function's own doc-comment
+/// example. At exactly 20 words the line must still be normalized (dropping
+/// the trailing "- CDI - City"); at 21 words it must be left untouched.
+#[test]
+fn parse_experiences_midline_date_word_count_boundary() {
+    // 10 filler words + "- January 2020 - February 2021 - CDI - City" (10 more
+    // whitespace-separated tokens) = 20 words exactly.
+    let at_boundary = "W1 W2 W3 W4 W5 W6 W7 W8 W9 W10 - January 2020 - February 2021 - CDI - City";
+    assert_eq!(at_boundary.split_whitespace().count(), 20);
+    let (exps, _skills) = parse_experiences(&[at_boundary.to_string()]);
+    assert_eq!(
+        exps.len(),
+        1,
+        "20-word mid-line date range must be normalized into a job, got: {:?}",
+        exps.iter().map(|e| &e.role.en).collect::<Vec<_>>()
+    );
+    assert_eq!(exps[0].start_date, "January 2020");
+    assert_eq!(exps[0].end_date, "February 2021");
+    assert!(
+        !exps[0].role.en.contains("CDI") && !exps[0].company.contains("CDI"),
+        "trailing '- CDI - City' must have been dropped by normalization, got role={:?} company={:?}",
+        exps[0].role.en,
+        exps[0].company
+    );
+
+    // 21 words (one extra filler) must be left completely alone: no
+    // recognizable trailing date range, so no job is produced at all.
+    let over_boundary =
+        "W1 W2 W3 W4 W5 W6 W7 W8 W9 W10 W11 - January 2020 - February 2021 - CDI - City";
+    assert_eq!(over_boundary.split_whitespace().count(), 21);
+    let (exps2, _skills2) = parse_experiences(&[over_boundary.to_string()]);
+    assert_eq!(
+        exps2.len(),
+        0,
+        "21-word mid-line date range must NOT be normalized, got: {:?}",
+        exps2.iter().map(|e| &e.role.en).collect::<Vec<_>>()
+    );
+}
+
+/// 56:77: `before.chars().filter(|c| c.is_alphabetic()).count() < 2`
+/// replaced with `<=`. With exactly 2 alphabetic chars before the mid-line
+/// date, the line must still be normalized (real text, not just a
+/// decorative icon glyph).
+#[test]
+fn parse_experiences_midline_date_before_text_two_letters_boundary() {
+    let line = "AB - January 2020 - February 2021 - CDI";
+    let (exps, _skills) = parse_experiences(&[line.to_string()]);
+    assert_eq!(
+        exps.len(),
+        1,
+        "before-date text with 2 alphabetic chars must be normalized, got: {:?}",
+        exps.iter().map(|e| &e.role.en).collect::<Vec<_>>()
+    );
+    assert_eq!(exps[0].start_date, "January 2020");
+    assert_eq!(exps[0].end_date, "February 2021");
+}
+
+/// 191:32: `skip_until = i + 2;` (name-before-bare-marker skill harvest)
+/// replaced with `-` (panics immediately via `usize` underflow at i=0, and
+/// deterministically at any i since it always underflows relative to
+/// itself... more precisely catches any i) or `*` (identity-ish at small i,
+/// but observably wrong at i>0: `i * 2 != i + 2` for any i != 2). Placing
+/// the harvested pair at i=1 (not i=0) makes both mutants observably wrong
+/// rather than accidentally coincidental.
+#[test]
+fn parse_experiences_skill_bleed_marker_skip_advances_exactly_two_lines() {
+    let lines = vec![
+        "Placeholder".to_string(),
+        "GitLab-CI".to_string(),
+        "3+ yrs".to_string(),
+        "Foo Corp - Jan 2020 - Feb 2021".to_string(),
+    ];
+    let (exps, skills) = parse_experiences(&lines);
+    assert!(
+        skills.iter().any(|s| s.name == "GitLab-CI 3+ yrs"),
+        "expected the name+marker pair to be harvested as a skill, got: {:?}",
+        skills.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+    assert_eq!(exps.len(), 1);
+    // If the marker line "3+ yrs" wasn't properly skipped, it would leak
+    // into recent_plain and get wrongly claimed as this job's role instead
+    // of "Placeholder" (before_date_peek "Foo Corp" contains none of the
+    // role/company separator markers, so layout (d) consults recent_plain).
+    assert_eq!(exps[0].role.en, "Placeholder");
+    assert_eq!(exps[0].company, "Foo Corp");
+}
+
+/// 255/256/257/258:17: each `||` in the 5-way
+/// `before_date_peek.contains(" at "/" chez "/" · "/" | "/", ")` chain
+/// replaced with `&&`. With exactly ONE of the five markers present, the
+/// correct (all-`||`) chain is true (bypassing layout (d)'s recent_plain
+/// claim), while any single `&&` mutation drags the whole chain false for
+/// that marker alone, wrongly claiming the preceding bare-role line.
+#[test]
+fn parse_experiences_prev_plain_role_guard_kills_on_any_single_separator() {
+    let cases = [
+        (
+            "Global Corp at Client - Jan 2020 - Feb 2021",
+            "Global Corp",
+            "Client",
+        ), // 255 (" at ")
+        (
+            "Global Corp chez Client - Jan 2020 - Feb 2021",
+            "Global Corp",
+            "Client",
+        ), // 256 (" chez ")
+        (
+            "Global Corp · Client - Jan 2020 - Feb 2021",
+            "Global Corp",
+            "Client",
+        ), // 257 (" · ")
+        (
+            "Global Corp | Client - Jan 2020 - Feb 2021",
+            "Global Corp",
+            "Client",
+        ), // 258 (" | ")
+    ];
+    for (header, expect_role, expect_company) in cases {
+        let lines = vec![
+            "Some Role".to_string(),
+            header.to_string(),
+            "• Did stuff".to_string(),
+        ];
+        let (exps, _skills) = parse_experiences(&lines);
+        assert_eq!(exps.len(), 1, "header: {header}");
+        assert_eq!(
+            exps[0].role.en, expect_role,
+            "header: {header} -- if this is \"Some Role\" instead, the \
+             prev_plain_role guard wrongly claimed the preceding bare-role \
+             line despite the separator being present"
+        );
+        assert_eq!(exps[0].company, expect_company, "header: {header}");
+    }
+}
+
+/// 359:46: `unambiguous_role_first = before_date.contains(" at ") ||
+/// before_date.contains(" chez ")` replaced with `&&`; and 367:17: the
+/// sibling `!unambiguous_role_first && next_line...bare_role` replaced
+/// with `||`. Both are killed by the same scenario: a header containing
+/// " chez " (unambiguous role-first marker) immediately followed by a
+/// line that also happens to look like a bare role line. Correct code
+/// must NOT treat this as layout (b) (next-line-is-the-role) since the
+/// header is already unambiguous; either mutation makes it do so anyway.
+#[test]
+fn parse_experiences_unambiguous_chez_header_is_not_overridden_by_layout_b() {
+    let lines = vec![
+        "Global Corp chez Client - Jan 2020 - Feb 2021".to_string(),
+        "Ingénieur Logiciel".to_string(),
+        "• Did stuff".to_string(),
+    ];
+    let (exps, _skills) = parse_experiences(&lines);
+    assert_eq!(exps.len(), 1);
+    assert_eq!(
+        exps[0].role.en, "Global Corp",
+        "expected the unambiguous ' chez ' split to win; got role {:?} \
+         (layout (b) wrongly took over)",
+        exps[0].role.en
+    );
+    assert_eq!(exps[0].company, "Client");
+}
+
+/// 387:37 (`pos + 6` for " chez "), 393:37 (`pos + 3` for " · "), 399:37
+/// (`pos + 3` for " | "), 405:37 (`pos + 2` for ", ") each replaced with
+/// `-` or `*`. Each byte-offset must land exactly past its separator so
+/// the company text doesn't retain a stray leading character. Uses a
+/// bullet as the next line (not a bare role) so layout (b) never
+/// intercepts, and an empty recent_plain so layout (d) never intercepts
+/// either -- isolating each `rfind`+offset branch directly.
+#[test]
+fn parse_experiences_role_company_separator_byte_offsets() {
+    let cases = [
+        (
+            "Jean Dupont chez Acme Corp - Jan 2020 - Feb 2021",
+            "Jean Dupont",
+            "Acme Corp",
+        ),
+        (
+            "Jane Smith · Globex - Jan 2020 - Feb 2021",
+            "Jane Smith",
+            "Globex",
+        ),
+        (
+            "Jane Smith | Globex - Jan 2020 - Feb 2021",
+            "Jane Smith",
+            "Globex",
+        ),
+        (
+            "Jane Smith, Initech - Jan 2020 - Feb 2021",
+            "Jane Smith",
+            "Initech",
+        ),
+    ];
+    for (header, expect_role, expect_company) in cases {
+        let lines = vec![header.to_string(), "• Did stuff".to_string()];
+        let (exps, _skills) = parse_experiences(&lines);
+        assert_eq!(exps.len(), 1, "header: {header}");
+        assert_eq!(exps[0].role.en, expect_role, "header: {header}");
+        assert_eq!(exps[0].company, expect_company, "header: {header}");
+    }
+}
+
+/// 412:32: `skip_until = i + 2;` (bare-role-consumed layout) replaced with
+/// `-` (panics via underflow when the first job is at index 0) or `*`
+/// (leaves the consumed role line unskipped, letting it leak into
+/// recent_plain and get wrongly claimed by the NEXT job's layout (d)).
+#[test]
+fn parse_experiences_consumed_role_line_skip_advances_exactly_two_lines() {
+    let lines = vec![
+        "Acme Corp - Jan 2021 - Present".to_string(),
+        "Software Engineer".to_string(),
+        "Random Corp - Jan 2019 - Dec 2020".to_string(),
+        "• bullet for job2".to_string(),
+    ];
+    let (exps, _skills) = parse_experiences(&lines);
+    assert_eq!(
+        exps.len(),
+        2,
+        "expected two jobs, got: {:?}",
+        exps.iter().map(|e| &e.role.en).collect::<Vec<_>>()
+    );
+    assert_eq!(exps[0].role.en, "Software Engineer");
+    assert_eq!(exps[0].company, "Acme Corp");
+    // If "Software Engineer" wasn't properly skipped, it leaks into
+    // recent_plain and gets wrongly claimed as job2's role (job2's header
+    // "Random Corp" contains none of the separator markers, so layout (d)
+    // consults recent_plain).
+    assert_eq!(exps[1].role.en, "Random Corp");
+    assert_eq!(exps[1].company, "");
+    assert_eq!(exps[1].projects[0].bullets.len(), 1);
+    assert_eq!(exps[1].projects[0].bullets[0].en, "bullet for job2");
+}
+
+/// 502/505/506:17: each `||` in the 7-way bullet-marker
+/// `starts_with(...)` chain replaced with `&&`. With exactly ONE marker
+/// present per test, the correct (all-`||`) chain recognizes it as a
+/// bullet; any single `&&` mutation on that marker's operator drags the
+/// whole chain false, so the line is wrongly treated as plain text
+/// instead of a bullet.
+#[test]
+fn parse_experiences_bullet_marker_guard_kills_on_any_single_marker() {
+    let cases = [
+        ("- Did the ascii-dash thing", "Did the ascii-dash thing"), // 502
+        ("▸ Did the triangle thing", "Did the triangle thing"),     // 505
+        ("▪ Did the square thing", "Did the square thing"),         // 506
+    ];
+    for (bullet_line, expect_text) in cases {
+        let lines = vec![
+            "Some Role at Some Co - Jan 2020 - Feb 2021".to_string(),
+            bullet_line.to_string(),
+        ];
+        let (exps, _skills) = parse_experiences(&lines);
+        assert_eq!(exps.len(), 1, "bullet line: {bullet_line}");
+        assert_eq!(
+            exps[0].projects[0].bullets.len(),
+            1,
+            "expected {bullet_line:?} to be recognized as a bullet, got bullets: {:?}",
+            exps[0].projects[0]
+                .bullets
+                .iter()
+                .map(|b| &b.en)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            exps[0].projects[0].bullets[0].en, expect_text,
+            "bullet line: {bullet_line}"
+        );
+    }
+}
+
+/// 923:15: `while idx > 0 && recovered.len() < 2` replaced with `>=`
+/// (always true for `usize`). With only ONE recoverable (non-bleed) line
+/// in `stray`, the correct loop stops after recovering just that one line
+/// and returns `None` (fewer than 2 recovered); the `>=` mutant loops one
+/// extra time re-visiting index 0, pushes it a second time, and wrongly
+/// returns `Some`.
+#[test]
+fn find_duplicate_job_boundary_single_line_returns_none() {
+    let stray = vec!["Software Engineer".to_string()];
+    assert_eq!(find_duplicate_job_boundary(&stray), None);
+}
+
+// ── reclaim_stray_experience_content: targeted mutation-kill tests ──────────
+
+/// 1016:32: `lines[i - 1]` replaced with `lines[i / 1]` (reads the
+/// trigger's OWN date line instead of the preceding line). Also kills
+/// 1037:19 (the `i - 1` index assignment in the `i < 2` branch, exercised
+/// here since the trigger sits at index 1): mutating that to `i + 1` or
+/// `i / 1` changes which suffix gets reclaimed. The date line here starts
+/// with a bullet-marker character ('–'), so if it's ever misread as the
+/// "prev" line, `prev_is_plausible`'s bullet check correctly rejects it —
+/// making the misread observable as "no reclaim happened" instead of a
+/// silently-identical result. Also incidentally reaches 1057 (`idx > 0` ->
+/// `idx >= 0` in the backward-bullet-walk): the resulting idx is 0, so the
+/// `>=` mutant re-enters the loop and panics on `lines[idx - 1]`'s
+/// underflow.
+#[test]
+fn reclaim_stray_experience_content_reads_correct_preceding_line() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                "Company Name Here".to_string(),
+                "– January 2020 – February 2021".to_string(),
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let ignore_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "ignore")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert!(
+        ignore_lines.is_empty(),
+        "expected the whole stranded pair to be reclaimed, ignore left with: {:?}",
+        ignore_lines
+    );
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert!(
+        exp_lines.iter().any(|l| l.as_str() == "Company Name Here"),
+        "expected 'Company Name Here' to be reclaimed, got: {:?}",
+        exp_lines
+    );
+}
+
+/// 1018:17: the first `&&` in `prev_is_plausible` (`!prev.is_empty() &&
+/// prev.len() <= 100 && ...`) replaced with `||`. Due to precedence this
+/// makes the whole check short-circuit true whenever `prev` is merely
+/// non-empty, regardless of length. A `prev` line over 100 chars must be
+/// rejected by the real check (no reclaim happens).
+#[test]
+fn reclaim_stray_experience_content_rejects_overlong_prev_line() {
+    let long_prev = "L".repeat(150);
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                long_prev.clone(),
+                "January 2020 – February 2021".to_string(),
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec!["Existing Job"],
+        "an over-100-char prev line must not be reclaimed as a job header"
+    );
+    let ignore_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "ignore")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        ignore_lines.len(),
+        2,
+        "the ignore section must be untouched"
+    );
+}
+
+/// 1019:17: the second `&&` in `prev_is_plausible` (`... && !prev.
+/// starts_with([bullets])`) replaced with `||`. This makes the whole
+/// check short-circuit true whenever `prev` is short and non-empty,
+/// regardless of it being a bullet line. A `prev` that starts with a
+/// bullet marker must be rejected (no reclaim happens).
+#[test]
+fn reclaim_stray_experience_content_rejects_bullet_prev_line() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                "– Bullet-like prev line".to_string(),
+                "January 2020 – February 2021".to_string(),
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec!["Existing Job"],
+        "a bullet-prefixed prev line must not be reclaimed as a job header"
+    );
+    let ignore_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "ignore")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        ignore_lines.len(),
+        2,
+        "the ignore section must be untouched"
+    );
+}
+
+/// 1027:37: `lines[i - 2]` replaced with `lines[i / 2]` (reads the wrong
+/// line for `prev2`), and 1032:23: the `i - 2` assignment itself replaced
+/// with `i / 2`. Chosen so `i - 2 != i / 2` (i=6: 4 vs 3) and the two
+/// candidate lines have different plausibility, so either mutation
+/// produces an observably different reclaimed slice.
+#[test]
+fn reclaim_stray_experience_content_two_line_back_uses_correct_index() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                "Foo".to_string(),                          // 0
+                "Bar".to_string(),                          // 1
+                "Baz".to_string(),                          // 2
+                "".to_string(), // 3 (lines[i/2] when i=6 -- implausible if misread)
+                "Real Role Line".to_string(), // 4 (lines[i-2] -- the correct prev2)
+                "Real Company Line".to_string(), // 5 (prev1)
+                "January 2020 – February 2021".to_string(), // 6 (trigger, i=6)
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "Real Role Line",
+            "Real Company Line",
+            "January 2020 – February 2021"
+        ],
+        "expected the reclaim to start exactly at the 2-lines-back role line"
+    );
+}
+
+/// 1029:21: the first `&&` in the `prev2` plausibility check replaced
+/// with `||` (precedence makes it short-circuit true on non-empty alone,
+/// ignoring length). An over-100-char prev2 must be rejected, falling
+/// back to the 1-line-back (`i - 1`) reclaim instead.
+#[test]
+fn reclaim_stray_experience_content_rejects_overlong_prev2_line() {
+    let long_prev2 = "L".repeat(150);
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                long_prev2.clone(),
+                "Real Company Line".to_string(),
+                "January 2020 – February 2021".to_string(),
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "Real Company Line",
+            "January 2020 – February 2021"
+        ],
+        "an over-100-char prev2 must be rejected, falling back to 1-line-back reclaim"
+    );
+}
+
+/// 1030:21: the second `&&` in the `prev2` plausibility check replaced
+/// with `||` (short-circuits true on non-empty-and-short alone, ignoring
+/// the bullet-prefix check). A bullet-prefixed prev2 must be rejected,
+/// falling back to the 1-line-back reclaim instead.
+#[test]
+fn reclaim_stray_experience_content_rejects_bullet_prev2_line() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                "– Bullet-like prev2 line".to_string(),
+                "Real Company Line".to_string(),
+                "January 2020 – February 2021".to_string(),
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "Real Company Line",
+            "January 2020 – February 2021"
+        ],
+        "a bullet-prefixed prev2 must be rejected, falling back to 1-line-back reclaim"
+    );
+}
+
+/// 1034:23: the `i - 1` assignment in the "prev2 not plausible" else
+/// branch replaced with `i + 1` or `i / 1`. Covered by the two tests
+/// above (`..._rejects_overlong_prev2_line` /
+/// `..._rejects_bullet_prev2_line`): both take this else branch, and both
+/// assert the reclaimed slice starts exactly at `i - 1` ("Real Company
+/// Line"), which a `+1`/`/1` mutation would shift or shrink.
+#[test]
+fn reclaim_stray_experience_content_prev2_fallback_index_is_i_minus_one() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                "".to_string(),                             // implausible prev2 (empty)
+                "Good Prev Line".to_string(),               // prev1, i - 1
+                "January 2020 – February 2021".to_string(), // trigger, i = 2
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "Good Prev Line",
+            "January 2020 – February 2021"
+        ],
+        "expected the reclaim to start exactly at i - 1"
+    );
+}
+
+/// 1073:28: `idx > 1` (second guard in the "skills"/"ignore" backward
+/// bullet-walk) replaced with `idx >= 1`. With idx landing on exactly 1
+/// after the primary split, the correct code stops there; the `>= 1`
+/// mutant re-enters the loop body and panics on `lines[idx - 2]`'s
+/// `usize` underflow.
+#[test]
+fn reclaim_stray_backward_walk_stops_at_idx_one() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "ignore",
+            vec![
+                "".to_string(),               // 0: implausible prev2 -> forces i-1 branch
+                "Team Lead Role".to_string(), // 1: prev1, plausible -> reclaim starts here
+                "January 2020 – February 2021".to_string(), // 2: trigger, i = 2, idx = i - 1 = 1
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "Team Lead Role",
+            "January 2020 – February 2021"
+        ]
+    );
+}
+
+/// 1074:67: `lines[idx - 1]` (tool-bleed check in the backward
+/// bullet-walk) replaced with `lines[idx / 1]` (reads the element AT idx
+/// instead of just before it). Constructed so the correct read (a plain
+/// non-bleed line) and the misread (a genuine tool-bleed line) have
+/// different `looks_like_tool_bleed_line` results, flipping whether the
+/// walk steps back at all.
+#[test]
+fn reclaim_stray_backward_walk_tool_bleed_check_reads_idx_minus_one() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "skills",
+            vec![
+                "Alpha filler".to_string(),   // 0
+                "Bravo filler".to_string(),   // 1
+                "This is a very long line of ordinary prose describing responsibilities in extensive detail well past a hundred characters".to_string(), // 2: implausible prev2 (too long), NOT tool-bleed
+                "GitLab-CI 3+ yrs".to_string(), // 3: prev1, plausible AND tool-bleed
+                "January 2020 – February 2021".to_string(), // 4: trigger, i = 4, idx = i - 1 = 3
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    // Correct: idx=3; lines[idx-1]=lines[2] (long prose) is NOT a
+    // tool-bleed line, so the walk's second condition can be true and it
+    // stays at idx=3 (lines[idx-2]=lines[1]="Bravo filler" doesn't start
+    // with a bullet, so the walk doesn't actually step back here -- the
+    // point is which line gets *checked*, observable via the panic-free,
+    // unmutated result below).
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "GitLab-CI 3+ yrs",
+            "January 2020 – February 2021"
+        ]
+    );
+}
+
+/// 1075:38: `lines[idx - 2]` (bullet check in the backward bullet-walk)
+/// replaced with `lines[idx / 2]` or `lines[idx + 2]`. Chosen with idx=5
+/// so `idx - 2 = 3 != idx / 2 = 2`, and the two candidate lines have
+/// different bullet-prefix status, so the mutation changes whether the
+/// walk steps back at all.
+#[test]
+fn reclaim_stray_backward_walk_bullet_check_reads_idx_minus_two() {
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("experience", vec!["Existing Job".to_string()]),
+        (
+            "skills",
+            vec![
+                "Filler0".to_string(), // 0
+                "Filler1".to_string(), // 1
+                "Filler2".to_string(), // 2 (lines[idx/2] when idx=5 -- NOT a bullet)
+                "– continuing a wrapped bullet from earlier in the list".to_string(), // 3 (lines[idx-2] -- IS a bullet)
+                "This is a very long line of ordinary prose describing responsibilities in extensive detail well past a hundred characters".to_string(), // 4: implausible prev2 (too long), NOT tool-bleed
+                "GitLab-CI 3+ yrs".to_string(), // 5: prev1, plausible AND tool-bleed
+                "January 2020 – February 2021".to_string(), // 6: trigger, i = 6, idx = i - 1 = 5
+            ],
+        ),
+    ];
+    let reclaimed = reclaim_stray_experience_content(sections);
+    let exp_lines: Vec<&String> = reclaimed
+        .iter()
+        .filter(|(s, _)| *s == "experience")
+        .flat_map(|(_, l)| l.iter())
+        .collect();
+    // Correct: idx starts at 5; lines[idx-1]=lines[4] is not tool-bleed
+    // (true), lines[idx-2]=lines[3] DOES start with a bullet (true) ->
+    // steps back to idx=3. At idx=3: lines[idx-1]=lines[2] not a bullet
+    // (skip first if); lines[idx-1]=lines[2] not tool-bleed (true),
+    // lines[idx-2]=lines[1]="Filler1" doesn't start with a bullet (false)
+    // -> stops at idx=3.
+    assert_eq!(
+        exp_lines,
+        vec![
+            "Existing Job",
+            "– continuing a wrapped bullet from earlier in the list",
+            "This is a very long line of ordinary prose describing responsibilities in extensive detail well past a hundred characters",
+            "GitLab-CI 3+ yrs",
+            "January 2020 – February 2021",
+        ]
     );
 }

@@ -297,6 +297,14 @@ mod tests {
     }
 
     #[test]
+    fn local_export_unavailable_on_native() {
+        assert!(
+            !local_export(&sample_cv(), &[]),
+            "native stub must report local export as web-only"
+        );
+    }
+
+    #[test]
     fn now_ms_is_ms_since_epoch() {
         let now = now_ms();
         assert!(

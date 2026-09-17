@@ -75,15 +75,17 @@ reqwest = { version = "0.12", features = ["json"] }
 # CacheStorage/DOM-touching code in auth.rs, worker.rs, drive.rs, and
 # skill_duration.rs that `#[cfg(not(target_arch = "wasm32"))]`-gates away
 # from a native `cargo test --lib` entirely — run via
-# `wasm-pack test --headless --chrome` (see the `wasm-*` shards in
+# `wasm-pack test --headless --chrome` (see the `wasm` shard in
 # `.github/workflows/mutants.yml`).
 wasm-bindgen-test = "0.3"
 # Lets `#[cfg_attr(test, mutants::skip)]` compile: with the cfg_attr form
 # (as opposed to a bare `#[mutants::skip]`), the `mutants` crate only needs
 # to be a dev-dependency, not a full one — see https://mutants.rs/attrs.html.
-# Needed here specifically because `cfg(test)` only becomes true (and so
-# `mutants::skip` only needs to resolve at all) for the wasm32 *test*
-# build, not the normal wasm32 app build — hence scoping it to this
-# wasm32-only dev-dependencies table rather than the top-level one.
+# (`cfg(test)` is never true for a normal app build, so a dev-dependency
+# suffices.) Sits at the top level rather than wasm32-scoped because
+# i18n_core.rs's en()/fr() data tables are skip-attributed too and must
+# compile under the native `cargo test --lib` the native shards run, not
+# just the wasm32 test build.
+[dev-dependencies]
 mutants = "0.0.3"
 

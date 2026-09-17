@@ -921,7 +921,7 @@ pub(super) fn find_duplicate_job_boundary(stray: &[String]) -> Option<usize> {
     let mut idx = stray.len();
     let mut recovered = Vec::new();
     while idx > 0 && recovered.len() < 2 {
-        idx -= 1;
+        idx = idx.saturating_sub(1);
         if looks_like_tool_bleed_line(&stray[idx]) {
             continue;
         }
@@ -996,6 +996,12 @@ pub(super) fn reclaim_stray_experience_content(
         // dedupe against). Only the former needs the duplicate-boundary
         // check below.
         let mut split_from_block_trigger = false;
+        // Set to the index of the prev2 line when the date-range
+        // trigger's prev2 failed the plausibility check (empty,
+        // over-length, or bullet-prefixed). The backward bullet-walk
+        // below must then NOT step back onto that rejected line — doing
+        // so would defeat the very rejection.
+        let mut prev2_rejected: Option<usize> = None;
         for (i, line) in lines.iter().enumerate() {
             // A "Project N:"/"Projet N:" sub-entry header is on its own an
             // unambiguous signal that this line — and everything after it
@@ -1031,6 +1037,7 @@ pub(super) fn reclaim_stray_experience_content(
                 {
                     i - 2
                 } else {
+                    prev2_rejected = Some(i - 2);
                     i - 1
                 }
             } else {
@@ -1055,11 +1062,12 @@ pub(super) fn reclaim_stray_experience_content(
                 let mut idx = idx;
                 loop {
                     if idx > 0
+                        && prev2_rejected != Some(idx - 1)
                         && lines[idx - 1]
                             .trim_start()
                             .starts_with(['•', '·', '-', '–', '*'])
                     {
-                        idx -= 1;
+                        idx = idx.saturating_sub(1);
                         continue;
                     }
                     // A bullet can wrap onto a second physical line with
@@ -1076,7 +1084,7 @@ pub(super) fn reclaim_stray_experience_content(
                             .trim_start()
                             .starts_with(['•', '·', '-', '–', '*'])
                     {
-                        idx -= 2;
+                        idx = idx.saturating_sub(2);
                         continue;
                     }
                     break;

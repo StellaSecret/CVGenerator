@@ -1071,6 +1071,17 @@ pub(super) fn decode_bytes(
 /// (page) position — the only sound way to reconstruct real reading order
 /// for a multi-column layout afterward.
 ///
+/// Maximum vertical (in text-space units) a same-line Td/TD/Tm jump may
+/// move before it's treated as a new line instead. lopdf stores PDF "Real"
+/// numbers as `f32`, and `object_to_f64` widens them to `f64` — so a PDF
+/// value of `0.1` becomes `0.1f32 as f64 = 0.10000000149011612`, slightly
+/// MORE than the f64 literal `0.1`. Comparing against the literal therefore
+/// spuriously crossed the threshold for any parsed `0.1` (and made the
+/// `>`--`>=` boundary unreachable: no PDF operand can produce an f64 value
+/// of exactly `0.1`). Pin the threshold to the f32-widened value instead,
+/// which is what the operands actually compare against.
+const SAME_LINE_Y_EPSILON: f64 = 0.1f32 as f64;
+
 /// `resources` / `encodings` are the (initially page-level) resources
 /// dictionary and font ToUnicode-CMap map active for `ops`; both may be
 /// swapped out for a Form XObject's own if it declares them (see the `Do`
@@ -1159,7 +1170,7 @@ pub(super) fn run_operations(
                 };
                 text_matrix = translate.compose(&text_matrix);
                 if have_text {
-                    if ty.abs() > 0.1 {
+                    if ty.abs() > SAME_LINE_Y_EPSILON {
                         flush_line(lines, &mut current_text, &mut current_line_pos);
                         have_text = false;
                         pending_space = false;
@@ -1202,7 +1213,7 @@ pub(super) fn run_operations(
                 let dy = new_tm.f - text_matrix.f;
                 text_matrix = new_tm;
                 if have_text {
-                    if dy.abs() > 0.1 {
+                    if dy.abs() > SAME_LINE_Y_EPSILON {
                         flush_line(lines, &mut current_text, &mut current_line_pos);
                         have_text = false;
                         pending_space = false;

@@ -133,13 +133,20 @@ pub(super) fn build_education_from_buffer(
             // merged into the institution name (and the field itself came
             // out empty).
             let mut inst_end = idx + 1;
+            // `.saturating_add(1)` rather than `+= 1`: same reason as
+            // dates.rs's `extract_standalone_date_range` fix — a `+=`→`*=`
+            // mutation here would multiply `inst_end` by 1 (a no-op) every
+            // iteration, hanging this loop forever under mutation testing
+            // (a timeout, not a caught mutant) instead of failing fast.
+            // `.saturating_add` has no `+=` token for that mutation to
+            // target at all.
             while inst_end < rest.len()
                 && rest[inst_end]
                     .chars()
                     .next()
                     .is_some_and(|c| c.is_uppercase())
             {
-                inst_end += 1;
+                inst_end = inst_end.saturating_add(1);
             }
             let mut field: Vec<String> = rest[..idx].to_vec();
             field.extend(rest[inst_end..].iter().cloned());
@@ -152,10 +159,13 @@ pub(super) fn build_education_from_buffer(
         ),
     };
 
-    let mut field_parts: Vec<String> = embedded_field
-        .into_iter()
-        .filter(|f| !f.is_empty())
-        .collect();
+    // `embedded_field` (an Option<String>) lands FIRST in `field_parts`,
+    // before any `field_lines` are appended, so even an empty Some("")
+    // can only ever occupy a *leading* position in the joined string,
+    // which the final `.trim()` on `field.field.en` strips anyway. No
+    // separate non-empty filter is needed (or observable).
+    let mut field_parts: Vec<String> = Vec::new();
+    field_parts.extend(embedded_field);
     field_parts.extend(field_lines.iter().cloned());
 
     Some(Education {
@@ -763,6 +773,9 @@ pub(super) fn build_certification_from_buffer(
 /// shapes), not as distinguishable text characters, so it's invisible to
 /// text extraction. Rather than fabricate a language entry out of these
 /// decorative glyphs, we filter them out entirely.
+/// See `parse_single_language_entry` + `parse_languages` for how a dots-only
+/// line is dropped today.
+#[cfg(test)]
 pub(super) fn is_dots_only(s: &str) -> bool {
     let trimmed = s.trim();
     !trimmed.is_empty()
@@ -803,9 +816,14 @@ pub(crate) fn parse_languages(lines: &[String]) -> Vec<Language> {
     let mut langs = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || is_dots_only(trimmed) {
+        if trimmed.is_empty() {
             continue;
         }
+        // A dots-only line (proficiency-dial decoration) needs no
+        // explicit skip here: `parse_single_language_entry` trims the
+        // trailing dot cluster off the name, and a line consisting of
+        // nothing but dots/whitespace comes out with an empty name and is
+        // dropped there — see `is_dots_only`'s doc comment.
         if !langs.is_empty() && looks_like_interest_heading(trimmed, lines.get(i + 1)) {
             // Everything from here on is the trailing "& Interests" half
             // of a combined section heading, not more languages — stop
@@ -1059,12 +1077,17 @@ pub(super) fn harvest_skill_segments(line: &str) -> Option<Vec<String>> {
     // comment) into two tokens, so the marker scan below — which expects
     // the "<N>+" marker as its own token — still recognizes it.
     let mut i = 0;
+    // `.saturating_add` rather than `+=` throughout this loop, same reason
+    // as the `inst_end` loop above and dates.rs's `extract_standalone_
+    // date_range` fix: `i` starts at 0, so a `+=`→`*=` mutation on either
+    // branch would leave it at 0 forever (0 * anything == 0), hanging this
+    // loop under mutation testing instead of failing fast.
     while i < tokens.len() {
         if let Some((name_part, marker_part)) = split_fused_name_and_marker(tokens[i]) {
             tokens.splice(i..=i, [name_part, marker_part]);
-            i += 2;
+            i = i.saturating_add(2);
         } else {
-            i += 1;
+            i = i.saturating_add(1);
         }
     }
 

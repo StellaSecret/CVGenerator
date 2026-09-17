@@ -459,7 +459,7 @@ pub(super) fn extract_standalone_date_range(
             year_end_char_idx = Some(i + 4);
             break;
         }
-        i += 1;
+        i = i.saturating_add(1);
     }
     let year_end_idx = year_end_char_idx?;
     let byte_idx = end

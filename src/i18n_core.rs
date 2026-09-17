@@ -160,6 +160,13 @@ pub fn tr(key: &'static str, lang: Lang) -> &'static str {
     }
 }
 
+// The en()/fr() match tables are pure translation data, pinned exactly by
+// all_en/all_fr_translations_present. Mutation-testing them costs ~440
+// string-literal mutants (each a full lib rebuild) to re-prove what the
+// table-driven asserts already lock down, so they're skipped (see the
+// matcher-models-i18n notes in `.github/workflows/mutants.yml`). Lang/Theme
+// logic and tr() routing below remain mutation-tested.
+#[cfg_attr(test, mutants::skip)]
 fn en(key: &'static str) -> &'static str {
     match key {
         // Nav
@@ -410,6 +417,7 @@ fn en(key: &'static str) -> &'static str {
     }
 }
 
+#[cfg_attr(test, mutants::skip)]
 fn fr(key: &'static str) -> &'static str {
     match key {
         // Nav

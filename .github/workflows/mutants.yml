@@ -15,17 +15,30 @@ jobs:
   cargo-mutants:
     name: "Mutation Tests (${{ matrix.name }})"
     runs-on: ubuntu-latest
-    # 360, not the usual 180: the four wasm-* shards each trigger a wasm32
+    # 360, not the usual 180: the merged wasm shard triggers a wasm32
     # test-build + real Chromium run per mutant, which is much slower than
-    # the native shards (see the comment on the wasm-* entries below).
+    # the native shards (see the comment on the wasm entry below).
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: matcher
-            files: src/services/matcher/mod.rs
-            # Mutations that are either equivalent or float-cutoff-fragile.
+          - name: matcher-models-i18n
+            # Merged from the former matcher + models-i18n shards. models-i18n
+            # was 1h12m (473 mutants) and 96% of that — 448 mutants — was
+            # string-literal mutations inside i18n_core.rs's en()/fr() match
+            # tables: pure translation data already pinned exactly by the
+            # all_en/all_fr_translations_present table-driven tests, so the
+            # mutants re-proved what those asserts already lock down (each at
+            # a ~9s full-lib-rebuild cost). Both functions are now
+            # `#[cfg_attr(test, mutants::skip)]`-attributed, which dropped the
+            # shard to ~56 mutants / ~9min — hence the safe merge with matcher
+            # (~36min) into this ~45min shard. Lang/Theme logic and tr()
+            # routing stay mutation-tested; 24/27/62/97/140 below are the
+            # remaining i18n_core.rs exclusions.
+            files: src/services/matcher/mod.rs src/models/cv.rs src/i18n_core.rs
+            # matcher/mod.rs — mutations that are either equivalent or
+            # float-cutoff-fragile.
             #
             # Equivalent (provably unobservable):
             #   528: `tolerance > 0` -> `>=`: tolerance==0 only occurs for words
@@ -58,15 +71,27 @@ jobs:
             # missed regardless of whether this stale regex still matches
             # them), so it's left as-is rather than guessed at further; only
             # 528/587 above were re-verified this session.
-            exclude_re: "(matcher/mod.rs:528|matcher/mod.rs:587|matcher/mod.rs:95[0-7]|matcher/mod.rs:962|matcher/mod.rs:966|matcher/mod.rs:1055|matcher/mod.rs:1077|matcher/mod.rs:1123|matcher/mod.rs:1191|matcher/mod.rs:1206|matcher/mod.rs:1211|matcher/mod.rs:1218|matcher/mod.rs:1226|matcher/mod.rs:1250|matcher/mod.rs:1260|matcher/mod.rs:1270|matcher/mod.rs:1316|matcher/mod.rs:1336|matcher/mod.rs:1374|matcher/mod.rs:1390|matcher/mod.rs:1394|matcher/mod.rs:1409|matcher/mod.rs:1428|matcher/mod.rs:1429|matcher/mod.rs:1451)"
-          - name: models-i18n
-            files: src/models/cv.rs src/i18n_core.rs
-            exclude_re: "i18n_core.rs:(24|27|62|97|140)"
-          - name: embeddings
-            files: src/services/embeddings.rs
-            exclude_re: "embeddings.rs:(157|158|159|200|31[89]|33[89])"
-          - name: score-duration
-            files: src/services/score.rs src/services/skill_duration.rs
+            #
+            # i18n_core.rs: 24/27/62/97/140 are equivalents in Lang::detect/
+            # persist and Theme::detect/persist (the wasm-only detection
+            # branches are compile-time stubs on native, and persist's write
+            # is a no-op there).
+            exclude_re: "(matcher/mod.rs:528|matcher/mod.rs:587|matcher/mod.rs:95[0-7]|matcher/mod.rs:962|matcher/mod.rs:966|matcher/mod.rs:1055|matcher/mod.rs:1077|matcher/mod.rs:1123|matcher/mod.rs:1191|matcher/mod.rs:1206|matcher/mod.rs:1211|matcher/mod.rs:1218|matcher/mod.rs:1226|matcher/mod.rs:1250|matcher/mod.rs:1260|matcher/mod.rs:1270|matcher/mod.rs:1316|matcher/mod.rs:1336|matcher/mod.rs:1374|matcher/mod.rs:1390|matcher/mod.rs:1394|matcher/mod.rs:1409|matcher/mod.rs:1428|matcher/mod.rs:1429|matcher/mod.rs:1451|i18n_core.rs:(24|27|62|97|140))"
+          - name: services
+            # Merged from five previously-separate shards: embeddings-score-
+            # duration (25m41s) + renderer-worker-linkedin (19m48s) +
+            # auth-drive (3m44s) → ~49min. Purely a shard-count reduction —
+            # every component was comfortably under the ceiling on its own
+            # but three were under the 20min floor (r-w-l just barely,
+            # auth-drive gutted since the wasm move). All files are native.
+            files: src/services/embeddings.rs src/services/score.rs src/services/skill_duration.rs src/services/renderer.rs src/services/worker.rs src/services/linkedin_import.rs src/services/auth.rs src/services/drive.rs
+            # embeddings.rs:157/158/159/200/318/319/338/339 — see the
+            # embeddings.rs entry this replaced for the original per-line
+            # reasoning (candle-tensor-shape/device-selection lines masked
+            # by the tiny synthetic test model).
+            #
+            # score.rs:98/107 — see below.
+            #
             # skill_duration.rs:114 (was :111 before doc-comment edits
             # shifted it): `merge_intervals`'s `month_index(end) >
             # month_index(last.1)` guard, flipped to `>=`. Equivalent
@@ -82,110 +107,23 @@ jobs:
             # `#[cfg(target_arch = "wasm32")]` branch moved out of this
             # file entirely (into skill_duration_wasm.rs, under a
             # `#[cfg(target_arch = "wasm32")] mod`) and is now covered by
-            # the `wasm-skill-duration` shard below, which runs
+            # the merged `wasm` shard below, which runs
             # `current_year_month_wasm_matches_js_date_now` through a real
             # `#[wasm_bindgen_test]`.
-            exclude_re: "(score.rs:(98|107)|skill_duration.rs:125)"
-          - name: renderer
-            files: src/services/renderer.rs
-            # current_year_month's native branch (847-862) is a compile-only
-            # clock stub: it calls the real clock, so a dividing-vs-modulo
-            # mutant (line 858) makes its reported year time-of-day dependent
-            # and impossible to assert deterministically in a unit test.
-            # Excluded like drive.rs's wasm-only clock stub.
-            exclude_re: "renderer.rs:84[2-9]|renderer.rs:85[0-9]|renderer.rs:86[0-2]"
-          - name: pdf-import
-            # Since 2b85323 (refactor: split the 8k-line pdf_import.rs
-            # monolith into submodules) the old `src/services/pdf_import.rs`
-            # path no longer exists -- this shard was silently finding 0
-            # mutants and reporting a hollow "pass" ever since, until
-            # someone noticed. `tests.rs`/`regression_corpus.rs` are
-            # `#[cfg(test)]`-only (fixtures + test fns, see mod.rs) and
-            # deliberately excluded from `files:` below, not from
-            # `exclude_re` -- cargo-mutants wouldn't generate mutants for
-            # `#[cfg(test)]` code anyway, but there's no reason to even scan
-            # them.
-            files: src/services/pdf_import/mod.rs src/services/pdf_import/dates.rs src/services/pdf_import/experience.rs src/services/pdf_import/harvest.rs src/services/pdf_import/sections.rs src/services/pdf_import/text_extraction.rs
-            # text_extraction.rs: the binary-PDF extraction layer (matrix
-            # composition, resource/cmap resolution, raw content-stream
-            # extraction, glyph positioning, column/row grouping of
-            # positioned lines, operator dispatch, content-stream
-            # decompression) is only reachable through real, binary PDF
-            # documents -- the test suite drives parsing from extracted-text
-            # fixtures instead, so this whole file is excluded EXCEPT
-            # `run_operations` (1082-1297), which now has two direct tests
-            # (`run_operations_inserts_spaces_and_newlines_for_positioned_
-            # runs`, `run_operations_ligature_glyph_does_not_insert_
-            # spurious_space`) and so is deliberately carved out of the
-            # range below rather than excluded.
             #
-            # dates.rs: find_date_range_span (169-275) and
-            # extract_trailing_date_range_from_title (288-329) -- bounds-
-            # check arithmetic (`<` vs `<=`, `+` vs `*`) whose flips would
-            # panic on out-of-range token reads rather than change output,
-            # behavior pinned by the find_date_range_span_*/
-            # extract_trailing_date_range_from_title_* boundary tests.
+            # renderer.rs: current_year_month's native branch (847-862) is
+            # a compile-only clock stub: it calls the real clock, so a
+            # dividing-vs-modulo mutant (line 858) makes its reported year
+            # time-of-day dependent and impossible to assert
+            # deterministically in a unit test.
             #
-            # sections.rs: guess_name (283-343) -- email/phone/URL lines
-            # always fail the is_alphabetic name-char check, and every
-            # accented char is already alphabetic, so deleting/reshaping
-            # those ||/== clauses is observationally identical; guess_title
-            # (346-387) -- name-line-boundary arithmetic masked by an
-            # unwrap_or(0) fallback, behavior pinned by tests.
+            # worker.rs: no exclusions — native-only code (the wasm32 half
+            # lives in worker_wasm.rs, covered by the wasm shard), every
+            # function pinned by a native `#[test]`.
             #
-            # Struct field-deletion mutants (delete field ... from struct ...
-            # literal, in experience.rs/harvest.rs) are NOT filterable by
-            # exclude_re at all (cargo-mutants 27 does not apply
-            # exclude-name matching to Genre::StructField), so they're
-            # instead eliminated by source/tests: redundant default-valued
-            # fields are removed from struct literals, and every populated
-            # field is pinned by the parse_*/build_* unit tests.
-            #
-            # mod.rs: import_pdf (179-189) calls extract_text (the untested
-            # binary layer above) as its very first step, so it inherits
-            # the same "needs a real binary PDF fixture" limitation and is
-            # excluded for the same reason. `parse_cv` itself (which
-            # import_pdf calls next) takes plain extracted text and IS
-            # tested directly, including its section-header routing (see
-            # parse_cv_routes_projects_section_into_cv_projects /
-            # parse_cv_routes_certifications_section_into_cv_certifications
-            # in tests.rs) — this exclusion is specifically about
-            # import_pdf's own extract_text call, not parse_cv.
-            #
-            # Re-derive these ranges with
-            # `awk '/^pub\(super\) fn NAME/{print NR}' file.rs` (find the
-            # opening line) and read forward to the matching closing brace
-            # if this exclude starts reporting stale MISSEDs again -- they
-            # drift whenever a doc comment above these functions changes.
-            exclude_re: "text_extraction.rs:([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|108[0-1]|10[0-7][0-9]|129[8-9]|154[0-2]|15[0-3][0-9]|1[3-4][0-9][0-9]):|dates.rs:(169|1[7-9][0-9]|27[0-5]|2[0-6][0-9]|28[8-9]|29[0-9]|3[0-2][0-9]):|sections.rs:(28[3-9]|29[0-9]|34[0-3]|3[0-3][0-9]|34[6-9]|38[0-7]|3[5-7][0-9]):|mod.rs:(179|18[0-9]):"
-          - name: worker
-            files: src/services/worker.rs
-            # `.cargo/mutants.toml` pins this shard's test command to a
-            # native `cargo test --lib`. The wasm32-only half of this file
-            # (Cache Storage access + `fetch_model_bytes_cached`'s wasm
-            # implementation) previously lived here behind
-            # `#[cfg(target_arch = "wasm32")]` — it's since been moved out
-            # into its own `src/services/worker/worker_wasm.rs` module file
-            # (declared here under `#[cfg(target_arch = "wasm32")] mod`),
-            # and is covered by the `wasm-worker` shard below instead. What
-            # remains in this file is native-only code, every function
-            # pinned by a native `#[test]`:
-            #   - the native stub `fetch_model_bytes_cached` by
-            #     `fetch_model_bytes_cached_unavailable_on_native`,
-            #   - `load_model` by
-            #     `load_model_returns_err_and_leaves_worker_unready_on_bad_input`,
-            #   - `embed_texts`/`embed_jd`/`tailor_with_embeddings`/
-            #     `tailor_keyword_only` and the accessors by their direct
-            #     tests in the `tests` module.
-            # So there is no `exclude_re` here any more — the old one
-            # (worker.rs lines 83-151) excluded exactly the wasm block that
-            # no longer exists in this file (and would have silently hidden
-            # real mutations in the now-covered native functions).
-          - name: linkedin
-            files: src/services/linkedin_import.rs
-            # 92: unobservable equivalent mutation in the orchestrator.
-            # Lines 178-459 are the string-heuristic helper layer
-            # (strip_page_footers, rejoin_wrapped_contact_lines,
+            # linkedin_import.rs: 92 is an unobservable equivalent mutation
+            # in the orchestrator. Lines 178-459 are the string-heuristic
+            # helper layer (strip_page_footers, rejoin_wrapped_contact_lines,
             # looks_like_person_name, extract_name_title_location,
             # starts_with_month, is_duration_only_line,
             # parse_linkedin_date_line, is_bullet_start,
@@ -212,42 +150,182 @@ jobs:
             # always-true for well-formed parens). These are excluded
             # surgically by exact mutation name so the caught `==`/`>`/`-`/
             # `false` variants on the same lines stay mutation-tested.
-            exclude_re: "linkedin_import.rs:(92|545|556|597|17[89]|1[89][0-9]|2[0-4][0-9]|25[0-9]|2[6-9][0-9]|3[0-9][0-9]|4[0-5][0-9]|543:13: replace < with <=|551:17: replace < with <=|594:17: replace < with <=|594:13: replace \\+ with \\*|600:42: replace match guard open < close with true|600:47: replace < with <=)"
-            # This shard is the largest (200+ mutants) and its full --lib
-            # test-suite scenarios run slowly, so give it a longer
-            # per-mutant test timeout than the other shards default to.
+            #
+            # auth.rs/drive.rs: no exclusions — the wasm half lives in
+            # auth_wasm.rs/drive_wasm.rs (covered by the wasm shard), what
+            # remains is native-only code, every function pinned by a
+            # dedicated native `#[test]` (see the auth-drive entry this
+            # replaced for the per-function breakdown).
+            exclude_re: "embeddings.rs:(157|158|159|200|31[89]|33[89])|score.rs:(98|107)|skill_duration.rs:125|renderer.rs:84[2-9]|renderer.rs:85[0-9]|renderer.rs:86[0-2]|linkedin_import.rs:(92|545|556|597|17[89]|1[89][0-9]|2[0-4][0-9]|25[0-9]|2[6-9][0-9]|3[0-9][0-9]|4[0-5][0-9]|543:13: replace < with <=|551:17: replace < with <=|594:17: replace < with <=|594:13: replace \\+ with \\*|600:42: replace match guard open < close with true|600:47: replace < with <=)"
+            # linkedin_import.rs's full --lib test-suite scenarios run
+            # slowly per mutant, so this merged shard keeps its longer
+            # per-mutant timeout (applies to the other files' mutants too
+            # now, harmlessly — just a higher ceiling, not a target).
             timeout: 1200
-          - name: auth-drive
-            files: src/services/auth.rs src/services/drive.rs
-            # `.cargo/mutants.toml` pins this shard to a native
-            # `cargo test --lib`. The `#[cfg(target_arch = "wasm32")]` half
-            # of both files (the real OAuth/localStorage token fns +
-            # `get_gis_oauth2` in auth.rs, `drive_backup`/`drive_restore`/
-            # `local_export` in drive.rs) has since been moved out into
-            # `auth_wasm.rs`/`drive_wasm.rs` (declared here under
-            # `#[cfg(target_arch = "wasm32")] mod`), and is covered by the
-            # `wasm-auth` and `wasm-drive` shards below. What remains here
-            # is native-only, fully covered code, so there is no
-            # `exclude_re` any more — the old one's line ranges (auth.rs
-            # 63-121/168-171, drive.rs 268-297) excluded exactly the wasm
-            # functions that no longer exist in these files:
-            #   - native stubs (`get_token`/`set_token`/
-            #     `set_token_with_expiry`/`clear_token`, drive's
-            #     `drive_backup`/`drive_restore`, `local_export`) are
-            #     body-less or single-`Err` — no mutations to generate;
-            #   - `init`/`start_oauth` native stubs are body-less too, and
-            #     the real versions (in auth_wasm.rs, needing the real
-            #     Google GIS script + user OAuth consent) are
-            #     `#[cfg_attr(test, mutants::skip)]`-attributed there;
-            #   - `mask_token`/`now_ms`/`token_expiry_ms` (auth.rs) and
-            #     `build_backup`/`restore_from_json`/
-            #     `drive_error_from_status`/`now_ms` (drive.rs) are pinned
-            #     by their dedicated native `#[test]`s.
-          # wasm-* shards: the wasm32-only half of auth.rs/drive.rs/
+          # pdf-import used to be one shard scanning all six files
+          # together — it took 2h54m and failed (CI job list from
+          # 2026-09-XX). It was split one shard per file so a slow/large
+          # file can't drag the others down and a real problem doesn't
+          # hide behind an overall shard timeout. The hang sources behind
+          # that 2h54m are gone (the harvest.rs `+=` loop counters and the
+          # dates.rs wraparound counters are `.saturating_add()` now), and
+          # the per-file shards came back down to 2-35min each — but most
+          # are now UNDER the 20min floor, so they're re-merged into three
+          # chunks (harvest+mod ~37m, dates+text ~28m, sections+experience
+          # ~43m) that stay inside the ceiling while each file's exclusion
+          # regex stays per-file. `tests.rs`/`regression_corpus.rs` are
+          # `#[cfg(test)]`-only (fixtures + test fns, see mod.rs) and
+          # deliberately excluded from every `files:` below, not from
+          # `exclude_re` — cargo-mutants wouldn't generate mutants for
+          # `#[cfg(test)]` code anyway, but there's no reason to even
+          # scan them.
+          - name: pdf-import-harvest
+            files: src/services/pdf_import/mod.rs src/services/pdf_import/harvest.rs
+            # mod.rs: import_pdf (179-189) calls extract_text (the untested
+            # binary layer in text_extraction.rs, see pdf-import-dates
+            # below) as its very first step, so it inherits the same
+            # "needs a real binary PDF fixture" limitation and is excluded
+            # for the same reason. `parse_cv` itself (which import_pdf
+            # calls next) takes plain extracted text and IS tested
+            # directly, including its section-header routing (see
+            # parse_cv_routes_projects_section_into_cv_projects /
+            # parse_cv_routes_certifications_section_into_cv_certifications
+            # in tests.rs) — this exclusion is specifically about
+            # import_pdf's own extract_text call, not parse_cv.
+            #
+            # harvest.rs: the two known-hanging loops ARE fixed (see the
+            # split's rationale above, `.saturating_add` on `inst_end` and
+            # the token-index `i`), and a real per-mutant triage pass has
+            # since been done — see the tests added for
+            # build_education_from_buffer/build_education_institution_first
+            # (embedded "X in Y"/"X en Y"/"X · Y" degree/field splits, the
+            # `None`-arm institution/field slicing, `inst_end`'s starting
+            # value), parse_education (year-only-line boundary, the
+            # degree-first/institution-first entry-split flush), and
+            # push_skill_entry (length boundary, header-line rejection).
+            #
+            # 164: `.filter(|f| !f.is_empty())` on `embedded_field` in
+            # build_education_from_buffer, flipped to keep only empty
+            # strings. Equivalent -- `embedded_field`'s filtered result is
+            # always the FIRST element pushed into `field_parts` (before
+            # any `field_lines` are appended), so whether an empty string
+            # is kept or dropped there only ever affects a *leading*
+            # position in the joined string, which the final
+            # `.trim()` on `field.field.en` strips either way.
+            exclude_re: "mod.rs:(179|18[0-9]):|harvest.rs:164"
+          - name: pdf-import-dates
+            files: src/services/pdf_import/dates.rs src/services/pdf_import/text_extraction.rs
+            # dates.rs: find_date_range_span (169-275) and
+            # extract_trailing_date_range_from_title (288-329) -- bounds-
+            # check arithmetic (`<` vs `<=`, `+` vs `*`) whose flips would
+            # panic on out-of-range token reads rather than change output,
+            # behavior pinned by the find_date_range_span_*/
+            # extract_trailing_date_range_from_title_* boundary tests.
+            #
+            # 110: `words.len() - 1` -> `/` in extract_date_range_from_end's
+            # bare-year fallback branch. Equivalent -- `words.len() / 1 ==
+            # words.len()`, so the only observable difference is whether
+            # the trailing token is included in `before_start`, and that
+            # trailing token is (by this branch's own guard) all ASCII
+            # digits, contributing zero alphabetic characters. The only
+            # consumer, `real_company_text`, counts alphabetic characters
+            # only, so it's provably identical either way, and
+            # `before_start` has no other use in this branch.
+            #
+            # Re-derive these ranges with
+            # `awk '/^pub\(super\) fn NAME/{print NR}' dates.rs` (find the
+            # opening line) and read forward to the matching closing brace
+            # if this exclude starts reporting stale MISSEDs again -- they
+            # drift whenever a doc comment above these functions changes.
+            #
+            # text_extraction.rs: the binary-PDF extraction layer (matrix
+            # composition, resource/cmap resolution, raw content-stream
+            # extraction, glyph positioning, column/row grouping of
+            # positioned lines, operator dispatch, content-stream
+            # decompression) is only reachable through real, binary PDF
+            # documents -- the test suite drives parsing from extracted-
+            # text fixtures instead, so this whole file is excluded EXCEPT
+            # `run_operations` (1082-1297), which now has two direct tests
+            # (`run_operations_inserts_spaces_and_newlines_for_positioned_
+            # runs`, `run_operations_ligature_glyph_does_not_insert_
+            # spurious_space`) and so is deliberately carved out of the
+            # range below rather than excluded.
+            #
+            # Struct field-deletion mutants (delete field ... from struct
+            # ... literal, in experience.rs/harvest.rs) are NOT filterable
+            # by exclude_re at all (cargo-mutants 27 does not apply
+            # exclude-name matching to Genre::StructField), so they're
+            # instead eliminated by source/tests: redundant default-valued
+            # fields are removed from struct literals, and every populated
+            # field is pinned by the parse_*/build_* unit tests.
+            #
+            # decode_content_raw's tail (1543-1548, the BT/ET-block "advance
+            # past any unrecognized byte" else-arm and the outer "still
+            # scanning for BT" else-arm) is now directly covered by
+            # decode_content_raw_* tests below. Only the `+=` -> `*=`
+            # variant on each of those two `i += 1;` lines stays excluded:
+            # multiplying a loop index by the literal 1 is a true identity
+            # (i *= 1 == i, always), so whenever that arm is reached at all
+            # the scan can never advance and the surrounding `while i < len`
+            # loops forever -- unkillable by any test, same "hang instead of
+            # failing" class already excluded above for linkedin_import.rs's
+            # while-loop counters. The sibling `+=` -> `-=` variant on each
+            # line is NOT excluded: decrementing instead of incrementing
+            # counts back down to `i == 0` in a bounded number of steps and
+            # then underflows (usize `i -= 1` at 0 panics), so it's a fast,
+            # deterministic failure the new tests catch directly.
+            exclude_re: "dates.rs:(169|1[7-9][0-9]|27[0-5]|2[0-6][0-9]|28[8-9]|29[0-9]|3[0-2][0-9]|110):|text_extraction.rs:([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|108[0-1]|10[0-7][0-9]|129[8-9]|154[0-2]|15[0-3][0-9]|1[3-4][0-9][0-9]):|text_extraction.rs:1544:23: replace \\+= with \\*=|text_extraction.rs:1548:15: replace \\+= with \\*="
+          - name: pdf-import-sections
+            files: src/services/pdf_import/sections.rs src/services/pdf_import/experience.rs
+            # sections.rs: guess_name (283-343) -- email/phone/URL lines
+            # always fail the is_alphabetic name-char check, and every
+            # accented char is already alphabetic, so deleting/reshaping
+            # those ||/== clauses is observationally identical; guess_title
+            # (346-387) -- name-line-boundary arithmetic masked by an
+            # unwrap_or(0) fallback, behavior pinned by tests.
+            #
+            # 95: `email.contains('@') && email.contains('.')` in
+            # extract_email, flipped to `||`. Equivalent -- this is a
+            # SECOND check on `email`, which is `w` (already gated at line
+            # 83 by the identical `w.contains('@') && w.contains('.')`)
+            # with disallowed characters filtered out; the filter
+            # explicitly keeps both '@' and '.', so it can never remove
+            # them. Given line 83 already guaranteed both are present and
+            # the filter can't lose them, line 95's check is always true
+            # regardless of which operator is used.
+            #
+            # 108: `c == '+'` in extract_phone's char-cleaning closure,
+            # flipped to `!=`. Equivalent -- `cleaned`'s special-casing of
+            # '+' turns out to be vestigial for the actual output: the
+            # final `digits` string is built by filtering EVERYTHING
+            # (`words.join("")`) down to ASCII digits only, which discards
+            # '+' either way (it's never a digit), and `has_plus` is
+            # computed separately, directly from the original `text`, not
+            # from `cleaned` at all. So whether this closure preserves or
+            # blanks '+' (or, for that matter, any other non-digit
+            # character it now also mishandles under the `!=` mutant)
+            # never reaches the function's return value.
+            #
+            # experience.rs: no exclusions -- given the same per-mutant
+            # triage pass dates.rs/sections.rs got, after this shard
+            # reported a long MISSED list (word-count/alphabetic-count
+            # boundaries in the mid-line date normalizer; the 5-way "at
+            # /chez/·/|/," OR-chain guarding layout (d); the role-first
+            # unambiguous-marker check and its layout-(b) override; each
+            # separator's byte-offset split; both `skip_until = i + 2`
+            # sites; the 7-way bullet-marker OR-chain;
+            # `find_duplicate_job_boundary`'s loop guard; and
+            # `reclaim_stray_experience_content`'s prev/prev2
+            # plausibility checks, index arithmetic, and backward
+            # bullet-walk). All of these turned out to be genuinely
+            # killable (not equivalent/unobservable) and are now pinned by
+            # dedicated tests in tests.rs rather than excluded here.
+            exclude_re: "sections.rs:(28[3-9]|29[0-9]|34[0-3]|3[0-3][0-9]|34[6-9]|38[0-7]|3[5-7][0-9]|95|108):"
+          # wasm shard: the wasm32-only half of auth.rs/drive.rs/
           # worker.rs/skill_duration.rs was restructured into its own
           # `#[cfg(target_arch = "wasm32")]` module file per service
           # (`src/services/{auth,drive,worker,skill_duration}/*_wasm.rs`),
-          # so each shard below mutates a file whose every function is
+          # so the mutating here covers only files whose every function is
           # either wasm-testable or `#[cfg_attr(test, mutants::skip)]`-
           # attributed. That makes the wasm32 harness SOUND — which it
           # wasn't against the old mixed native+wasm files: wasm-bindgen-
@@ -257,13 +335,13 @@ jobs:
           # silently didn't run and everything they'd normally catch
           # (now_ms, month_from_name, format_years, EmbeddingWorker
           # methods, serde round-trips, ...) reported as a mass false
-          # "missed". After the restructure none of the wasm shards' `-f`
-          # filters select a file containing a native `#[test]`, so that
-          # whole artifact class is gone. (The parents' `#[cfg(test)] mod
-          # tests` blocks are still compiled into a wasm32 test build, they
-          # just never execute there — which is fine, because mutants are
-          # only ever generated in the pure *_wasm.rs files, whose only
-          # living tests are the `#[wasm_bindgen_test]`s in their own
+          # "missed". After the restructure none of the wasm `-f` filters
+          # select a file containing a native `#[test]`, so that whole
+          # artifact class is gone. (The parents' `#[cfg(test)] mod tests`
+          # blocks are still compiled into a wasm32 test build, they just
+          # never execute there — which is fine, because mutants are only
+          # ever generated in the pure *_wasm.rs files, whose only living
+          # tests are the `#[wasm_bindgen_test]`s in their own
           # (skip-attributed) `wasm_tests` modules.)
           #
           # Functions with no wasm test at all — auth.rs's `init`/
@@ -274,25 +352,17 @@ jobs:
           # `fetch_model_bytes_cached` (need a live network fetch) — are
           # excluded from mutation entirely via a source-level
           # `#[cfg_attr(test, mutants::skip)]` on each in the *_wasm.rs
-          # modules themselves, so they generate no mutants in these shards
-          # and need no `exclude_re` here.
+          # modules themselves, so they generate no mutants here and need
+          # no `exclude_re`.
           #
-          # These four shards are the expensive ones (each mutant triggers
-          # a wasm32 test-build + real Chromium run via the
-          # `wasm-bindgen-test-runner`), hence the job-level
-          # `timeout-minutes: 360` bump.
-          - name: wasm-auth
+          # This shard is the expensive one (each mutant triggers a wasm32
+          # test-build + real Chromium run via the
+          # `wasm-bindgen-test-runner`; the four former wasm-* shards each
+          # ran in 8-12min and are merged into this ~40min job), hence the
+          # job-level `timeout-minutes: 360` bump.
+          - name: wasm
             wasm: true
-            files: src/services/auth/auth_wasm.rs
-          - name: wasm-drive
-            wasm: true
-            files: src/services/drive/drive_wasm.rs
-          - name: wasm-skill-duration
-            wasm: true
-            files: src/services/skill_duration/skill_duration_wasm.rs
-          - name: wasm-worker
-            wasm: true
-            files: src/services/worker/worker_wasm.rs
+            files: src/services/auth/auth_wasm.rs src/services/drive/drive_wasm.rs src/services/skill_duration/skill_duration_wasm.rs src/services/worker/worker_wasm.rs
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

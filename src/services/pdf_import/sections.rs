@@ -92,9 +92,11 @@ pub(crate) fn extract_email(text: &str) -> Option<String> {
                         || *c == '+'
                 })
                 .collect();
-            if email.contains('@') && email.contains('.') {
-                return Some(email);
-            }
+            // No separate recheck after filtering is needed: the filter
+            // above explicitly keeps both '@' and '.', and line-w's gate
+            // already guaranteed both are present — so the pair can never
+            // be filtered away.
+            return Some(email);
         }
     }
     None
@@ -104,13 +106,7 @@ pub(crate) fn extract_phone(text: &str) -> Option<String> {
     // Scan the whole text for phone-like patterns
     let cleaned: String = text
         .chars()
-        .map(|c| {
-            if c.is_ascii_digit() || c == '+' {
-                c
-            } else {
-                ' '
-            }
-        })
+        .map(|c| if c.is_ascii_digit() { c } else { ' ' })
         .collect();
     // Look for sequences of 7-15 digits (with optional leading +)
     let words: Vec<&str> = cleaned.split_whitespace().collect();
@@ -480,9 +476,11 @@ pub(super) fn split_into_sections(text: &str) -> Vec<(&str, Vec<String>)> {
                     .any(|l| l.trim_start().to_lowercase().starts_with("project"));
                 if !looks_like_project_subheader {
                     recovered.reverse();
-                    if !current_lines.is_empty() || current_section != "header" {
-                        sections.push((current_section, std::mem::take(&mut current_lines)));
-                    }
+                    // `recovered` was built entirely from `current_lines`
+                    // and holds exactly 2 lines here, so `current_lines`
+                    // is guaranteed non-empty — no emptiness/section guard
+                    // needed to avoid pushing an empty ("header", []) tuple.
+                    sections.push((current_section, std::mem::take(&mut current_lines)));
                     current_section = "experience";
                     current_lines = recovered;
                     current_lines.push(trimmed.to_string());
