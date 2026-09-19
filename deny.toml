@@ -1,0 +1,81 @@
+# cargo-deny configuration — supply-chain checks run in CI via
+# EmbarkStudios/cargo-deny-action (see .github/workflows/ci.yml).
+#
+# Four checks run: advisories (known vulnerabilities / unmaintained
+# crates / security notices), licenses (every dependency's license must
+# be one this MIT-licensed project can actually redistribute under),
+# bans (denylist for specific crates, and version-duplication hygiene),
+# and sources (every crate must come from crates.io, not an
+# unreviewed git/registry source).
+#
+# Run locally with: cargo install cargo-deny && cargo deny check
+
+[graph]
+# candle/tokenizers/dioxus pull a large, fast-moving dependency tree;
+# targeting both the native test target and wasm32 (what this project
+# actually ships) avoids false positives from platform-gated deps.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "wasm32-unknown-unknown" },
+]
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Fail the build on any known vulnerability. Unmaintained/unsound
+# crates and un-actioned RUSTSEC informational notices only warn, since
+# those need a human triage decision rather than blocking every PR —
+# promote an entry to `deny` here once it's been looked at.
+version = 2
+yanked = "deny"
+ignore = [
+    # Add RUSTSEC IDs here only with a comment explaining why the
+    # advisory doesn't apply (e.g. the vulnerable code path is unused,
+    # or wasm32 isn't affected) and a link to the upstream issue/fix.
+]
+
+[licenses]
+version = 2
+# Every one of the ~430 crates currently in Cargo.lock must carry a
+# license from this list (or a documented per-crate exception below).
+# This project is MIT-licensed, so anything permissive/MIT-compatible
+# is fine; copyleft licenses (GPL/AGPL/LGPL) are deliberately absent —
+# adding one should be a conscious decision, not something that slips
+# in transitively through a minor dependency bump.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "Unlicense",
+    "OpenSSL",
+]
+confidence-threshold = 0.8
+
+# `ring` (pulled in transitively, currently 0.17.x) has historically
+# needed a `[[licenses.clarify]]` entry because its license isn't
+# cleanly SPDX-expressible. Recent `ring` versions declare it directly
+# in Cargo.toml and cargo-deny picks it up automatically; if a future
+# `cargo deny check licenses` run flags `ring` anyway, add a
+# `[[licenses.clarify]]` block here using the exact file hash cargo-deny
+# reports (don't guess it — a wrong hash fails silently to match).
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    # Known-unmaintained/deprecated crates that have safer replacements;
+    # add here if `cargo deny check bans` or `cargo tree -d` finds one
+    # pulled in transitively.
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
