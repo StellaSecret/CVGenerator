@@ -2,6 +2,7 @@
 name = "cv-generator"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "cv_generator"
@@ -25,8 +26,53 @@ dioxus = { version = "0.7", features = ["web", "router", "asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "js"] }
-lopdf = { version = "0.34", default-features = false, features = ["nom_parser"] }
-tokenizers = { version = "0.21", default-features = false, features = ["unstable_wasm"] }
+# ^ "js" wires up getrandom 0.3.x's wasm_js backend feature for wasm32
+# builds (see the longer note on the lopdf dependency below for why a
+# second, separate getrandom major version needs its own feature flip too).
+lopdf = { version = "0.42", default-features = false, features = ["wasm_js"] }
+# ^ RUSTSEC-2026-0187: lopdf <0.42.0 parses nested PDF arrays/dicts with
+# unbounded recursion, so a ~21 KB crafted PDF (deeply nested array in the
+# Catalog) aborts the process via stack-overflow SIGABRT -- not catchable
+# with catch_unwind, and directly reachable here since pdf_import feeds
+# arbitrary user-uploaded PDFs straight into `Document::load_mem`. Fixed in
+# 0.42.0 (bounded recursion depth).
+#
+# `nom_parser` (this crate's previous only-choice-anyway parser feature) no
+# longer exists as of ~0.35 -- lopdf's changelog notes it dropped the
+# `nom_locate`-based parser and parsing is unconditional now, so there's
+# nothing to opt into there anymore.
+#
+# `wasm_js` IS needed though, and for a different reason than parsing: 0.42
+# added mandatory (non-optional) encrypted-PDF support (`aes`/`cbc`/`ecb`)
+# which pulls in `rand 0.10` -> `getrandom 0.4` as a brand-new *major*
+# version, separate from the `getrandom 0.3.x` copy `uuid`'s own `js`
+# feature (see below) already wires up. Each major version of `getrandom`
+# needs its *own* `wasm_js` Cargo feature enabled before the shared
+# `--cfg getrandom_backend="wasm_js"` in .cargo/config.toml can select a
+# backend for it -- otherwise `cargo check --target wasm32-unknown-unknown`
+# fails with "wasm32/64-unknown-unknown are not supported by default" from
+# inside the *new* getrandom 0.4.x copy specifically. lopdf's own `wasm_js`
+# feature forwards straight to `getrandom/wasm_js`, which is the minimal
+# fix (no need to add getrandom as a direct dependency just to flip its
+# feature).
+#
+# `default-features = false` still does real work: current lopdf's default
+# features are `chrono`, `jiff`, `rayon`, `time` (date-type conversions +
+# parallelism), none of which this project needs -- pdf_import/dates.rs
+# does its own date parsing, and `rayon` doesn't help (or build cleanly)
+# under wasm32-unknown-unknown anyway. Run `cargo update -p lopdf` to
+# regenerate Cargo.lock (the 0.34->0.42 dependency set changed) and
+# `cargo test --lib` (exercises pdf_import's test suite, including the
+# mutation-kill tests in services/pdf_import/tests.rs) before merging.
+tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"] }
+# ^ Bumped from 0.21 to match what candle-core 0.11 already forces
+# transitively; before this, Cargo.lock carried two full copies of
+# tokenizers (0.21.4 direct + 0.22.2 via candle-core) since our pin was
+# stale. Both versions want the same fancy-regex/derive_builder/
+# spm_precompiled requirements and `unstable_wasm` is unchanged between
+# them, so this collapses to a single resolved copy. Run `cargo test --lib`
+# after `cargo update -p tokenizers` to confirm nothing in matcher/ or
+# embeddings.rs hit an API change.
 # Sentence-embedding backend for JD↔CV semantic matching (opt-in Embedding /
 # Hybrid score modes). `default-features = false` avoids pulling in
 # cuda/mkl/accelerate/rayon backends that don't build for wasm32 — inference

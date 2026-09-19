@@ -31,6 +31,30 @@ ignore = [
     # Add RUSTSEC IDs here only with a comment explaining why the
     # advisory doesn't apply (e.g. the vulnerable code path is unused,
     # or wasm32 isn't affected) and a link to the upstream issue/fix.
+
+    # RUSTSEC-2024-0436: `paste` is archived/unmaintained upstream, with
+    # "no safe upgrade available" per the advisory. It's pulled in
+    # transitively via candle-core's matmul backend
+    # (gemm -> gemm-{c32,c64,f16,f32,f64}-common -> paste), not a direct
+    # dependency, so we can't swap it for the suggested `pastey` fork
+    # ourselves -- that has to happen upstream in `gemm`/`candle-core`.
+    # `paste` is a tiny proc-macro-only crate (no runtime code, no I/O,
+    # no parsing of untrusted input) so the unmaintained status alone
+    # isn't an active risk; revisit this ignore whenever candle-core is
+    # bumped past 0.11 in case the graph has moved off `paste` by then.
+    "RUSTSEC-2024-0436",
+
+    # RUSTSEC-2026-0192: `ttf-parser` is unmaintained upstream (author
+    # statement, no further fixes), "no safe upgrade available" per the
+    # advisory -- the suggested replacement (`skrifa`) is a different API,
+    # not a drop-in. Pulled in transitively by lopdf 0.42 itself (font
+    # embedding/widths support added in the 0.35-0.42 range), not
+    # something we depend on or call directly, so there's no code on our
+    # side to migrate. Revisit this ignore whenever lopdf is bumped past
+    # 0.42 -- lopdf's own maintainers will need to move off `ttf-parser`
+    # (or onto a maintained fork) at some point, at which point this
+    # advisory should just stop appearing.
+    "RUSTSEC-2026-0192",
 ]
 
 [licenses]
@@ -52,9 +76,11 @@ allow = [
     "Unicode-3.0",
     "CC0-1.0",
     "BSL-1.0",
-    "MPL-2.0",
     "Unlicense",
-    "OpenSSL",
+    # Not "MPL-2.0" or "OpenSSL": nothing in the current dependency graph
+    # uses them (cargo-deny's own "license was not encountered" warning
+    # confirmed this) so they were dead entries. Add either back with a
+    # comment naming the crate that needs it if a future dependency does.
 ]
 confidence-threshold = 0.8
 
