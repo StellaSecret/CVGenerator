@@ -37,20 +37,16 @@ enum TailorView {
 
 #[cfg(target_arch = "wasm32")]
 fn download_pdf(iframe_id: &str, filename: &str) {
-    let title = filename.strip_suffix(".pdf").unwrap_or(filename);
-    let js = format!(
-        r#"(function(){{
-        var f = document.getElementById('{iframe_id}');
-        if (!f || !f.contentWindow) return;
-        try {{
-            if (f.contentDocument) {{ f.contentDocument.title = {title:?}; }}
-        }} catch (e) {{}}
-        f.contentWindow.focus();
-        f.contentWindow.print();
-    }})();"#
-    );
-    let _ = js_sys::eval(&js);
+    let _ = js_sys::eval(&super::download_pdf_js(iframe_id, filename));
 }
+
+#[cfg(target_arch = "wasm32")]
+fn resize_iframe(iframe_id: &str) {
+    let _ = js_sys::eval(&super::resize_iframe_to_content_js(iframe_id));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resize_iframe(_iframe_id: &str) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn download_pdf(_iframe_id: &str, _filename: &str) {}
@@ -1820,8 +1816,9 @@ pub fn Tailor() -> Element {
 
                                 iframe {
                                     id: "cv-tailor-frame",
-                                    class: "cv-iframe cv-iframe-tall",
+                                    class: "cv-iframe",
                                     srcdoc: result_html.read().clone(),
+                                    onload: move |_| resize_iframe("cv-tailor-frame"),
                                 }
                                 }
                             }

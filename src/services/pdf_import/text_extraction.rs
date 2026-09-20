@@ -338,7 +338,7 @@ pub(super) fn build_font_cmaps_from_resources(
             continue;
         };
         let mut stream = stream.clone();
-        stream.decompress();
+        let _ = stream.decompress();
         let Ok(content) = stream.get_plain_content() else {
             continue;
         };
@@ -370,7 +370,7 @@ pub(super) fn build_font_cmaps(
             continue;
         };
         let mut stream = stream.clone();
-        stream.decompress();
+        let _ = stream.decompress();
         let Ok(content) = stream.get_plain_content() else {
             continue;
         };
@@ -496,7 +496,7 @@ pub(super) fn extract_text_from_page(doc: &Document, page_id: lopdf::ObjectId) -
     for cid in &content_ids {
         if let Ok(Object::Stream(stream)) = doc.get_object(*cid) {
             let mut s = stream.clone();
-            s.decompress();
+            let _ = s.decompress();
             match s.decode_content() {
                 Ok(content) => all_ops.extend(content.operations),
                 Err(_) => {
@@ -1375,7 +1375,7 @@ pub(super) fn run_xobject(
     let form_resources_entry = form_stream.dict.get(b"Resources").ok().cloned();
 
     let mut fs = form_stream.clone();
-    fs.decompress();
+    let _ = fs.decompress();
     let Ok(sub_content) = fs.decode_content() else {
         return;
     };

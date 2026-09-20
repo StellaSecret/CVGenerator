@@ -1274,10 +1274,22 @@ mod tests {
 pub struct TailoredCV {
     pub personal: PersonalInfo,
     pub experiences: Vec<Experience>, // filtered + sorted by relevance
-    pub skills: Vec<Skill>,           // filtered + sorted by relevance
-    pub education: Vec<Education>,    // always included
-    pub projects: Vec<Project>,       // filtered + sorted by relevance
-    pub languages: Vec<Language>,     // always included
+    // Full, unfiltered lifetime experience list, kept alongside the
+    // filtered `experiences` above solely so skill "years of experience"
+    // can be derived from your whole career rather than just the
+    // experiences that happened to make the cut for this job posting.
+    // Dropping an experience from the tailored list is a relevance
+    // decision, not a claim that you stopped having that skill — so
+    // duration math must not read from the filtered list, or e.g. 8
+    // years of Bash quietly prints as 7 years just because one older
+    // experience scored too low to be shown. Never filtered, never
+    // displayed directly (the Experience section still renders only
+    // `experiences`); read only by `render_skills` for duration.
+    pub all_experiences: Vec<Experience>,
+    pub skills: Vec<Skill>,        // filtered + sorted by relevance
+    pub education: Vec<Education>, // always included
+    pub projects: Vec<Project>,    // filtered + sorted by relevance
+    pub languages: Vec<Language>,  // always included
     pub certifications: Vec<Certification>,
     pub matched_keywords: Vec<String>, // keywords found in your CV
     pub missing_keywords: Vec<String>, // keywords in JD but NOT in your CV

@@ -370,6 +370,12 @@ const CV_CSS: &str = r#"
      a document going out to an employer. */
   .cv-doc .gap-banner { display: none; }
   .cv-doc { padding: 20px; }
+  /* Zero the UA default body margin so engines that ignore CSS @page size
+     (e.g. Safari) paginate exactly like Chromium — no doubled offset around
+     the @page margin. The one-long-page download_pdf_js() probe also relies
+     on this being the print layout (it mirrors these rules while it
+     measures). */
+  html, body { margin: 0; }
   @page { margin: 1.5cm; }
   /* Browsers strip background colors during print by default to save ink;
      without this, section-title borders/tag backgrounds etc. would print
@@ -1122,7 +1128,12 @@ pub fn render_tailored_cv(cv: &TailoredCV, job_title: &str, lang: Lang) -> Strin
         "{banner}{header}{skills}{exp}{projects}{edu}{lang}{certs}",
         banner = gap_banner,
         header = render_header(&cv.personal, lang),
-        skills = render_skills(&cv.skills, &cv.experiences, lang),
+        // Duration math must read the full career (all_experiences), not
+        // the filtered/tailored `cv.experiences` — see the field doc on
+        // TailoredCV. Using the filtered list here understated skill
+        // years whenever the matcher dropped an older experience that
+        // still contributed to that skill's real total.
+        skills = render_skills(&cv.skills, &cv.all_experiences, lang),
         exp = render_experience(&cv.experiences, &cv.skills, lang),
         projects = render_projects(&cv.projects, lang),
         edu = render_education(&cv.education, lang),
@@ -1813,6 +1824,63 @@ mod tests {
     }
 
     // ── Tailored CV ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn tailored_skill_duration_uses_full_career_not_just_filtered_experiences() {
+        // Two experiences use the same skill: one recent (kept in the
+        // tailored/filtered set) and one older (dropped by the matcher,
+        // e.g. because it scored too low against the job posting). The
+        // skill's printed duration must reflect BOTH — dropping an
+        // experience from the tailored view is a relevance decision, not
+        // a claim the candidate stopped having that skill.
+        let skill = Skill {
+            id: "s-bash".to_string(),
+            name: "Bash".to_string(),
+            category: SkillCategory::Programming,
+            level: SkillLevel::Expert,
+        };
+        let make_exp = |id: &str, start: &str, end: &str| Experience {
+            id: id.to_string(),
+            company: "Co".to_string(),
+            start_date: start.to_string(),
+            end_date: end.to_string(),
+            projects: vec![crate::models::ExperienceProject {
+                skill_ids: vec!["s-bash".to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let kept = make_exp("recent", "Jan 2023", "Present");
+        let dropped = make_exp("older", "Jan 2015", "Dec 2016");
+
+        let cv = TailoredCV {
+            skills: vec![skill],
+            experiences: vec![kept.clone()], // matcher's filtered set
+            all_experiences: vec![kept, dropped], // full career
+            ..Default::default()
+        };
+        let html = render_tailored_cv(&cv, "", Lang::En);
+        // Duration must come from all_experiences (both entries), so the
+        // total is much larger than what the single kept experience alone
+        // would produce — this fails if render_skills is ever pointed
+        // back at the filtered `cv.experiences` instead.
+        let months_from_all = crate::services::skill_duration::total_months_for_skill(
+            "s-bash",
+            &cv.all_experiences,
+            crate::services::skill_duration::current_year_month(),
+        );
+        let months_from_filtered = crate::services::skill_duration::total_months_for_skill(
+            "s-bash",
+            &cv.experiences,
+            crate::services::skill_duration::current_year_month(),
+        );
+        assert!(months_from_all > months_from_filtered);
+        let expected_years = crate::services::skill_duration::format_years(months_from_all);
+        assert!(
+            html.contains(&expected_years),
+            "expected the full-career duration {expected_years:?} in the tailored output"
+        );
+    }
 
     #[test]
     fn tailored_shows_score_as_percentage() {

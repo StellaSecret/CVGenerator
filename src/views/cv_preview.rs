@@ -6,26 +6,19 @@ use dioxus::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 fn download_pdf(iframe_id: &str, filename: &str) {
-    // Suggested filename for the browser's "Save as PDF" print destination
-    // (it uses document.title, sans extension — the .pdf gets added
-    // automatically).
-    let title = filename.strip_suffix(".pdf").unwrap_or(filename);
-    let js = format!(
-        r#"(function(){{
-        var f = document.getElementById('{iframe_id}');
-        if (!f || !f.contentWindow) return;
-        try {{
-            if (f.contentDocument) {{ f.contentDocument.title = {title:?}; }}
-        }} catch (e) {{}}
-        f.contentWindow.focus();
-        f.contentWindow.print();
-    }})();"#
-    );
-    let _ = js_sys::eval(&js);
+    let _ = js_sys::eval(&super::download_pdf_js(iframe_id, filename));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn download_pdf(_iframe_id: &str, _filename: &str) {}
+
+#[cfg(target_arch = "wasm32")]
+fn resize_iframe(iframe_id: &str) {
+    let _ = js_sys::eval(&super::resize_iframe_to_content_js(iframe_id));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resize_iframe(_iframe_id: &str) {}
 
 #[component]
 pub fn CvPreview() -> Element {
@@ -88,6 +81,7 @@ pub fn CvPreview() -> Element {
                     id: "cv-preview-frame",
                     class: "cv-iframe",
                     srcdoc: "{html}",
+                    onload: move |_| resize_iframe("cv-preview-frame"),
                 }
             }
         }

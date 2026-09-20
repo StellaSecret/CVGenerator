@@ -1129,6 +1129,7 @@ pub fn tailor_cv(cv: &LifetimeCV, jd_text: &str) -> TailorResult {
     let tailored = TailoredCV {
         personal: cv.personal.clone(),
         experiences: selected_exp,
+        all_experiences: cv.experiences.clone(),
         skills: matched_skills,
         education: cv.education.clone(),
         projects: selected_proj,
@@ -1459,6 +1460,7 @@ pub fn tailor_cv_with_scorer(
     let tailored = TailoredCV {
         personal: cv.personal.clone(),
         experiences: selected_exp,
+        all_experiences: cv.experiences.clone(),
         skills: matched_skills,
         education: cv.education.clone(),
         projects: selected_proj,

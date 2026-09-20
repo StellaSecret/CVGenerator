@@ -15,7 +15,13 @@ multi-step form. This becomes your personal career database, stored in
 **Step 2 — Preview & download**  
 See your complete CV rendered as a clean, print-ready HTML document.
 Click "Download PDF" to print it via the browser's native print dialog
-(`Ctrl+P → Save as PDF`).
+(`Ctrl+P → Save as PDF`). The PDF is a single long, scrollable page that
+automatically sizes itself to fit your whole CV — no per-sheet page breaks.
+Chromium and Firefox honor this; Safari ignores the CSS `@page size` and
+silently falls back to a normal paginated A4 PDF. The suggested filename
+(`name-cv.pdf`) comes from `document.title`, so browsers that use it
+(Chromium, Firefox) name the file automatically; Safari names it itself.
+"Headers and footers" (title/URL/date/page number) is off by default.
 
 **Step 3 — Tailor to a job description**  
 Paste any job posting. The app extracts keywords, scores every item in
