@@ -2,6 +2,7 @@
 use crate::i18n;
 use crate::router::Route;
 use cv_generator::models::*;
+use cv_generator::services::cv_date;
 use cv_generator::services::pdf_import;
 use cv_generator::services::skill_duration;
 use cv_generator::services::storage::save_cv;
@@ -289,7 +290,12 @@ fn ExpItem(
     let t_count = i18n::tr("ed_n_projects", l);
 
     let role = exp.role.get(l).to_string();
-    let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
+    let sub = format!(
+        "{} · {} – {}",
+        exp.company,
+        cv_date::display_date(&exp.start_date, l),
+        cv_date::display_date(&exp.end_date, l)
+    );
     let n_projects = exp
         .projects
         .iter()
@@ -375,7 +381,6 @@ fn ExpExperienceView(
     let t_add_project = i18n::tr("ed_add_project", l);
     let t_new_project = i18n::tr("ed_new_project", l);
     let t_n_bullets = i18n::tr("ed_n_bullets", l);
-    let t_present = i18n::tr("ed_present", l);
 
     let eid_save = exp_id.clone();
     let eid_edit = exp_id.clone();
@@ -412,7 +417,12 @@ fn ExpExperienceView(
     } else {
         role
     };
-    let sub = format!("{} · {} – {}", exp.company, exp.start_date, exp.end_date);
+    let sub = format!(
+        "{} · {} – {}",
+        exp.company,
+        cv_date::display_date(&exp.start_date, l),
+        cv_date::display_date(&exp.end_date, l)
+    );
 
     rsx! {
         div { class: "drill",
@@ -450,17 +460,18 @@ fn ExpExperienceView(
                                 oninput: move |e| { e_location.set(e.value()); },
                             }
                         }
-                        Field { label: t_start.to_string(),
-                            input { r#type: "text", class: "input",
-                                value: e_start.read().clone(),
-                                oninput: move |e| { e_start.set(e.value()); },
-                            }
+                        DatePickerField {
+                            label: t_start.to_string(),
+                            value: e_start.read().clone(),
+                            on_change: move |v| { e_start.set(v); },
+                            lang: l,
                         }
-                        Field { label: t_end.to_string(),
-                            input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                value: e_end.read().clone(),
-                                oninput: move |e| { e_end.set(e.value()); },
-                            }
+                        DatePickerField {
+                            label: t_end.to_string(),
+                            value: e_end.read().clone(),
+                            on_change: move |v| { e_end.set(v); },
+                            lang: l,
+                            allow_present: true,
                         }
                     }
                     div { class: "form-actions",
@@ -668,7 +679,6 @@ fn ExpProjectView(
     let t_tools = i18n::tr("ed_tools", l);
     let t_start = i18n::tr("ed_start_date", l);
     let t_end = i18n::tr("ed_end_date", l);
-    let t_present = i18n::tr("ed_present", l);
 
     let all_skills = cv.read().skills.clone();
     let exp = cv
@@ -836,17 +846,18 @@ fn ExpProjectView(
                         }
                     }
                     div { class: "form-row",
-                        Field { label: t_start.to_string(),
-                            input { r#type: "text", class: "input",
-                                value: p_start.read().clone(),
-                                oninput: move |e| { p_start.set(e.value()); },
-                            }
+                        DatePickerField {
+                            label: t_start.to_string(),
+                            value: p_start.read().clone(),
+                            on_change: move |v| { p_start.set(v); },
+                            lang: l,
                         }
-                        Field { label: t_end.to_string(),
-                            input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                value: p_end.read().clone(),
-                                oninput: move |e| { p_end.set(e.value()); },
-                            }
+                        DatePickerField {
+                            label: t_end.to_string(),
+                            value: p_end.read().clone(),
+                            on_change: move |v| { p_end.set(v); },
+                            lang: l,
+                            allow_present: true,
                         }
                     }
                     div { class: "form-actions",
@@ -881,7 +892,9 @@ fn ExpProjectView(
                 div { class: "project-detail",
                     div { class: "item-title", "{proj_title}" }
                     if !proj.start_date.is_empty() || !proj.end_date.is_empty() {
-                        div { class: "item-sub", "{proj.start_date} – {proj.end_date}" }
+                        div { class: "item-sub",
+                            "{cv_date::display_date(&proj.start_date, l)} – {cv_date::display_date(&proj.end_date, l)}"
+                        }
                     }
                     for c in proj.context.iter().map(|c| c.get(l)).filter(|c| !c.is_empty()) {
                         div { class: "item-project-context", "{c}" }
@@ -1862,8 +1875,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let mut new_role = use_signal(LocalizedText::default);
     let mut new_loc = use_signal(String::new);
     let mut new_start = use_signal(String::new);
-    let t_present_s = i18n::tr("ed_present", l);
-    let mut new_end = use_signal(|| t_present_s.to_string());
+    let mut new_end = use_signal(|| cv_date::PRESENT.to_string());
     let mut new_projects = use_signal(|| {
         vec![ExperienceProject {
             id: new_id(),
@@ -1891,7 +1903,6 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
     let t_location = i18n::tr("ed_location", l);
     let t_start = i18n::tr("ed_start_date", l);
     let t_end = i18n::tr("ed_end_date", l);
-    let t_present = i18n::tr("ed_present", l);
     let t_projects = i18n::tr("ed_projects", l);
     let t_project_name = i18n::tr("ed_project_name", l);
     let t_achieve = i18n::tr("ed_achievements", l);
@@ -1947,17 +1958,18 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                         oninput: move |e| { new_loc.set(e.value()); },
                                     }
                                 }
-                                Field { label: t_start.to_string(),
-                                    input { r#type: "text", class: "input", placeholder: "Jan 2021",
-                                        value: new_start.read().clone(),
-                                        oninput: move |e| { new_start.set(e.value()); },
-                                    }
+                                DatePickerField {
+                                    label: t_start.to_string(),
+                                    value: new_start.read().clone(),
+                                    on_change: move |v| { new_start.set(v); },
+                                    lang: l,
                                 }
-                                Field { label: t_end.to_string(),
-                                    input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                        value: new_end.read().clone(),
-                                        oninput: move |e| { new_end.set(e.value()); },
-                                    }
+                                DatePickerField {
+                                    label: t_end.to_string(),
+                                    value: new_end.read().clone(),
+                                    on_change: move |v| { new_end.set(v); },
+                                    lang: l,
+                                    allow_present: true,
                                 }
                             }
                             div { class: "field",
@@ -2074,17 +2086,18 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                             }
                                         }
                                         div { class: "form-row",
-                                            Field { label: t_start.to_string(),
-                                                input { r#type: "text", class: "input", placeholder: "Jan 2025",
-                                                    value: new_projects.read()[pi].start_date.clone(),
-                                                    oninput: move |e| { new_projects.write()[pi].start_date = e.value(); },
-                                                }
+                                            DatePickerField {
+                                                label: t_start.to_string(),
+                                                value: new_projects.read()[pi].start_date.clone(),
+                                                on_change: move |v| { new_projects.write()[pi].start_date = v; },
+                                                lang: l,
                                             }
-                                            Field { label: t_end.to_string(),
-                                                input { r#type: "text", class: "input", placeholder: "{t_present}",
-                                                    value: new_projects.read()[pi].end_date.clone(),
-                                                    oninput: move |e| { new_projects.write()[pi].end_date = e.value(); },
-                                                }
+                                            DatePickerField {
+                                                label: t_end.to_string(),
+                                                value: new_projects.read()[pi].end_date.clone(),
+                                                on_change: move |v| { new_projects.write()[pi].end_date = v; },
+                                                lang: l,
+                                                allow_present: true,
                                             }
                                         }
                                         if new_projects.read().len() > 1 {
@@ -2149,7 +2162,7 @@ fn StepExperience(cv: Signal<LifetimeCV>, lang: Signal<i18n::Lang>) -> Element {
                                         });
                                         new_company.set(String::new()); new_role.set(LocalizedText::default());
                                         new_loc.set(String::new());     new_start.set(String::new());
-                                        new_end.set(t_present.to_string());
+                                        new_end.set(cv_date::PRESENT.to_string());
                                         new_projects.set(vec![ExperienceProject { id: new_id(), name: LocalizedText::default(), context: vec![LocalizedText::default()], bullets: vec![LocalizedText::default()], skill_ids: Vec::new(), start_date: String::new(), end_date: String::new() }]);
                                         show_form.set(false);
                                     },
@@ -2722,6 +2735,115 @@ fn LangEditBadge(lang: Signal<i18n::Lang>) -> Element {
     rsx! {
         span { class: "lang-edit-badge",
             if is_fr { "🇫🇷 Editing French" } else { "🇬🇧 Editing English" }
+        }
+    }
+}
+
+// ── Shared date picker ──────────────────────────────────────────────────────
+
+/// Selectable years for `DatePickerField`'s year dropdown: from 45 years
+/// ago through one year from now, most recent first. 45 years covers any
+/// realistic career start; a small look-ahead covers upcoming graduation/
+/// certification dates entered in advance.
+fn year_options() -> Vec<i32> {
+    let (now, _) = skill_duration::current_year_month();
+    ((now - 45)..=(now + 1)).rev().collect()
+}
+
+/// A "Month + Year" picker for CV dates, replacing free-text date entry so
+/// the same date can never end up typed in only one language. Always
+/// writes the canonical, language-neutral shape from
+/// `services::cv_date::canonical_date` via `on_change` — see that module's
+/// doc comment for why — so the stored value renders correctly in
+/// whichever language the CV is viewed in later, not just the language it
+/// was typed in.
+///
+/// `value` is parsed with `cv_date::parse_date` to pre-fill the two
+/// dropdowns; a value that isn't in the recognized shape (older freeform
+/// text this predates, or empty) just leaves both dropdowns unset without
+/// touching or losing the raw stored string until the person actually
+/// changes something here.
+///
+/// `allow_present` adds a "Present" checkbox next to the dropdowns (only
+/// meaningful for `end_date` fields): checking it writes the
+/// `cv_date::PRESENT` sentinel and disables both dropdowns.
+#[component]
+fn DatePickerField(
+    label: String,
+    value: String,
+    on_change: EventHandler<String>,
+    lang: i18n::Lang,
+    allow_present: Option<bool>,
+) -> Element {
+    let l = lang;
+    let allow_present = allow_present.unwrap_or(false);
+    let present = cv_date::is_present(&value);
+    let (cur_year, cur_month) = cv_date::parse_date(&value).unwrap_or((0, 0));
+
+    let t_month = i18n::tr("ed_month", l);
+    let t_year = i18n::tr("ed_year", l);
+    let t_present = i18n::tr("ed_present", l);
+
+    rsx! {
+        div { class: "field",
+            label { class: "label", "{label}" }
+            div { class: "date-picker-row",
+                select { class: "input select date-picker-month",
+                    disabled: present,
+                    onchange: move |e| {
+                        let m: u32 = e.value().parse().unwrap_or(0);
+                        if m == 0 {
+                            on_change.call(String::new());
+                        } else if cur_year != 0 {
+                            on_change.call(cv_date::canonical_date(cur_year, m));
+                        } else {
+                            // No year chosen yet — default to the current
+                            // one rather than silently dropping the month
+                            // the person just picked.
+                            let (now, _) = skill_duration::current_year_month();
+                            on_change.call(cv_date::canonical_date(now, m));
+                        }
+                    },
+                    option { value: "0", selected: cur_month == 0, "{t_month}" }
+                    for m in 1..=12u32 {
+                        option { value: "{m}", selected: m == cur_month, "{cv_date::month_name(m, l)}" }
+                    }
+                }
+                select { class: "input select date-picker-year",
+                    disabled: present,
+                    onchange: move |e| {
+                        let y: i32 = e.value().parse().unwrap_or(0);
+                        if y == 0 {
+                            on_change.call(String::new());
+                        } else if cur_month != 0 {
+                            on_change.call(cv_date::canonical_date(y, cur_month));
+                        } else {
+                            // No month chosen yet — default to January
+                            // rather than silently dropping the year.
+                            on_change.call(cv_date::canonical_date(y, 1));
+                        }
+                    },
+                    option { value: "0", selected: cur_year == 0, "{t_year}" }
+                    for y in year_options() {
+                        option { value: "{y}", selected: y == cur_year, "{y}" }
+                    }
+                }
+                if allow_present {
+                    label { class: "date-picker-present",
+                        input { r#type: "checkbox",
+                            checked: present,
+                            onchange: move |e| {
+                                if e.checked() {
+                                    on_change.call(cv_date::PRESENT.to_string());
+                                } else {
+                                    on_change.call(String::new());
+                                }
+                            },
+                        }
+                        "{t_present}"
+                    }
+                }
+            }
         }
     }
 }

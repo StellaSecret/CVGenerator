@@ -1,5 +1,6 @@
 use crate::i18n_core::{self, Lang};
 use crate::models::{LifetimeCV, SkillCategory, TailoredCV};
+use crate::services::cv_date;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -656,8 +657,8 @@ fn render_experience(
             } else {
                 format!(
                     r#"<span class="exp-project-dates">{} – {}</span>"#,
-                    esc(&proj.start_date),
-                    esc(&proj.end_date)
+                    esc(&cv_date::display_date(&proj.start_date, lang)),
+                    esc(&cv_date::display_date(&proj.end_date, lang))
                 )
             };
             let name_html = if proj.name.get(lang).is_empty() && project_dates_html.is_empty() {
@@ -716,8 +717,8 @@ fn render_experience(
 </div>"#,
             company = esc(&exp.company),
             location = location_html,
-            start = esc(&exp.start_date),
-            end = esc(&exp.end_date),
+            start = esc(&cv_date::display_date(&exp.start_date, lang)),
+            end = esc(&cv_date::display_date(&exp.end_date, lang)),
             role = esc(exp.role.get(lang)),
             projects = projects_html,
         ));
@@ -1018,7 +1019,7 @@ fn render_certifications(certs: &[crate::models::Certification], lang: Lang) -> 
                 // an empty "· ," suffix every time — compounding by one more
                 // "· ," on every subsequent import/export cycle.
                 let issuer = esc(&c.issuer);
-                let date = esc(&c.date);
+                let date = esc(&cv_date::display_date(&c.date, lang));
                 let suffix = match (issuer.is_empty(), date.is_empty()) {
                     (true, true) => String::new(),
                     (false, true) => format!(" <span class=\"lang-level\">· {issuer}</span>"),
@@ -1442,7 +1443,7 @@ mod tests {
         });
         let html = render_lifetime_cv(&cv, Lang::En);
         assert!(
-            html.contains(r#"<span class="exp-project-dates">Jan 2021 – </span>"#),
+            html.contains(r#"<span class="exp-project-dates">January 2021 – </span>"#),
             "a project with only a start date must still render its dates span, got: {html}"
         );
     }
@@ -1473,7 +1474,7 @@ mod tests {
             "an empty-name project with dates must still render its header block, got: {html}"
         );
         assert!(
-            html.contains(r#"<span class="exp-project-dates">Jan 2021 – Mar 2021</span>"#),
+            html.contains(r#"<span class="exp-project-dates">January 2021 – March 2021</span>"#),
             "dates must appear in the header, got: {html}"
         );
     }

@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod cv_date;
 pub mod drive;
 pub mod embeddings;
 pub mod linkedin_import;
