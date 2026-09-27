@@ -241,6 +241,42 @@ jobs:
         run: cargo clean -p cv-generator
       - name: Build Android APK (aarch64) — first pass (generates project)
         run: dx build --release --platform android --package cv-generator --target aarch64-linux-android
+      - name: Overlay custom Android app icon
+        # Dioxus.toml's [bundle] icon is meant to cover this, but Android
+        # specifically has had reports of that config not taking effect
+        # (github.com/DioxusLabs/dioxus/issues/3685), and it can't express
+        # a real adaptive icon (foreground/background layers) anyway — only
+        # a single flat image. So overwrite the generated Gradle project's
+        # launcher icon resources directly with our own, using the same
+        # standard ic_launcher*/ic_launcher_background names Android's own
+        # project templates use, right after `dx build` creates the
+        # project and before Gradle assembles it.
+        run: |
+          GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
+          if [ -z "$GRADLE_DIR" ]; then
+            echo "ERROR: generated Android Gradle project not found — can't overlay the app icon"
+            exit 1
+          fi
+          RES_DIR="$GRADLE_DIR/app/src/main/res"
+          if [ ! -d "$RES_DIR" ]; then
+            echo "ERROR: $RES_DIR not found — Android project layout may have changed"
+            exit 1
+          fi
+          # Dioxus's default template ships its own ic_launcher*.webp in
+          # each mipmap-* folder. Android resource identity ignores file
+          # extension — ic_launcher.png and ic_launcher.webp are both
+          # R.mipmap.ic_launcher — so leaving the defaults in place causes
+          # a "Duplicate resources" build failure once we add our .png
+          # versions alongside them. Delete anything under the same
+          # resource names we're about to provide, in every density
+          # folder, before copying ours in.
+          find "$RES_DIR" -type f \( \
+            -name "ic_launcher.*" -o \
+            -name "ic_launcher_round.*" -o \
+            -name "ic_launcher_foreground.*" -o \
+            -name "ic_launcher_background.*" \
+          \) -print -delete
+          cp -rv assets/android-icon-overlay/* "$RES_DIR/"
       - name: Remove first-pass APK (no overlays)
         run: find target/dx -name "*.apk" -delete 2>/dev/null || true
       - name: Assemble release APK via Gradle
@@ -329,7 +365,12 @@ jobs:
           if [ -z "$APK" ]; then
             APK=$(find target/dx -name "*.apk" 2>/dev/null | head -1)
           fi
-          AAB=$(find target/dx -name "*-signed.aab" 2>/dev/null | head -1)
+          # Unlike the APK step above, apksigner signs the AAB in place
+          # (no --out flag), so it keeps its original name rather than
+          # gaining a "-signed" suffix — matching "*-signed.aab" here
+          # never found anything, which is why the AAB was missing from
+          # release artifacts.
+          AAB=$(find target/dx -name "*.aab" 2>/dev/null | head -1)
           if [ -n "$APK" ]; then
             cp "$APK" dist/cv-generator.apk
             echo "APK copied from: $APK"
