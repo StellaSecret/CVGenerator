@@ -116,6 +116,23 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 
+[target.'cfg(target_os = "android")'.dependencies]
+# Bridges Rust to the Kotlin `GoogleDriveHelper` in android/overlay/ (see
+# services/android_auth.rs): stores the JavaVM handle so start_oauth() can
+# call back into Kotlin to launch native Google Sign-In, since Google
+# disallows running its OAuth consent screen inside an embedded WebView
+# (which is how this app renders on Android otherwise).
+jni = { version = "0.21", default-features = false }
+# Backs the `sleep` in views::sync's Android token-poll loop. dioxus's own
+# spawn() already runs within a tokio runtime on this platform (via
+# dioxus_desktop), so this just needs to be present as a directly-callable
+# dependency rather than only a transitive one.
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
+# Google Drive backup/restore over HTTPS (services/drive/drive_native.rs).
+# rustls rather than the default native-tls, which would need OpenSSL
+# cross-compiled for Android.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 # Enables real-browser `#[wasm_bindgen_test]` tests for the localStorage/
 # CacheStorage/DOM-touching code in auth.rs, worker.rs, drive.rs, and

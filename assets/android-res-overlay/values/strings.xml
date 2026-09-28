@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">CV Generator</string>
+    <!-- Substituted with the real GOOGLE_CLIENT_ID secret by the CI
+         workflow's resource-overlay step (see .github/workflows/ci.yml) —
+         never committed as a real value. Used by Google Play Services'
+         Sign-In SDK (see android/overlay/), the same client ID already
+         used for the web OAuth flow. -->
+    <string name="default_web_client_id" translatable="false">__GOOGLE_CLIENT_ID__</string>
+</resources>

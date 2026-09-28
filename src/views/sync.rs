@@ -54,6 +54,52 @@ pub fn Sync() -> Element {
         }));
     });
 
+    // Android: sign-in happens natively in Kotlin (see android/overlay/ and
+    // services/android_auth.rs), which writes the token to a file and sets
+    // TOKEN_SAVED rather than calling back into Rust with the token itself
+    // directly — so pick it up two ways: an immediate check on every
+    // render (covers the common case where this component re-renders soon
+    // after the flag flips), and a background poll loop for the case where
+    // nothing else would otherwise trigger a re-render.
+    #[cfg(target_os = "android")]
+    {
+        use cv_generator::services::android_auth::TOKEN_SAVED;
+        use std::sync::atomic::Ordering;
+
+        if token.read().is_empty() && TOKEN_SAVED.load(Ordering::Acquire) {
+            if let Some(new_t) = auth::get_token() {
+                if !new_t.is_empty() {
+                    token.set(new_t);
+                    status.set(make_ok(&i18n::tr("sy_signed_in_msg", l)));
+                }
+            }
+        }
+
+        let mut t = token;
+        let mut st = status;
+        let l2 = l;
+        use_hook(move || {
+            spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    if TOKEN_SAVED.load(Ordering::Acquire) {
+                        if t.read().is_empty() {
+                            if let Some(new_t) = auth::get_token() {
+                                if !new_t.is_empty() {
+                                    t.set(new_t);
+                                    st.set(make_ok(&i18n::tr("sy_signed_in_msg", l2)));
+                                    break;
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     let signed_in = !token.read().is_empty();
     let has_cv = !cv.read().personal.name.is_empty();
     let has_cid = BUILD_TIME_CLIENT_ID.filter(|s| !s.is_empty()).is_some();
@@ -116,6 +162,9 @@ pub fn Sync() -> Element {
                                 status.set(make_err(t_configerr));
                                 return;
                             }
+                            #[cfg(target_os = "android")]
+                            cv_generator::services::android_auth::TOKEN_SAVED
+                                .store(false, std::sync::atomic::Ordering::Release);
                             let cid = BUILD_TIME_CLIENT_ID.unwrap_or_default().to_string();
                             auth::start_oauth(&cid, "");
                         },

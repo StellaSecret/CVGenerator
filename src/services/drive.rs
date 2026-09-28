@@ -37,6 +37,14 @@ mod drive_wasm;
 #[cfg(target_arch = "wasm32")]
 pub use drive_wasm::{drive_backup, drive_restore, local_export};
 
+// Android: same Drive calls as the wasm module, over reqwest — see
+// drive_native.rs. `local_export` (browser download) stays the stub below.
+#[cfg(target_os = "android")]
+mod drive_native;
+
+#[cfg(target_os = "android")]
+pub use drive_native::{drive_backup, drive_restore};
+
 // ── Serialise / deserialise ───────────────────────────────────────────────────
 
 pub fn build_backup(cv: &LifetimeCV, saved_sessions: &[TailoringSession]) -> String {
@@ -82,7 +90,10 @@ pub fn restore_from_json(json: &str) -> Result<RestoredData, String> {
 /// success. Kept free of `reqwest` types (a wasm-only dependency) so it
 /// compiles and is unit-testable on native, where the async `check` wrapper
 /// can't run.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_arch = "wasm32", target_os = "android")),
+    allow(dead_code)
+)]
 fn drive_error_from_status(status: u16, body: &str) -> Option<String> {
     if (200..400).contains(&status) {
         return None;
@@ -99,7 +110,7 @@ fn drive_error_from_status(status: u16, body: &str) -> Option<String> {
 
 // ── Drive: backup ─────────────────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub async fn drive_backup(
     _cv: &LifetimeCV,
     _saved_sessions: &[TailoringSession],
@@ -110,7 +121,7 @@ pub async fn drive_backup(
 
 // ── Drive: restore ────────────────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub async fn drive_restore(_token: &str) -> Result<RestoredData, String> {
     Err("Drive restore is only available on web".to_string())
 }
@@ -279,6 +290,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "android"))]
     fn drive_backup_unavailable_on_native() {
         let res = block_on(drive_backup(&sample_cv(), &[], "fake-token"));
         assert!(
@@ -288,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "android"))]
     fn drive_restore_unavailable_on_native() {
         let res = block_on(drive_restore("fake-token"));
         assert!(

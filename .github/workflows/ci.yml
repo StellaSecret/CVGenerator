@@ -241,25 +241,24 @@ jobs:
         run: cargo clean -p cv-generator
       - name: Build Android APK (aarch64) — first pass (generates project)
         run: dx build --release --platform android --package cv-generator --target aarch64-linux-android
-      - name: Overlay custom Android app icon
-        # Dioxus.toml's [bundle] icon is meant to cover this, but Android
-        # specifically has had reports of that config not taking effect
-        # (github.com/DioxusLabs/dioxus/issues/3685), and it can't express
-        # a real adaptive icon (foreground/background layers) anyway — only
-        # a single flat image. So overwrite the generated Gradle project's
-        # launcher icon resources directly with our own, using the same
-        # standard ic_launcher*/ic_launcher_background names Android's own
-        # project templates use, right after `dx build` creates the
-        # project and before Gradle assembles it.
+      - name: Remove first-pass APK (no overlays)
+        run: find target/dx -name "*.apk" -delete 2>/dev/null || true
+      - name: Overlay custom Android resources (icons, OAuth strings)
+        # Dioxus.toml's [bundle] icon is meant to cover the icon, but
+        # Android specifically has had reports of that config not taking
+        # effect (github.com/DioxusLabs/dioxus/issues/3685), and it can't
+        # express a real adaptive icon (foreground/background layers)
+        # anyway — only a single flat image. So overwrite the generated
+        # Gradle project's launcher icon resources directly with our own,
+        # using the same standard ic_launcher*/ic_launcher_background
+        # names Android's own project templates use. This also carries
+        # strings.xml, whose default_web_client_id is what the native
+        # Google Sign-In overlay (next step) needs — substitute the real
+        # secret into it here.
         run: |
-          GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
-          if [ -z "$GRADLE_DIR" ]; then
-            echo "ERROR: generated Android Gradle project not found — can't overlay the app icon"
-            exit 1
-          fi
-          RES_DIR="$GRADLE_DIR/app/src/main/res"
-          if [ ! -d "$RES_DIR" ]; then
-            echo "ERROR: $RES_DIR not found — Android project layout may have changed"
+          RES_DIR=$(find target/dx -type d -path "*/app/src/main/res" 2>/dev/null | head -1)
+          if [ -z "$RES_DIR" ]; then
+            echo "ERROR: generated Android res/ dir not found — can't overlay resources"
             exit 1
           fi
           # Dioxus's default template ships its own ic_launcher*.webp in
@@ -276,9 +275,57 @@ jobs:
             -name "ic_launcher_foreground.*" -o \
             -name "ic_launcher_background.*" \
           \) -print -delete
-          cp -rv assets/android-icon-overlay/* "$RES_DIR/"
-      - name: Remove first-pass APK (no overlays)
-        run: find target/dx -name "*.apk" -delete 2>/dev/null || true
+          cp -rv assets/android-res-overlay/* "$RES_DIR/"
+          if [ -f "$RES_DIR/values/strings.xml" ]; then
+            sed -i "s|__GOOGLE_CLIENT_ID__|$GOOGLE_CLIENT_ID|g" "$RES_DIR/values/strings.xml"
+            echo "Injected GOOGLE_CLIENT_ID into strings.xml"
+          fi
+      - name: Overlay native Google Sign-In (Kotlin + JNI)
+        # Google disallows running its OAuth consent screen inside an
+        # embedded WebView (which is how this app renders otherwise), so
+        # Android sign-in goes through Kotlin + Google Play Services
+        # instead — see android/overlay/ and services/android_auth.rs.
+        # Ported from the PeopleModeler project, which has this working in
+        # production.
+        run: |
+          KOTLIN_DIR=$(find target/dx -type d -path "*/app/src/main/kotlin" 2>/dev/null | head -1)
+          if [ -z "$KOTLIN_DIR" ]; then
+            echo "ERROR: generated Android kotlin source dir not found"
+            exit 1
+          fi
+          OVERLAY="android/overlay"
+          echo "Overlaying Kotlin code → $KOTLIN_DIR"
+          cp -r "$OVERLAY/app/src/main/java/"* "$KOTLIN_DIR/"
+          # Remove any duplicate MainActivity from other source dirs
+          # (e.g. a stray src/main/java/) to avoid redeclaration.
+          find "$KOTLIN_DIR/.." -name "MainActivity.kt" ! -path "$KOTLIN_DIR/*" -delete
+          # Copy the ProGuard keep rule (GoogleDriveHelper is called only
+          # via JNI, invisible to R8's bytecode analysis).
+          APP_DIR=$(dirname "$KOTLIN_DIR" | xargs dirname | xargs dirname)
+          if [ -f "$OVERLAY/app/proguard-rules.pro" ]; then
+            cp "$OVERLAY/app/proguard-rules.pro" "$APP_DIR/"
+            echo "Copied proguard-rules.pro for GoogleDriveHelper keep rule"
+          fi
+      - name: Overlay Gradle config (play-services-auth)
+        # Dioxus's generated build.gradle.kts doesn't know about the
+        # Google Play Services Auth dependency GoogleDriveHelper.kt needs,
+        # so replace it (and the root build.gradle.kts/gradle.properties)
+        # with our own — see android/overlay/.
+        run: |
+          GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
+          if [ -z "$GRADLE_DIR" ]; then
+            echo "ERROR: gradlew dir not found — can't overlay Gradle config"
+            exit 1
+          fi
+          OVERLAY="android/overlay"
+          cp "$OVERLAY/build.gradle.kts" "$GRADLE_DIR/build.gradle.kts"
+          cp "$OVERLAY/app/build.gradle.kts" "$GRADLE_DIR/app/build.gradle.kts"
+          cp "$OVERLAY/gradle.properties" "$GRADLE_DIR/gradle.properties"
+          MANIFEST=$(find "$GRADLE_DIR" -path "*/src/main/AndroidManifest.xml" 2>/dev/null | head -1)
+          if [ -n "$MANIFEST" ]; then
+            sed -i 's/ android:extractNativeLibs="true"//' "$MANIFEST"
+            echo "Stripped android:extractNativeLibs from $MANIFEST"
+          fi
       - name: Assemble release APK via Gradle
         run: |
           GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)

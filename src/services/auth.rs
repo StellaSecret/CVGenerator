@@ -57,22 +57,78 @@ fn now_ms() -> u64 {
 }
 
 // ── Token storage ────────────────────────────────────────────────────────────
+//
+// Android gets a real, file-backed implementation here (see the module doc
+// comment on `android_auth` for the full flow): Google disallows running
+// its OAuth consent screen inside an embedded WebView, so sign-in happens
+// natively in Kotlin via Google Play Services, which writes the resulting
+// token straight into this same file. Desktop targets (not wasm32, not
+// Android) keep the original no-op stubs below — no desktop OAuth flow is
+// implemented (or asked for) here.
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
+pub fn get_token() -> Option<String> {
+    let path = token_path()?;
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+#[cfg(target_os = "android")]
+pub fn set_token(token: &str) {
+    if let Some(path) = token_path() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, token);
+    }
+}
+#[cfg(target_os = "android")]
+pub fn set_token_with_expiry(token: &str, _expires_in_secs: u64) {
+    // Play Services' GoogleAuthUtil.getToken() (see GoogleDriveHelper.kt)
+    // doesn't hand back an expires_in the way the web GIS flow does, so
+    // there's no expiry to track here — a 401 from Drive (AUTH_EXPIRED_ERR
+    // in drive.rs) is what actually signals a dead token on this platform.
+    set_token(token);
+}
+#[cfg(target_os = "android")]
+pub fn clear_token() {
+    if let Some(path) = token_path() {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+#[cfg(target_os = "android")]
+fn token_path() -> Option<std::path::PathBuf> {
+    crate::services::android_auth::get_files_dir().map(|p| p.join(".cv_drive_token"))
+}
+
+#[cfg(target_os = "android")]
+pub fn init() {
+    // Nothing to do here: Kotlin's `GoogleDriveHelper.init()` calls
+    // `nativeInit()` (android_auth.rs) itself, at app startup, independent
+    // of this function — unlike wasm32's `init()`, which has to inject the
+    // GIS `<script>` tag before anything else can happen.
+}
+
+#[cfg(target_os = "android")]
+pub fn start_oauth(_client_id: &str, _redirect_uri: &str) {
+    crate::services::android_auth::start_sign_in();
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn get_token() -> Option<String> {
     None
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn set_token(_token: &str) {}
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn set_token_with_expiry(_token: &str, _expires_in_secs: u64) {}
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn clear_token() {}
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn init() {}
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn start_oauth(_client_id: &str, _redirect_uri: &str) {}
 
 // ── UI helper ─────────────────────────────────────────────────────────────────
@@ -109,6 +165,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     fn get_set_clear_token_native_stubs() {
         set_token("test");
         assert!(get_token().is_none());
@@ -157,7 +214,7 @@ mod tests {
     // (backed by real localStorage) can legitimately return `Some(...)`
     // after `set_token`, so this assertion would be simply wrong there.
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     fn get_token_native_stub_always_returns_none() {
         assert_eq!(get_token(), None);
     }

@@ -19,7 +19,7 @@ publisher = "Stella Secret"
 # NOTE: Android specifically has had reports of this icon config not being
 # picked up (github.com/DioxusLabs/dioxus/issues/3685). The CI workflow
 # (.github/workflows/ci.yml, "Overlay custom Android app icon" step)
-# doesn't rely on this — it copies assets/android-icon-overlay/ straight
+# doesn't rely on this — it copies assets/android-res-overlay/ straight
 # into the generated Gradle project's res/ folder as a guaranteed fallback,
 # so the Android icon is correct either way. This entry still matters for
 # desktop bundles (macOS/Windows/Linux), which do use it.
