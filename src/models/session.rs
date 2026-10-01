@@ -125,6 +125,25 @@ pub struct TailoringSession {
     /// reasoning as `checked_skill_ids`).
     #[serde(default)]
     pub summary_skill_ids: Vec<String>,
+    /// The algorithm's OWN selection from the last generate, for each of
+    /// the three manual-selection lists (`checked_project_ids`,
+    /// `checked_top_project_ids`, `checked_skill_ids` respectively).
+    ///
+    /// These are what make a saved session's manual edits survive being
+    /// loaded back and regenerated. Regeneration merges the new algorithm
+    /// picks into whatever is checked, EXCEPT ids the person had
+    /// previously removed — and "previously removed" can only be computed
+    /// as `algo − checked`. Without the algo set persisted, a loaded
+    /// session has to seed `last_algo_*` from the checked set itself,
+    /// which makes that difference always empty: every item the fresh run
+    /// picks silently comes back, so hand-removing a project and reloading
+    /// the session a moment later undid the removal.
+    ///
+    /// Grouped in one struct rather than three loose fields because they
+    /// are always written and read together, and mixing them up silently
+    /// corrupts the merge.
+    #[serde(default)]
+    pub algo_selections: AlgoSelections,
     #[serde(default)]
     pub updated_at_ms: i64,
     /// Match score (0.0–1.0, the same fraction `TailoredCV.match_score`
@@ -139,6 +158,22 @@ pub struct TailoringSession {
     /// and backups written before this field existed still deserialize.
     #[serde(default)]
     pub status: ApplicationStatus,
+}
+
+/// The algorithm's own picks, per manual-selection list, as of the last
+/// generate. See `TailoringSession::algo_selections` for why this is
+/// persisted separately from the checked sets.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AlgoSelections {
+    /// `ExperienceProject` ids the scorer picked.
+    #[serde(default)]
+    pub project_ids: Vec<String>,
+    /// Top-level `Project` ids the scorer picked.
+    #[serde(default)]
+    pub top_project_ids: Vec<String>,
+    /// `Skill` ids the scorer kept.
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
 }
 
 #[cfg(test)]
@@ -164,6 +199,11 @@ mod tests {
             s.checked_top_project_ids.is_empty(),
             "old JSON has no personal-project selection; it must deserialize to empty"
         );
+        assert_eq!(
+            s.algo_selections,
+            AlgoSelections::default(),
+            "old JSON predates persisted algo selections; must default to all-empty"
+        );
         assert!(
             s.summary_skill_ids.is_empty(),
             "old JSON has no summary-skill override; it must default to automatic"
@@ -178,5 +218,55 @@ mod tests {
             assert_eq!(ApplicationStatus::from_key(st.as_str()), st);
             assert!(!st.i18n_key().is_empty());
         }
+    }
+
+    /// A save/load cycle must carry the algorithm's own selection, not
+    /// just the person's checked boxes. If it doesn't, a reloaded session
+    /// can no longer tell "unticked on purpose" from "never picked", and
+    /// the next Generate silently re-adds everything that was removed —
+    /// see `AlgoSelections` and `matcher::merge_selection`.
+    #[test]
+    fn roundtrip_preserves_algo_selections_apart_from_checked() {
+        let saved = TailoringSession {
+            id: "s1".to_string(),
+            name: "Acme".to_string(),
+            job_title: "Engineer".to_string(),
+            jd_text: "rust".to_string(),
+            score_mode: ScoreMode::Keyword,
+            // p1, p3 kept; p2 was picked by the scorer but unticked.
+            checked_project_ids: vec!["p1".into(), "p3".into()],
+            checked_top_project_ids: vec!["t1".into()],
+            checked_skill_ids: vec!["k1".into()],
+            summary_choice: Some("short".to_string()),
+            summary_skill_ids: vec!["k2".into()],
+            algo_selections: AlgoSelections {
+                project_ids: vec!["p1".into(), "p2".into(), "p3".into()],
+                top_project_ids: vec!["t1".into(), "t2".into()],
+                skill_ids: vec!["k1".into(), "k3".into()],
+            },
+            updated_at_ms: 42,
+            match_score: 0.5,
+            date_applied: "2026-01-01".to_string(),
+            status: ApplicationStatus::Interviewing,
+        };
+
+        let json = serde_json::to_string(&saved).unwrap();
+        let back: TailoringSession = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, saved);
+
+        // The removal is still visible after the round trip, which is the
+        // whole point: algo − checked = {p2}.
+        let checked: std::collections::HashSet<&String> = back.checked_project_ids.iter().collect();
+        let removed: std::collections::HashSet<&String> = back
+            .algo_selections
+            .project_ids
+            .iter()
+            .filter(|id| !checked.contains(id))
+            .collect();
+        assert_eq!(
+            removed,
+            std::collections::HashSet::from([&"p2".to_string()]),
+            "the hand-removed project must still be identifiable as removed after reload"
+        );
     }
 }

@@ -228,6 +228,51 @@ mod tests {
         assert_eq!(restored.saved_sessions[0].date_applied, "2026-09-11");
     }
 
+    /// A backup is only worth making if it preserves the state needed to
+    /// reproduce a tailored CV. The manual-selection bookkeeping is part
+    /// of that: `algo_selections` is what distinguishes "the person
+    /// unticked this project on purpose" from "the scorer never picked
+    /// it", so a backup that silently dropped it would resurrect every
+    /// removed project on the first Generate after a restore.
+    ///
+    /// Asserted through `build_backup`/`restore_from_json` rather than on
+    /// `TailoringSession` directly, because that is the boundary this can
+    /// actually break at: the field is carried automatically by a derived
+    /// `Serialize`, with no `skip_serializing_if` on it, and this test is
+    /// what stops someone adding one later without noticing.
+    #[test]
+    fn backup_preserves_manual_selection_state() {
+        let cv = sample_cv();
+        let session = TailoringSession {
+            id: "s1".to_string(),
+            name: "Acme".to_string(),
+            // p1 and p3 kept, p2 unticked by hand even though the scorer
+            // had picked it.
+            checked_project_ids: vec!["p1".into(), "p3".into()],
+            checked_top_project_ids: vec!["t1".into()],
+            checked_skill_ids: vec!["k1".into()],
+            algo_selections: crate::models::AlgoSelections {
+                project_ids: vec!["p1".into(), "p2".into(), "p3".into()],
+                top_project_ids: vec!["t1".into(), "t2".into()],
+                skill_ids: vec!["k1".into(), "k3".into()],
+            },
+            ..Default::default()
+        };
+
+        let json = build_backup(&cv, std::slice::from_ref(&session));
+        let restored = restore_from_json(&json).expect("restore failed");
+        let got = &restored.saved_sessions[0];
+
+        assert_eq!(got.checked_project_ids, vec!["p1", "p3"]);
+        assert_eq!(got.checked_top_project_ids, vec!["t1"]);
+        assert_eq!(got.algo_selections, session.algo_selections);
+        assert!(
+            got.algo_selections.project_ids.iter().any(|id| id == "p2"),
+            "p2 was removed by hand, so the backup must still record that the \
+             scorer picked it — otherwise the restore cannot honour the removal"
+        );
+    }
+
     #[test]
     fn backup_has_correct_version() {
         let cv = sample_cv();

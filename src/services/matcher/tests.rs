@@ -188,6 +188,66 @@ fn apply_manual_top_selection_with_nothing_checked_drops_them_all() {
     );
 }
 
+// ── merge_selection ──────────────────────────────────────────────────
+
+fn set(ids: &[&str]) -> HashSet<String> {
+    ids.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn merge_selection_keeps_manual_additions() {
+    let merged = merge_selection(&set(&["p1", "p9"]), &set(&["p1"]), &set(&["p1"]));
+    assert_eq!(
+        merged,
+        set(&["p1", "p9"]),
+        "a hand-added id survives even a run that didn't pick it"
+    );
+}
+
+#[test]
+fn merge_selection_picks_up_new_algorithm_choices() {
+    let merged = merge_selection(&set(&["p1"]), &set(&["p1"]), &set(&["p1", "p2"]));
+    assert_eq!(merged, set(&["p1", "p2"]));
+}
+
+#[test]
+fn merge_selection_preserves_removals_across_a_restore() {
+    // The regression this whole helper exists for. A saved session records
+    // both what the person has checked and what the algorithm had picked;
+    // on load both come back. Here the person had ticked p1 and p3, and
+    // explicitly unticked p2 which the algorithm HAD picked. A fresh run
+    // still likes p2 — if the merge can't tell "p2 was unticked on
+    // purpose" from "p2 was never picked", it re-adds p2 and undoes the
+    // manual removal.
+    let prev_checked = set(&["p1", "p3"]);
+    let prev_algo = set(&["p1", "p2", "p3"]);
+    let new_algo = set(&["p1", "p2", "p3"]);
+    let merged = merge_selection(&prev_checked, &prev_algo, &new_algo);
+    assert_eq!(
+        merged,
+        set(&["p1", "p3"]),
+        "p2 was removed by hand and must stay removed"
+    );
+}
+
+#[test]
+fn merge_selection_with_seeded_algo_resurrects_removals() {
+    // Pins down WHY the algo set has to be persisted: a session restored
+    // without it can only seed prev_algo from prev_checked, and that
+    // variant of the same merge silently brings p2 back. If this test ever
+    // needs changing to make the code above pass, the persistence of
+    // algo_selections was removed — and that is the bug it guards.
+    let prev_checked = set(&["p1", "p3"]);
+    let algo_seeded_from_checked = prev_checked.clone();
+    let new_algo = set(&["p1", "p2", "p3"]);
+    let merged = merge_selection(&prev_checked, &algo_seeded_from_checked, &new_algo);
+    assert!(
+        merged.contains("p2"),
+        "expected the algo-unaware variant to resurrect p2; if this fails the \
+         merge changed and the reason for persisting algo selections is gone"
+    );
+}
+
 // ── expand_summary_skills ────────────────────────────────────────────────
 
 fn skills_named(names: &[&str]) -> Vec<Skill> {

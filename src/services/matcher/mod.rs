@@ -904,6 +904,69 @@ pub fn apply_manual_top_project_selection(
         .collect()
 }
 
+/// Folds a fresh algorithm run's picks into whatever the person currently
+/// has checked, preserving their manual deviations.
+///
+/// This is the merge used both when regenerating and when loading a saved
+/// session, and it exists as a standalone function precisely because its
+/// input is easy to get subtly wrong: `user_removed` must be
+/// `prev_algo − prev_checked`, i.e. "ids the algorithm had picked that the
+/// person has since unticked".
+///
+/// Seeding `prev_algo` from `prev_checked` instead (which is what a
+/// loaded session's data looks like when the algorithm's own selection
+/// wasn't persisted) makes `user_removed` permanently empty, so every id
+/// the fresh run picks is re-added — silently resurrecting projects and
+/// skills the person had deliberately removed. That regression is covered
+/// by `merge_selection_preserves_removals_across_a_restore` in the tests.
+///
+/// Ids the person ADDED by hand are never dropped either: `prev_checked`
+/// is always the base of the merge, so an addition survives a regeneration
+/// that no longer scores it as relevant.
+pub fn merge_selection(
+    prev_checked: &HashSet<String>,
+    prev_algo: &HashSet<String>,
+    new_algo: &HashSet<String>,
+) -> HashSet<String> {
+    let user_removed: HashSet<String> = prev_algo.difference(prev_checked).cloned().collect();
+    let mut merged = prev_checked.clone();
+    for id in new_algo {
+        if !user_removed.contains(id) {
+            merged.insert(id.clone());
+        }
+    }
+    merged
+}
+
+/// Applies the person's manual selection to an already-generated
+/// `TailoredCV` and renders it, returning the HTML.
+///
+/// Shared by every "Apply selection" button and by the load/regenerate
+/// paths, so the result of a restored session goes through the exact same
+/// transformation as a manual apply rather than a re-implementation of it
+/// that can drift.
+#[allow(clippy::too_many_arguments)]
+pub fn render_with_manual_selection(
+    cv: &LifetimeCV,
+    jd_text: &str,
+    job_title: &str,
+    base: TailoredCV,
+    checked_project_ids: &HashSet<String>,
+    checked_top_project_ids: &HashSet<String>,
+    checked_skill_ids: &HashSet<String>,
+    summary_choice: Option<&str>,
+    summary_skill_ids: &[String],
+    lang: crate::i18n_core::Lang,
+) -> String {
+    let mut tailored = base;
+    tailored.experiences = apply_manual_project_selection(cv, checked_project_ids);
+    tailored.projects = apply_manual_top_project_selection(cv, checked_top_project_ids);
+    tailored.skills = apply_manual_skill_selection(cv, checked_skill_ids);
+    let summary_skills = summary_skills_for(cv, &tailored.skills, jd_text, summary_skill_ids);
+    tailored.personal.summary = resolve_summary(&cv.personal, summary_choice, &summary_skills);
+    crate::services::renderer::render_tailored_cv(&tailored, job_title, lang)
+}
+
 /// `Skill` ids the person manually checked, applied to the full lifetime
 /// skill list. Skills keep the CV's own order (the rendered skills section
 /// regroups them by category anyway); an unchecked skill is simply
