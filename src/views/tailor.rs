@@ -426,7 +426,8 @@ pub fn Tailor() -> Element {
     let t_saved_sessions = i18n::tr("tl_saved_sessions", l);
     let t_save_as = i18n::tr("tl_save_as", l);
     let t_save_as_placeholder = i18n::tr("tl_save_as_placeholder", l);
-    let t_save = i18n::tr("tl_save", l);
+    let t_session_name = i18n::tr("tl_session_name", l);
+    let t_session_name_required = i18n::tr("tl_session_name_required", l);
     let t_load = i18n::tr("tl_load", l);
     let t_delete = i18n::tr("tl_delete", l);
     let t_no_saved_sessions = i18n::tr("tl_no_saved_sessions", l);
@@ -998,63 +999,84 @@ pub fn Tailor() -> Element {
                                         }
                                     }
                                     div { class: "saved-session-save-row",
-                                        label { class: "sr-only", r#for: "save-session-name-input", "{t_save_as}" }
-                                        input {
-                                            id: "save-session-name-input",
-                                            r#type: "text", class: "input",
-                                            placeholder: "{t_save_as_placeholder}",
-                                            value: new_session_name.read().clone(),
-                                            oninput: move |e| { new_session_name.set(e.value()); },
-                                        }
-                                        button {
-                                            class: "btn btn-secondary",
-                                            disabled: new_session_name.read().trim().is_empty(),
-                                            onclick: move |_| {
-                                                let name = new_session_name.read().trim().to_string();
-                                                if name.is_empty() {
-                                                    return;
-                                                }
-                                                let session = cv_generator::models::TailoringSession {
-                                                    id: uuid::Uuid::new_v4().to_string(),
-                                                    name,
-                                                    job_title: job_title.read().clone(),
-                                                    jd_text: jd_text.read().clone(),
-                                                    score_mode: *score_mode.read(),
-                                                    checked_project_ids: checked_project_ids
-                                                        .read()
-                                                        .iter()
-                                                        .cloned()
-                                                        .collect(),
-                                                    checked_top_project_ids:
-                                                        checked_top_project_ids
+                                        // The name field is required and the button depends on it, but that
+                                        // pairing is invisible when the only label is screen-reader-only: on
+                                        // screen there was a bare text box beside a permanently grey "Save",
+                                        // with nothing saying the button was waiting on the box. Hence a
+                                        // visible label, a button that names the action it performs, and a
+                                        // hint stating the requirement — shown only while that requirement is
+                                        // unmet, with its line reserved in CSS so meeting it does not shove
+                                        // the fields below down the page.
+                                        label { class: "label", r#for: "save-session-name-input", "{t_session_name}" }
+                                        div { class: "saved-session-save-controls",
+                                            input {
+                                                id: "save-session-name-input",
+                                                r#type: "text", class: "input",
+                                                placeholder: "{t_save_as_placeholder}",
+                                                aria_describedby: "save-session-name-hint",
+                                                value: new_session_name.read().clone(),
+                                                oninput: move |e| { new_session_name.set(e.value()); },
+                                            }
+                                            button {
+                                                class: "btn btn-secondary",
+                                                disabled: new_session_name.read().trim().is_empty(),
+                                                onclick: move |_| {
+                                                    let name = new_session_name.read().trim().to_string();
+                                                    if name.is_empty() {
+                                                        return;
+                                                    }
+                                                    let session = cv_generator::models::TailoringSession {
+                                                        id: uuid::Uuid::new_v4().to_string(),
+                                                        name,
+                                                        job_title: job_title.read().clone(),
+                                                        jd_text: jd_text.read().clone(),
+                                                        score_mode: *score_mode.read(),
+                                                        checked_project_ids: checked_project_ids
                                                             .read()
                                                             .iter()
                                                             .cloned()
                                                             .collect(),
-                                                    checked_skill_ids: checked_skill_ids
-                                                        .read()
-                                                        .iter()
-                                                        .cloned()
-                                                        .collect(),
-                                                    summary_choice: summary_choice.read().clone(),
-                                                    summary_skill_ids: summary_skill_ids.read().clone(),
-                                                    algo_selections: cv_generator::models::AlgoSelections {
-                                                        project_ids: last_algo_project_ids.read().iter().cloned().collect(),
-                                                        top_project_ids: last_algo_top_project_ids.read().iter().cloned().collect(),
-                                                        skill_ids: last_algo_skill_ids.read().iter().cloned().collect(),
-                                                    },
-                                                    updated_at_ms: 0,
-                                                    match_score: *match_score.read() as f32 / 100.0,
-                                                    date_applied: today_date(),
-                                                    status: Default::default(),
-                                                };
-                                                saved_sessions.write().push(session);
-                                                cv_generator::services::storage::save_sessions_list(
-                                                    &saved_sessions.read(),
-                                                );
-                                                new_session_name.set(String::new());
-                                            },
-                                            "{t_save}"
+                                                        checked_top_project_ids:
+                                                            checked_top_project_ids
+                                                                .read()
+                                                                .iter()
+                                                                .cloned()
+                                                                .collect(),
+                                                        checked_skill_ids: checked_skill_ids
+                                                            .read()
+                                                            .iter()
+                                                            .cloned()
+                                                            .collect(),
+                                                        summary_choice: summary_choice.read().clone(),
+                                                        summary_skill_ids: summary_skill_ids.read().clone(),
+                                                        algo_selections: cv_generator::models::AlgoSelections {
+                                                            project_ids: last_algo_project_ids.read().iter().cloned().collect(),
+                                                            top_project_ids: last_algo_top_project_ids.read().iter().cloned().collect(),
+                                                            skill_ids: last_algo_skill_ids.read().iter().cloned().collect(),
+                                                        },
+                                                        updated_at_ms: 0,
+                                                        match_score: *match_score.read() as f32 / 100.0,
+                                                        date_applied: today_date(),
+                                                        status: Default::default(),
+                                                    };
+                                                    saved_sessions.write().push(session);
+                                                    cv_generator::services::storage::save_sessions_list(
+                                                        &saved_sessions.read(),
+                                                    );
+                                                    new_session_name.set(String::new());
+                                                },
+                                                "{t_save_as}"
+                                            }
+                                        }
+                                        p {
+                                            // Always rendered rather than conditional on the text, so the element
+                                            // `aria-describedby` points at exists in both states; the CSS
+                                            // reserves the line so the text can swap to "" without moving
+                                            // the fields below.
+                                            id: "save-session-name-hint",
+                                            class: "hint saved-session-save-hint",
+                                            aria_live: "polite",
+                                            if new_session_name.read().trim().is_empty() { "{t_session_name_required}" }
                                         }
                                     }
                                 }

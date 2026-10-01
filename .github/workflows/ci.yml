@@ -78,7 +78,13 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.61.1-noble
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned on purpose: "@stable" now resolves to 1.99.0, whose LLVM 23
+      # codegen makes dx's wasm output fail in wasm-bindgen with
+      #   import of `__wbg_abort_...` doesn't have an adapter listed
+      # (DioxusLabs/dioxus#5766 — first bad nightly 2026-08-06 is the LLVM 23
+      # upgrade). 1.97.1 builds this project successfully and predates it.
+      # Move this forward once the upstream wasm-bindgen fix lands.
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
