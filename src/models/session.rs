@@ -176,6 +176,36 @@ pub struct AlgoSelections {
     pub skill_ids: Vec<String>,
 }
 
+impl TailoringSession {
+    /// Fold a freshly-built snapshot of the tailor form into this saved
+    /// session, in place.
+    ///
+    /// `updated` is a whole new `TailoringSession` built from the live form
+    /// state (same `id` as `self`); everything describing the *tailoring* is
+    /// taken from it wholesale, so this stays correct as fields are added to
+    /// the struct rather than needing a hand-maintained list of assignments.
+    ///
+    /// Two things are deliberately NOT taken from `updated`:
+    ///
+    /// - `status`, because it tracks the application through its lifecycle
+    ///   and is edited from the saved-sessions list's own dropdown. Taking
+    ///   the snapshot's default here would silently reset an application
+    ///   someone had marked "Offer" every time they tweaked the CV.
+    /// - `date_applied`, because that is when they applied, not when they
+    ///   last edited. Re-stamping it on every edit would turn the list into
+    ///   a record of when the file was touched.
+    ///
+    /// `id` and `name` come from `updated`, so renaming a saved session works
+    /// by way of this too.
+    pub fn apply_update(&mut self, updated: TailoringSession) {
+        let status = self.status;
+        let date_applied = std::mem::take(&mut self.date_applied);
+        *self = updated;
+        self.status = status;
+        self.date_applied = date_applied;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +298,71 @@ mod tests {
             std::collections::HashSet::from([&"p2".to_string()]),
             "the hand-removed project must still be identifiable as removed after reload"
         );
+    }
+
+    /// A helper for building the "snapshot of the form" that
+    /// `apply_update` consumes: same id, everything else fresh.
+    fn snapshot(id: &str) -> TailoringSession {
+        TailoringSession {
+            id: id.to_string(),
+            name: "Acme".to_string(),
+            job_title: "Engineer".to_string(),
+            jd_text: "rust".to_string(),
+            score_mode: ScoreMode::Keyword,
+            checked_project_ids: vec!["p1".into()],
+            checked_top_project_ids: vec![],
+            checked_skill_ids: vec!["k1".into()],
+            summary_choice: None,
+            summary_skill_ids: vec![],
+            algo_selections: AlgoSelections::default(),
+            updated_at_ms: 0,
+            match_score: 0.0,
+            date_applied: String::new(),
+            status: Default::default(),
+        }
+    }
+
+    /// Editing a saved session must rewrite the tailoring without touching
+    /// the application tracking the person maintains by hand.
+    #[test]
+    fn apply_update_keeps_status_and_applied_date() {
+        let mut saved = snapshot("s1");
+        saved.status = ApplicationStatus::Offer;
+        saved.date_applied = "2026-01-01".to_string();
+        saved.match_score = 0.2;
+
+        let mut edited = snapshot("s1");
+        edited.name = "Acme — Staff Engineer".to_string();
+        edited.jd_text = "rust and wasm".to_string();
+        edited.checked_project_ids = vec!["p1".into(), "p2".into()];
+        edited.match_score = 0.9;
+        edited.updated_at_ms = 1_700_000_000_000;
+        // The snapshot is built from the form, which has no opinion about
+        // the application — left at the default, as it is in the view.
+        assert_eq!(edited.status, ApplicationStatus::Applied);
+
+        saved.apply_update(edited);
+
+        // Tailoring came from the snapshot.
+        assert_eq!(saved.name, "Acme — Staff Engineer");
+        assert_eq!(saved.jd_text, "rust and wasm");
+        assert_eq!(
+            saved.checked_project_ids,
+            vec!["p1".to_string(), "p2".to_string()]
+        );
+        assert_eq!(saved.match_score, 0.9);
+        assert_eq!(saved.updated_at_ms, 1_700_000_000_000);
+
+        // …and the tracking did not.
+        assert_eq!(
+            saved.status,
+            ApplicationStatus::Offer,
+            "editing the CV must not reset an application marked as an offer"
+        );
+        assert_eq!(
+            saved.date_applied, "2026-01-01",
+            "the applied date records when they applied, not when they last edited"
+        );
+        assert_eq!(saved.id, "s1", "an update must keep the entry's identity");
     }
 }

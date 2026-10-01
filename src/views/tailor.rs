@@ -86,6 +86,28 @@ fn today_date() -> String {
     }
 }
 
+/// Epoch milliseconds, for `TailoringSession::updated_at_ms`.
+///
+/// Nothing renders this yet — it is recorded so "when was this last
+/// written" is answerable without a migration later, and so the field stops
+/// claiming to be a timestamp while always holding 0. Same wasm/native split
+/// as `today_date`, for the same reason: in the browser build the browser's
+/// clock is the one that matters.
+fn now_ms() -> i64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now() as i64
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    }
+}
+
 fn localized(t: &cv_generator::models::LocalizedText) -> &str {
     if !t.fr.is_empty() {
         &t.fr
@@ -166,7 +188,7 @@ fn persist_current_session(
             top_project_ids: algo_top_project_ids.iter().cloned().collect(),
             skill_ids: algo_skill_ids.iter().cloned().collect(),
         },
-        updated_at_ms: 0,
+        updated_at_ms: now_ms(),
         match_score: 0.0,
         date_applied: String::new(),
         status: Default::default(),
@@ -309,6 +331,19 @@ pub fn Tailor() -> Element {
     let mut saved_sessions = use_signal(Vec::<cv_generator::models::TailoringSession>::new);
     let mut new_session_name = use_signal(String::new);
 
+    // Id of the saved session the form is currently editing, or `None` when
+    // the form holds something that isn't in the list. Set by Load, which
+    // makes the save row update that entry in place instead of appending a
+    // second one — without it, re-saving a session you had just opened
+    // produced a duplicate under the same name, since every save used to
+    // mint a fresh id.
+    //
+    // Deliberately NOT persisted: the auto-saved "current session" carries
+    // `id: "current"` and has no link to any entry in the list, so a reload
+    // starts in "save as new" mode. That is the safe default — overwriting
+    // an entry the person did not knowingly open would lose work.
+    let mut open_session_id = use_signal(|| Option::<String>::None);
+
     // Restore the auto-saved "current session" on mount (Item #2) — a
     // reload or accidental navigation-away no longer loses an
     // in-progress JD paste or manual selection. The checked sets are
@@ -348,6 +383,40 @@ pub fn Tailor() -> Element {
         }
         saved_sessions.set(cv_generator::services::storage::load_sessions_list());
     });
+
+    // Snapshot the live form as a whole `TailoringSession`, for both save
+    // paths. `id` is a parameter because the two paths differ in exactly one
+    // thing: "Save as…" mints a new id, "Update" reuses the open session's so
+    // the entry is overwritten rather than duplicated. Reading the signals
+    // here rather than passing them in keeps the ~17 call sites of
+    // `persist_current_session` from growing a second field list.
+    let build_session = move |id: String, name: String| -> cv_generator::models::TailoringSession {
+        cv_generator::models::TailoringSession {
+            id,
+            name,
+            job_title: job_title.read().clone(),
+            jd_text: jd_text.read().clone(),
+            score_mode: *score_mode.read(),
+            checked_project_ids: checked_project_ids.read().iter().cloned().collect(),
+            checked_top_project_ids: checked_top_project_ids.read().iter().cloned().collect(),
+            checked_skill_ids: checked_skill_ids.read().iter().cloned().collect(),
+            summary_choice: summary_choice.read().clone(),
+            summary_skill_ids: summary_skill_ids.read().clone(),
+            algo_selections: cv_generator::models::AlgoSelections {
+                project_ids: last_algo_project_ids.read().iter().cloned().collect(),
+                top_project_ids: last_algo_top_project_ids.read().iter().cloned().collect(),
+                skill_ids: last_algo_skill_ids.read().iter().cloned().collect(),
+            },
+            updated_at_ms: now_ms(),
+            match_score: *match_score.read() as f32 / 100.0,
+            // Only meaningful for a brand-new entry, which is where saving
+            // starts an application. When this snapshot is folded into an
+            // existing entry, `apply_update` keeps that entry's own applied
+            // date rather than re-stamping it on every CV tweak.
+            date_applied: today_date(),
+            status: Default::default(),
+        }
+    };
 
     let has_cv = !cv.read().personal.name.is_empty();
     let jd_empty = jd_text.read().trim().is_empty();
@@ -425,10 +494,12 @@ pub fn Tailor() -> Element {
     let t_jt_lbl = i18n::tr("tl_job_title", l);
     let t_saved_sessions = i18n::tr("tl_saved_sessions", l);
     let t_save_as = i18n::tr("tl_save_as", l);
+    let t_save_as_new = i18n::tr("tl_save_as_new", l);
     let t_save_as_placeholder = i18n::tr("tl_save_as_placeholder", l);
     let t_session_name = i18n::tr("tl_session_name", l);
     let t_session_name_required = i18n::tr("tl_session_name_required", l);
     let t_load = i18n::tr("tl_load", l);
+    let t_update = i18n::tr("tl_update", l);
     let t_delete = i18n::tr("tl_delete", l);
     let t_no_saved_sessions = i18n::tr("tl_no_saved_sessions", l);
     let t_jd_lbl = i18n::tr("tl_jd_label", l);
@@ -931,6 +1002,11 @@ pub fn Tailor() -> Element {
                                                                 last_algo_skill_ids.set(
                                                                     session.algo_selections.skill_ids.iter().cloned().collect(),
                                                                 );
+                                                                // The load is what makes this an *edit*: record which
+                                                                // entry the form is on, and hand its name back so
+                                                                // renaming starts from what is already there.
+                                                                open_session_id.set(Some(session.id.clone()));
+                                                                new_session_name.set(session.name.clone());
                                                                 // Summary is part of the manual setup
                                                                 // too: leaving it out meant loading a
                                                                 // session swapped the tailored result
@@ -987,6 +1063,14 @@ pub fn Tailor() -> Element {
                                                             onclick: move |_| {
                                                                 let session_id = session_id_for_delete.clone();
                                                                 saved_sessions.write().retain(|s| s.id != session_id);
+                                                                // Deleting the session the form is editing leaves
+                                                                // nothing to update, so drop back to "Save as…"
+                                                                // rather than leaving an Update button whose target
+                                                                // no longer exists.
+                                                                if open_session_id.read().as_deref() == Some(session_id.as_str()) {
+                                                                    open_session_id.set(None);
+                                                                    new_session_name.set(String::new());
+                                                                }
                                                                 cv_generator::services::storage::save_sessions_list(
                                                                     &saved_sessions.read(),
                                                                 );
@@ -1025,47 +1109,58 @@ pub fn Tailor() -> Element {
                                                     if name.is_empty() {
                                                         return;
                                                     }
-                                                    let session = cv_generator::models::TailoringSession {
-                                                        id: uuid::Uuid::new_v4().to_string(),
-                                                        name,
-                                                        job_title: job_title.read().clone(),
-                                                        jd_text: jd_text.read().clone(),
-                                                        score_mode: *score_mode.read(),
-                                                        checked_project_ids: checked_project_ids
-                                                            .read()
-                                                            .iter()
-                                                            .cloned()
-                                                            .collect(),
-                                                        checked_top_project_ids:
-                                                            checked_top_project_ids
-                                                                .read()
-                                                                .iter()
-                                                                .cloned()
-                                                                .collect(),
-                                                        checked_skill_ids: checked_skill_ids
-                                                            .read()
-                                                            .iter()
-                                                            .cloned()
-                                                            .collect(),
-                                                        summary_choice: summary_choice.read().clone(),
-                                                        summary_skill_ids: summary_skill_ids.read().clone(),
-                                                        algo_selections: cv_generator::models::AlgoSelections {
-                                                            project_ids: last_algo_project_ids.read().iter().cloned().collect(),
-                                                            top_project_ids: last_algo_top_project_ids.read().iter().cloned().collect(),
-                                                            skill_ids: last_algo_skill_ids.read().iter().cloned().collect(),
-                                                        },
-                                                        updated_at_ms: 0,
-                                                        match_score: *match_score.read() as f32 / 100.0,
-                                                        date_applied: today_date(),
-                                                        status: Default::default(),
-                                                    };
+                                                    let open_id = open_session_id.read().clone();
+                                                    if let Some(open_id) = open_id {
+                                                        // Update the already-saved session in place: keep its
+                                                        // tracking fields (status and date_applied), overwrite
+                                                        // everything else with the form snapshot.
+                                                        let updated = build_session(open_id.clone(), name.clone());
+                                                        if let Some(s) = saved_sessions.write().iter_mut().find(|s| s.id == open_id) {
+                                                            s.apply_update(updated);
+                                                        }
+                                                        cv_generator::services::storage::save_sessions_list(
+                                                            &saved_sessions.read(),
+                                                        );
+                                                        new_session_name.set(String::new());
+                                                        open_session_id.set(None);
+                                                        return;
+                                                    }
+                                                    // Save as a new named session (the default path). This mints a
+                                                    // fresh id and records the applied date as today.
+                                                    let session = build_session(uuid::Uuid::new_v4().to_string(), name);
                                                     saved_sessions.write().push(session);
                                                     cv_generator::services::storage::save_sessions_list(
                                                         &saved_sessions.read(),
                                                     );
                                                     new_session_name.set(String::new());
                                                 },
-                                                "{t_save_as}"
+                                                if open_session_id.read().is_some() { "{t_update}" } else { "{t_save_as}" }
+                                            }
+                                            // While editing a loaded session the primary button overwrites that
+                                            // session, so branching out of it needs its own explicit control —
+                                            // otherwise the only way back to a copy is to reload and lose the
+                                            // edit in progress.
+                                            if open_session_id.read().is_some() {
+                                                button {
+                                                    class: "btn-text",
+                                                    onclick: move |_| {
+                                                        let name = new_session_name.read().trim().to_string();
+                                                        if name.is_empty() {
+                                                            return;
+                                                        }
+                                                        let session = build_session(
+                                                            uuid::Uuid::new_v4().to_string(),
+                                                            name,
+                                                        );
+                                                        saved_sessions.write().push(session);
+                                                        cv_generator::services::storage::save_sessions_list(
+                                                            &saved_sessions.read(),
+                                                        );
+                                                        new_session_name.set(String::new());
+                                                        open_session_id.set(None);
+                                                    },
+                                                    "{t_save_as_new}"
+                                                }
                                             }
                                         }
                                         p {

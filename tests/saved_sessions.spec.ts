@@ -103,6 +103,35 @@ test.describe('saved-sessions panel', () => {
     expect(stored).toContain('Acme — Platform Engineer');
   });
 
+  test('loading a session switches saving to an in-place update', async ({ page }) => {
+    const input = page.locator('#save-session-name-input');
+
+    await input.fill('Acme — Platform Engineer');
+    await page.getByRole('button', { name: /save as/i }).click();
+    await expect(page.locator('.saved-session-name')).toHaveText('Acme — Platform Engineer');
+
+    await page.getByRole('button', { name: /^load$/i }).click();
+
+    // Saving now updates the loaded session instead of minting a copy, and the
+    // name comes back with it so renaming is a plain edit of the prefilled value.
+    const updateButton = page.getByRole('button', { name: /^update$/i });
+    await expect(updateButton).toBeVisible();
+    await expect(input).toHaveValue('Acme — Platform Engineer');
+    await expect(page.getByRole('button', { name: /save as new/i })).toBeVisible();
+
+    await input.fill('Acme — Staff Engineer');
+    await updateButton.click();
+
+    // One row, renamed: an in-place update rather than a second entry.
+    await expect(page.locator('.saved-session-name')).toHaveCount(1);
+    await expect(page.locator('.saved-session-name')).toHaveText('Acme — Staff Engineer');
+    const stored = await page.evaluate(() =>
+      localStorage.getItem('cv_generator_saved_sessions'),
+    );
+    expect(stored).toContain('Acme — Staff Engineer');
+    expect(stored).not.toContain('Acme — Platform Engineer');
+  });
+
   test('whitespace alone does not enable saving', async ({ page }) => {
     const input = page.locator('#save-session-name-input');
     const button = page.getByRole('button', { name: /save as/i });
