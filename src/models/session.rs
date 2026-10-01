@@ -88,6 +88,24 @@ pub struct TailoringSession {
     /// would have bought.
     #[serde(default)]
     pub checked_project_ids: Vec<String>,
+    /// Top-level `Project` ids the person has manually checked — the same
+    /// ids `apply_manual_top_project_selection` consumes.
+    ///
+    /// Deliberately a SEPARATE field from `checked_project_ids` rather than
+    /// a shared one: the two id spaces are distinct types living in
+    /// distinct parts of the CV (`Experience::projects` vs
+    /// `LifetimeCV::projects`, i.e. the standalone "Projects" section a CV
+    /// generator renders between the experience and education blocks), and
+    /// their ids are generated independently. Merging them into one set
+    /// would make a toggle on one section silently edit the other.
+    ///
+    /// Same semantics as `checked_project_ids`: an empty vec means "no
+    /// personal project survives Apply", not "no manual override" — the
+    /// checklist is always seeded from the algorithm's selection at
+    /// "Générer" time, so the set is only empty because either the
+    /// algorithm picked nothing or the person cleared it.
+    #[serde(default)]
+    pub checked_top_project_ids: Vec<String>,
     /// `Skill` ids the person has manually checked — the same ids
     /// `apply_manual_skill_selection` consumes. Same storage choice as
     /// `checked_project_ids` (a `Vec`: order is meaningless and JSON
@@ -141,6 +159,10 @@ mod tests {
         assert_eq!(
             s.summary_choice, None,
             "old JSON has no summary choice; it must default to the base summary"
+        );
+        assert!(
+            s.checked_top_project_ids.is_empty(),
+            "old JSON has no personal-project selection; it must deserialize to empty"
         );
         assert!(
             s.summary_skill_ids.is_empty(),

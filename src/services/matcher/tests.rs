@@ -91,6 +91,103 @@ fn apply_manual_selection_always_follows_cv_storage_order_not_an_external_order(
     assert_eq!(result[1].company, "Second");
 }
 
+// ── apply_manual_top_project_selection ──────────────────────────────────
+
+fn top_project(id: &str, name: &str) -> Project {
+    Project {
+        id: id.to_string(),
+        name: name.to_string(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn apply_manual_top_selection_keeps_only_checked_personal_projects() {
+    let cv = LifetimeCV {
+        projects: vec![
+            top_project("t1", "Keep"),
+            top_project("t2", "Drop"),
+            top_project("t3", "Keep too"),
+        ],
+        ..Default::default()
+    };
+    let checked: HashSet<String> = ["t1", "t3"].iter().map(|s| s.to_string()).collect();
+    let result = apply_manual_top_project_selection(&cv, &checked);
+    let names: Vec<&str> = result.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, vec!["Keep", "Keep too"]);
+}
+
+#[test]
+fn apply_manual_top_selection_can_reinclude_a_project_the_algorithm_dropped() {
+    // The reason this function exists: the automatic path gates
+    // top-level projects on a bare `score > 0`, so a personal project
+    // sharing no term with the JD lands at exactly 0.0 and is dropped
+    // with no way to force it back in. Reading from `cv` (the full,
+    // untailored CV) rather than from a filtered `TailoredCV` is what
+    // makes the manual re-include possible at all.
+    let cv = LifetimeCV {
+        projects: vec![top_project("t1", "Algorithm kept this")],
+        ..Default::default()
+    };
+    let filtered = TailoredCV {
+        projects: Vec::new(),
+        ..Default::default()
+    };
+    assert!(
+        filtered.projects.is_empty(),
+        "precondition: the algorithm's own result has nothing here"
+    );
+    let checked: HashSet<String> = ["t1"].iter().map(|s| s.to_string()).collect();
+    let result = apply_manual_top_project_selection(&cv, &checked);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].name, "Algorithm kept this");
+}
+
+#[test]
+fn apply_manual_top_selection_never_touches_nested_experience_projects() {
+    // Regression guard on the two-lists-stay-separate invariant: an id
+    // that belongs to an `ExperienceProject` must not resurrect or
+    // remove a standalone `Project`, and vice versa.
+    let cv = LifetimeCV {
+        experiences: vec![exp_with_projects("e1", "Acme", &["p1"])],
+        projects: vec![top_project("t1", "Side project")],
+        ..Default::default()
+    };
+    let checked: HashSet<String> = ["p1"].iter().map(|s| s.to_string()).collect();
+    assert!(apply_manual_top_project_selection(&cv, &checked).is_empty());
+    let nested = apply_manual_project_selection(&cv, &checked);
+    assert_eq!(nested.len(), 1);
+    assert_eq!(nested[0].projects.len(), 1);
+}
+
+#[test]
+fn apply_manual_top_selection_keeps_cv_storage_order() {
+    let cv = LifetimeCV {
+        projects: vec![top_project("t1", "First"), top_project("t2", "Second")],
+        ..Default::default()
+    };
+    let checked: HashSet<String> = ["t1", "t2"].iter().map(|s| s.to_string()).collect();
+    let result = apply_manual_top_project_selection(&cv, &checked);
+    assert_eq!(
+        result[0].name, "First",
+        "output order must follow cv.projects' own order, not score order"
+    );
+    assert_eq!(result[1].name, "Second");
+}
+
+#[test]
+fn apply_manual_top_selection_with_nothing_checked_drops_them_all() {
+    let cv = LifetimeCV {
+        projects: vec![top_project("t1", "Side project")],
+        ..Default::default()
+    };
+    assert!(
+        apply_manual_top_project_selection(&cv, &HashSet::new()).is_empty(),
+        "an empty checked set must mean \"no personal projects\", mirroring \
+         apply_manual_project_selection's \"empty means no experiences\""
+    );
+}
+
 // ── expand_summary_skills ────────────────────────────────────────────────
 
 fn skills_named(names: &[&str]) -> Vec<Skill> {

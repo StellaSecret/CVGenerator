@@ -1025,6 +1025,11 @@ a:hover { text-decoration: underline; }
 .manual-selection-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .manual-selection-applied { margin-top: 8px; }
 .manual-selection-exp { margin-bottom: 10px; }
+/* The standalone "Personal projects" group sits below the per-experience
+   sub-project lists and is a different section of the document, not another
+   job's sub-projects — the divider is what stops it reading as one more
+   experience entry. */
+.manual-selection-top { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
 .manual-selection-exp-header { font-weight: 600; font-size: 0.85rem; color: var(--text-2); margin-bottom: 4px; }
 .manual-selection-project { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 14px; font-size: 0.88rem; cursor: pointer; }
 .manual-selection-project input[type="checkbox"] { cursor: pointer; }

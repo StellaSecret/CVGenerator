@@ -874,6 +874,36 @@ pub fn apply_manual_project_selection(
     result
 }
 
+/// Same manual-override treatment as `apply_manual_project_selection`, but
+/// for the CV's *other* project list: `LifetimeCV::projects`, the standalone
+/// top-level "Projects" section (`crate::models::Project`, rendered between
+/// the experience and education blocks) — as opposed to the
+/// `ExperienceProject`s nested inside each job entry, which is what the
+/// function above handles.
+///
+/// Deliberately a separate function and a separate id set, not an extra
+/// parameter on the above: the two lists are different types with
+/// independently-generated ids living in different parts of the document,
+/// and the automatic path filters them independently too
+/// (`PROJECT_REL_THRESHOLD`-style nested filtering vs the standalone
+/// `score > 0` gate). Merging them into one call would have made a
+/// toggle on one section silently edit the other.
+///
+/// Same semantics as the nested path: `checked_project_ids` is the full
+/// authoritative set (an empty set drops every personal project), and
+/// `cv.projects` is read in its stored order rather than in relevance
+/// score order, for the same reason as above.
+pub fn apply_manual_top_project_selection(
+    cv: &LifetimeCV,
+    checked_project_ids: &HashSet<String>,
+) -> Vec<Project> {
+    cv.projects
+        .iter()
+        .filter(|p| checked_project_ids.contains(&p.id))
+        .cloned()
+        .collect()
+}
+
 /// `Skill` ids the person manually checked, applied to the full lifetime
 /// skill list. Skills keep the CV's own order (the rendered skills section
 /// regroups them by category anyway); an unchecked skill is simply
