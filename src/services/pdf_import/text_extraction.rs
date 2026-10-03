@@ -1483,59 +1483,79 @@ pub(super) fn decode_content_raw(content: &[u8]) -> String {
     let mut i = 0;
     let len = content.len();
     while i < len {
+        let old_i = i;
         // Look for BT (Begin Text)
         if i + 1 < len && content[i] == b'B' && content[i + 1] == b'T' {
             i += 2;
+            let bt_start = i;
             // Parse until ET
             while i < len {
+                let old_bt = i;
                 if i + 1 < len && content[i] == b'E' && content[i + 1] == b'T' {
                     i += 2;
                     break;
                 }
                 // Extract (...) string literal
-                if content[i] == b'(' {
+                if i < len && content[i] == b'(' {
+                    let paren_start = i;
                     i += 1;
                     let mut depth = 1u32;
                     let start = i;
                     while i < len && depth > 0 {
                         match content[i] {
-                            b'(' => depth += 1,
+                            b'(' => {
+                                depth += 1;
+                                i += 1;
+                            }
                             b')' => {
                                 depth -= 1;
                                 if depth == 0 {
                                     break;
                                 }
+                                i += 1;
                             }
                             b'\\' => {
+                                i += 2;
+                                if i > len {
+                                    i = len;
+                                }
+                            }
+                            _ => {
                                 i += 1;
-                            } // skip escape
-                            _ => {}
+                            }
                         }
-                        i += 1;
                     }
-                    let raw = &content[start..i];
-                    if depth == 0 {
+                    if depth != 0 || i <= start {
+                        i = (paren_start + 1).min(len);
+                    } else {
+                        let raw = &content[start..i];
                         i += 1;
-                    } // skip closing )
-                      // Decode the raw bytes to string, skip non-printable
-                    let decoded = String::from_utf8_lossy(raw);
-                    let cleaned: String = decoded
-                        .chars()
-                        .filter(|c| !c.is_control() || *c == '\n')
-                        .collect();
-                    if !cleaned.trim().is_empty() {
-                        result.push_str(cleaned.trim());
-                        result.push(' ');
+                        let decoded = String::from_utf8_lossy(raw);
+                        let cleaned: String = decoded
+                            .chars()
+                            .filter(|c| !c.is_control() || *c == '\n')
+                            .collect();
+                        if !cleaned.trim().is_empty() {
+                            result.push_str(cleaned.trim());
+                            result.push(' ');
+                        }
                     }
                 }
                 // Extract <...> hex string
                 else if content[i] == b'<' {
+                    let hex_start = i;
                     i += 1;
-                    while i < len && content[i] != b'>' {
+                    let mut found = false;
+                    while i < len {
+                        if content[i] == b'>' {
+                            found = true;
+                            i += 1;
+                            break;
+                        }
                         i += 1;
                     }
-                    if i < len {
-                        i += 1;
+                    if !found {
+                        i = (hex_start + 1).min(len);
                     }
                 }
                 // Anything else (including '[' / ']' array delimiters, which
@@ -1543,9 +1563,18 @@ pub(super) fn decode_content_raw(content: &[u8]) -> String {
                 else {
                     i += 1;
                 }
+                if i <= old_bt {
+                    i = old_bt + 1;
+                }
+            }
+            if i <= bt_start {
+                i = bt_start + 1;
             }
         } else {
             i += 1;
+        }
+        if i <= old_i {
+            i = old_i + 1;
         }
     }
     // Clean up: collapse whitespace, remove lone punctuation

@@ -2565,3 +2565,25 @@ fn cv_documents_returns_one_real_document_per_scorable_block() {
         "documents must not contain unrelated filler text: {docs:?}"
     );
 }
+
+#[test]
+fn render_with_manual_selection_produces_non_empty_output_with_reasonable_length() {
+    use crate::services::matcher::render_with_manual_selection;
+    let cv = fixture_cv();
+    let mut scorer = scorer_keyword();
+    let res = tailor_cv_with_scorer(&cv, "rust", &mut scorer, None);
+    let html = render_with_manual_selection(
+        &cv,
+        "rust",
+        "Engineer",
+        res.tailored,
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashSet::from(["s-rust".into()]),
+        None,
+        &[],
+        crate::i18n_core::Lang::En,
+    );
+    assert!(!html.is_empty());
+    assert!(html.len() > 20);
+}
