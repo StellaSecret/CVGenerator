@@ -98,7 +98,7 @@ jobs:
       - name: Build WASM
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
-        run: dx build --release --package cv-generator --debug-symbols false --base-path /CVGenerator
+        run: dx build --release --package cv-generator --debug-symbols false --base-path /CVGenerator/app
       - name: Verify WASM build
         run: |
           WASM=$(find target/dx -name "*.wasm" | head -1)
@@ -473,21 +473,41 @@ jobs:
           path: ./wasm-dist/
       - name: Merge WASM build with static pages
         run: |
-          mkdir -p public
-          cp -r wasm-dist/* public/
+          mkdir -p public/app
+          # The SPA is built with base_path /CVGenerator/app, so it has to sit
+          # under public/app/ — otherwise its absolute asset URLs resolve to
+          # the artifact root and the wasm never loads.
+          cp -r wasm-dist/* public/app/
           rm -rf wasm-dist
+          # The landing page takes the artifact root. It has to be named
+          # index.html, not landing.html: GitHub Pages serves index.html for a
+          # directory, so with any other name the bare domain URL 404s.
+          cp landing.html public/index.html
+          mkdir -p public/css public/js
+          cp css/landing.css public/css/landing.css
+          cp js/landing.js public/js/landing.js
       - name: Add SPA fallback and cache-control for GitHub Pages
         run: |
-          if [ -f public/index.html ]; then
-            cp public/index.html public/404.html
+          # Pages serves the root 404.html for any path it cannot resolve,
+          # which is what makes a hard reload of a client-side route such as
+          # /CVGenerator/app/tailor work. It must therefore sit at the root of
+          # the published source and hold the SPA's index — NOT the landing
+          # page, or an unknown path would render marketing copy instead of the
+          # app's own 404 view. A nested public/app/404.html is never consulted.
+          if [ -f public/app/index.html ]; then
+            cp public/app/index.html public/404.html
           fi
           cat > public/_headers << 'EOF'
           /*.html
             Cache-Control: no-cache, must-revalidate
-          /CVGenerator/assets/*.js
+          /CVGenerator/app/assets/*.js
             Cache-Control: public, max-age=31536000, immutable
-          /CVGenerator/assets/*.wasm
+          /CVGenerator/app/assets/*.wasm
             Cache-Control: public, max-age=31536000, immutable
+          /CVGenerator/css/*
+            Cache-Control: public, max-age=3600
+          /CVGenerator/js/*
+            Cache-Control: public, max-age=3600
           EOF
       - name: Setup Pages
         uses: actions/configure-pages@v6

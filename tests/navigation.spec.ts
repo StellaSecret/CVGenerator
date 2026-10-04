@@ -4,7 +4,7 @@ import { clearStorage } from './helpers';
 test.describe('SPA Navigation', () => {
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/CVGenerator/');
+    await page.goto('/CVGenerator/app/');
     await page.waitForLoadState('networkidle');
   });
 
@@ -21,7 +21,7 @@ test.describe('SPA Navigation', () => {
 
   test('nav links have correct routes', async ({ page }) => {
     const links = page.locator('.nav-links a');
-    await expect(links.nth(0)).toHaveAttribute('href', /CVGenerator\/?$/);
+    await expect(links.nth(0)).toHaveAttribute('href', /CVGenerator\/app\/?$/);
     await expect(links.nth(1)).toHaveAttribute('href', /cv\/edit/);
     await expect(links.nth(2)).toHaveAttribute('href', /cv\/preview/);
     await expect(links.nth(3)).toHaveAttribute('href', /tailor/);
@@ -34,10 +34,10 @@ test.describe('SPA Navigation', () => {
   });
 
   test('nav brand is clickable', async ({ page }) => {
-    await page.goto('/CVGenerator/sync');
+    await page.goto('/CVGenerator/app/sync');
     await page.waitForLoadState('networkidle');
     await page.locator('.nav-brand').click();
-    await expect(page).toHaveURL(/\/CVGenerator\/?$/);
+    await expect(page).toHaveURL(/\/CVGenerator\/app\/?$/);
   });
 
   test('nav toggles render', async ({ page }) => {
@@ -46,32 +46,32 @@ test.describe('SPA Navigation', () => {
   });
 
   test('/cv/edit loads', async ({ page }) => {
-    await page.goto('/CVGenerator/cv/edit');
+    await page.goto('/CVGenerator/app/cv/edit');
     await page.waitForLoadState('networkidle');
     await expect(page.locator('h1')).toBeVisible();
   });
 
   test('/cv/preview loads', async ({ page }) => {
-    await page.goto('/CVGenerator/cv/preview');
+    await page.goto('/CVGenerator/app/cv/preview');
     await page.waitForLoadState('networkidle');
     await expect(page.locator('h1')).toBeVisible();
   });
 
   test('/tailor loads', async ({ page }) => {
-    await page.goto('/CVGenerator/tailor');
+    await page.goto('/CVGenerator/app/tailor');
     await page.waitForLoadState('networkidle');
     await expect(page.locator('h1')).toBeVisible();
   });
 
   test('/sync loads', async ({ page }) => {
-    await page.goto('/CVGenerator/sync');
+    await page.goto('/CVGenerator/app/sync');
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: /Google Drive/i })).toBeVisible();
     await expect(page.getByRole('heading', { name: /Local Backup/i })).toBeVisible();
   });
 
   test('404 edges return app shell', async ({ page }) => {
-    await page.goto('/CVGenerator/nonexistent');
+    await page.goto('/CVGenerator/app/nonexistent');
     await page.waitForLoadState('networkidle');
     const title = await page.title();
     expect(title.length).toBeGreaterThan(0);

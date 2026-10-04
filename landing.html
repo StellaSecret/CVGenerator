@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CV Generator — Tailor your CV to any job</title>
+  <meta property="og:title" content="CV Generator — Tailor your CV to any job" />
+  <meta property="og:description" content="Paste a job description, tailor your CV with precision, and export a clean PDF. Local-first. Private by design." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://stellasecret.github.io/CVGenerator/" />
+  <meta name="description" content="CV Generator — Tailor your CV to any job. Keyword and hybrid scoring, manual selection preserved, saved sessions, single-page PDF export. 100% local." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Lexend:wght@300;400;500&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/landing.css" />
+  
+</head>
+<body>
+  <div class="noise"></div>
+
+  <nav class="nav" aria-label="Primary navigation">
+    <a class="nav-logo" href="./">
+      📄 <span>CV</span>Generator
+    </a>
+    <div class="nav-links">
+      <a href="./#features" data-i18n="cv_nav_features">Features</a>
+      <a href="./#how" data-i18n="cv_nav_how">How it works</a>
+      <a href="./#usecases" data-i18n="cv_nav_usecases">Use cases</a>
+      <a class="btn-nav" href="./app/" data-i18n="cv_nav_open_app">Open app</a>
+    </div>
+    <button type="button" class="lang-toggle" onclick="toggleLang()">🌐</button>
+    <button type="button" class="theme-toggle" onclick="toggleTheme()" id="themeBtn">☀️</button>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-grid-bg"></div>
+    <div class="hero-content">
+      <div class="hero-tag" data-i18n="cv_hero_tag">Local-first · Private · PDF-ready</div>
+      <h1 class="hero-title">
+        <span data-i18n="cv_hero_title_1">Tailor your CV</span><br />
+        <span data-i18n="cv_hero_title_2">to <em>any job</em></span>
+      </h1>
+      <p class="hero-sub" data-i18n="cv_hero_sub">
+        Paste a job description. Keep your best projects. Export a clean,
+        single-page PDF in seconds.
+      </p>
+      <div class="hero-cta">
+        <a href="./app/" class="btn-primary" data-i18n="cv_hero_cta_app">🚀 Open app</a>
+        <a href="./app/tailor" class="btn-ghost" data-i18n="cv_hero_cta_tailor">Tailor now →</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="person-card-preview">
+        <div class="pcp-avatar">📄</div>
+        <div class="pcp-name" data-i18n="cv_preview_name">CV — Tailored</div>
+        <div class="pcp-role" data-i18n="cv_preview_role">Matches job description</div>
+        <div class="pcp-bars">
+          <div class="bar-row">
+            <span data-i18n="cv_preview_match">Match score</span>
+            <div class="bar"><div class="fill fill-92"></div></div>
+          </div>
+          <div class="bar-row">
+            <span data-i18n="cv_preview_projects">Relevant projects</span>
+            <div class="bar"><div class="fill fill-85"></div></div>
+          </div>
+          <div class="bar-row">
+            <span data-i18n="cv_preview_skills">Key skills</span>
+            <div class="bar"><div class="fill gold fill-88"></div></div>
+          </div>
+        </div>
+        <div class="pcp-badge" data-i18n="cv_preview_badge">📄 Ready to export as PDF</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <h2 class="section-title" data-i18n="cv_features_title">
+      Built for <em>precision</em>
+    </h2>
+    <div class="features-grid">
+      <div class="feature-card accent">
+        <div class="feature-icon">🎯</div>
+        <h3 data-i18n="cv_f1_title">Job-targeted tailoring</h3>
+        <p data-i18n="cv_f1_desc">
+          Paste any job description. Get a tailored selection of projects and
+          skills with keyword or hybrid scoring.
+        </p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✋</div>
+        <h3 data-i18n="cv_f2_title">Your choices stay</h3>
+        <p data-i18n="cv_f2_desc">
+          Manual selections are preserved when you reload or regenerate. You
+          stay in control, never lose your edits.
+        </p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💾</div>
+        <h3 data-i18n="cv_f3_title">Saved sessions</h3>
+        <p data-i18n="cv_f3_desc">
+          Save multiple job applications. Load, rename, update in place, or
+          duplicate as a new variant.
+        </p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🖨️</div>
+        <h3 data-i18n="cv_f4_title">Single-page PDF</h3>
+        <p data-i18n="cv_f4_desc">
+          Print to a clean, single-page PDF. Optimized layout, readable, and
+          ATS-friendly.
+        </p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3 data-i18n="cv_f5_title">100% local</h3>
+        <p data-i18n="cv_f5_desc">
+          Your CV, job descriptions and sessions stay on your device. No
+          tracking, no cloud by default.
+        </p>
+      </div>
+      <div class="feature-card accent2">
+        <div class="feature-icon">📦</div>
+        <h3 data-i18n="cv_f6_title">Import &amp; export</h3>
+        <p data-i18n="cv_f6_desc">
+          Back up as JSON, restore when needed. Works offline and respects your
+          workflow.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="how" id="how">
+    <h2 class="section-title" data-i18n="cv_how_title">
+      How it <em>works</em>
+    </h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-body">
+          <h3 data-i18n="cv_step1_title">Load your CV</h3>
+          <p data-i18n="cv_step1_desc">
+            Create or import your CV. Your projects, experiences and skills stay
+            structured.
+          </p>
+        </div>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-body">
+          <h3 data-i18n="cv_step2_title">Paste the job description</h3>
+          <p data-i18n="cv_step2_desc">
+            Go to Tailor, paste the JD. Choose Keyword or Hybrid scoring to
+            match relevance.
+          </p>
+        </div>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-body">
+          <h3 data-i18n="cv_step3_title">Refine your selection</h3>
+          <p data-i18n="cv_step3_desc">
+            Tweak projects, top projects and skills. Your manual choices are
+            preserved across regenerations.
+          </p>
+        </div>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div class="step-body">
+          <h3 data-i18n="cv_step4_title">Save &amp; export</h3>
+          <p data-i18n="cv_step4_desc">
+            Save the session for this application, preview, then Print to PDF
+            for a clean single-page result.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="usecases" id="usecases">
+    <h2 class="section-title" data-i18n="cv_usecases_title">
+      Made for <em>every application</em>
+    </h2>
+    <div class="usecase-grid">
+      <div class="usecase">
+        <span class="uc-icon">💼</span>
+        <h4 data-i18n="cv_uc1_title">Job applications</h4>
+        <p data-i18n="cv_uc1_desc">
+          Tailor per role in seconds. Keep each variant as a saved session.
+        </p>
+      </div>
+      <div class="usecase">
+        <span class="uc-icon">⚡</span>
+        <h4 data-i18n="cv_uc2_title">Recruiters &amp; screenings</h4>
+        <p data-i18n="cv_uc2_desc">
+          Highlight the most relevant work without rewriting your entire CV.
+        </p>
+      </div>
+      <div class="usecase">
+        <span class="uc-icon">🎯</span>
+        <h4 data-i18n="cv_uc3_title">Career pivots</h4>
+        <p data-i18n="cv_uc3_desc">
+          Emphasize transferable projects and skills for a new domain.
+        </p>
+      </div>
+      <div class="usecase">
+        <span class="uc-icon">🧘</span>
+        <h4 data-i18n="cv_uc4_title">Focus &amp; control</h4>
+        <p data-i18n="cv_uc4_desc">
+          Local, fast and predictable. You decide what stays and what goes.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ethics">
+    <div class="ethics-inner">
+      <div class="ethics-icon">🔐</div>
+      <div>
+        <h3 data-i18n="cv_ethics_title">Private by design</h3>
+        <p data-i18n="cv_ethics_desc">
+          CV Generator runs entirely in your browser. Your data never leaves
+          your device unless you explicitly export a backup. No accounts, no
+          tracking, no third-party data sharing.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta-section">
+    <h2 data-i18n="cv_cta_title">Ready to tailor your CV?</h2>
+    <p data-i18n="cv_cta_sub">
+      Web app • 100% local • Free • Works offline
+    </p>
+    <div class="cta-buttons">
+      <a href="./app/" class="btn-primary large" data-i18n="cv_cta_app_btn">🚀 Open app</a>
+      <a href="./app/tailor" class="btn-ghost large" data-i18n="cv_cta_tailor_btn">🎯 Go to Tailor</a>
+    </div>
+  </section>
+
+  <footer class="footer" aria-label="Footer">
+    <div class="footer-logo">📄 CVGenerator</div>
+    <div class="footer-links">
+      <a href="./app/cv/edit" data-i18n="cv_nav_cv">Edit CV</a>
+      <a href="./app/tailor" data-i18n="cv_nav_tailor">Tailor</a>
+      <a href="./app/sync" data-i18n="cv_nav_sync">Sync/Backup</a>
+      <a href="https://github.com/StellaSecret/CVGenerator" target="_blank" rel="noopener" data-i18n="cv_footer_github">GitHub</a>
+    </div>
+    <p class="footer-copy" data-i18n="cv_footer_copy">
+      Open Source • Local-first • Built for precision
+    </p>
+  </footer>
+  <script src="js/landing.js"></script>
+</body>
+</html>

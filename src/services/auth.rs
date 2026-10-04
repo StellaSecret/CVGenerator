@@ -143,6 +143,7 @@ pub fn mask_token(t: &str) -> String {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
 mod tests {
     #[test]
     fn mask_token_long() {
@@ -190,9 +191,6 @@ mod tests {
         let now = super::now_ms();
         assert!(now > 2, "now_ms must return epoch milliseconds, got {now}");
     }
-
-    #[test]
-    fn mask_token_shows_first_and_last_four_chars_when_long_enough() {}
 
     #[test]
     fn mask_token_hides_a_short_token_entirely() {
@@ -251,14 +249,6 @@ mod native_kill_mutants {
     #[test]
     fn get_token_is_none() {
         assert_eq!(super::get_token(), None);
-    }
-
-    #[test]
-    fn token_path_is_none() {
-        #[cfg(target_os = "android")]
-        {
-            let _ = super::token_path();
-        }
     }
 
     #[test]

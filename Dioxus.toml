@@ -3,7 +3,12 @@ name = "cv-generator"
 
 [web]
 title = "CV Generator"
-base_path = "/CVGenerator"
+# The app lives under /app/ so the Pages artifact root can serve the static
+# landing.html at the bare domain URL. Changing this moves every asset URL
+# and every route the router generates — tests/, playwright.config.ts and the
+# deploy job in .github/workflows/ci.yml all hardcode the same prefix and
+# must be updated with it.
+base_path = "/CVGenerator/app"
 pre_compress = true
 wasm_opt = ["z"]
 

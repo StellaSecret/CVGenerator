@@ -21,7 +21,7 @@ export default defineConfig({
   },
 
   webServer: {
-    command: 'python3 scripts/spa_server.py 4190 target/dx/cv-generator/release/web/public /CVGenerator',
+    command: 'python3 scripts/spa_server.py 4190 target/dx/cv-generator/release/web/public /CVGenerator/app',
     url: 'http://localhost:4190',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

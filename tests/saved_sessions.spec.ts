@@ -44,7 +44,7 @@ const SEED_CV = JSON.stringify({
 });
 
 async function seedCV(page: Page) {
-  await page.goto('/CVGenerator/');
+  await page.goto('/CVGenerator/app/');
   await page.waitForLoadState('networkidle');
   await page.evaluate(
     (cv) => localStorage.setItem('cv_generator_lifetime_cv', cv),
@@ -56,7 +56,7 @@ async function seedCV(page: Page) {
 
 test.describe('saved-sessions panel', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/CVGenerator/');
+    await page.goto('/CVGenerator/app/');
     await page.waitForLoadState('networkidle');
     await page.evaluate(() => {
       localStorage.clear();
@@ -66,7 +66,7 @@ test.describe('saved-sessions panel', () => {
       localStorage.setItem('cv_gen_lang', 'en');
     });
     await seedCV(page);
-    await page.goto('/CVGenerator/tailor');
+    await page.goto('/CVGenerator/app/tailor');
     await page.waitForLoadState('networkidle');
   });
 

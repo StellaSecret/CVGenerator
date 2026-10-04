@@ -88,7 +88,7 @@ const SEED_CV = JSON.stringify({
 });
 
 async function seedCV(page: Page) {
-  await page.goto('/CVGenerator/');
+  await page.goto('/CVGenerator/app/');
   await page.waitForLoadState('networkidle');
   await page.evaluate(
     (cv) => localStorage.setItem('cv_generator_lifetime_cv', cv),
@@ -101,7 +101,7 @@ async function seedCV(page: Page) {
 test.describe('print-to-PDF', () => {
   test('downloads a single long scrollable page named after the candidate', async ({ page }) => {
     await seedCV(page);
-    await page.goto('/CVGenerator/cv/preview');
+    await page.goto('/CVGenerator/app/cv/preview');
     await page.waitForLoadState('networkidle');
 
     const frameLocator = page.frameLocator('#cv-preview-frame');
