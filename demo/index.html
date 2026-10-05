@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Demo — CV Generator</title>
+  <meta name="description" content="A static, read-only walkthrough of what CV Generator produces, using mock data. Nothing on this page is real or stored." />
+  <link rel="icon" type="image/svg+xml" href="../assets/cv-generator-icon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <!-- The demo borrows the app's own stylesheet so the widgets on this page are
+       literally the ones a user meets in the app. assets/main.css is also
+       include_str!'d by the Rust build, so demo-only rules live in demo.css
+       and are layered on top instead of being edited into main.css. -->
+  <link rel="stylesheet" href="../assets/main.css" />
+  <link rel="stylesheet" href="../css/demo.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="nav">
+      <a class="nav-brand" href="../">
+        <img class="nav-brand-icon" src="../assets/cv-generator-icon.svg" alt="" />
+        <span>CV Generator</span>
+      </a>
+      <nav class="nav-links">
+        <a class="nav-link" href="../#features" data-i18n="cv_nav_features">Features</a>
+        <a class="nav-link" href="../#how" data-i18n="cv_nav_how">How it works</a>
+        <a class="nav-link nav-link-active" href="../demo/" data-i18n="cv_nav_demo">Demo</a>
+        <a class="nav-link" href="../app/" data-i18n="cv_nav_open_app">Open app</a>
+      </nav>
+      <div class="nav-toggles">
+        <button type="button" class="nav-toggle" id="themeBtn" onclick="toggleTheme()" title="Theme" aria-label="Theme">☀️</button>
+        <button type="button" class="nav-toggle" id="langBtn" onclick="toggleLang()" title="Language" aria-label="Language">FR</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="page demo-page">
+
+        <div class="demo-notice" role="note">
+          <span class="demo-notice-badge">Mock data</span>
+          <p data-i18n="cv_demo_notice">
+            This is a static preview of the app with a fictional CV and job description.
+            Nothing here is real, nothing is stored, and nothing runs in your browser.
+          </p>
+        </div>
+
+        <div class="page-header">
+          <h1 data-i18n="cv_demo_title">Tailoring a CV, end to end</h1>
+          <p class="subtitle" data-i18n="cv_demo_sub">
+            Below is what one run looks like: the job description on the left, the
+            score and the selection it produced on the right.
+          </p>
+        </div>
+
+        <div class="tailor-layout">
+          <!-- ── Left pane: the job description ─────────────────────────── -->
+          <div class="tailor-input">
+            <div class="form-section">
+              <div class="field">
+                <label class="label" for="demoJobTitle" data-i18n="cv_demo_field_title">Job title</label>
+                <input class="input" id="demoJobTitle" type="text" value="Senior Rust Engineer" readonly />
+              </div>
+
+              <div class="field">
+                <label class="label" for="demoJd" data-i18n="cv_demo_field_jd">Job description</label>
+                <textarea class="input textarea jd-textarea" id="demoJd" rows="14" readonly spellcheck="false">We are looking for a Senior Rust Engineer to own the ingestion and scoring services of our platform.
+
+You will design and ship services in Rust using async/await and Tokio, expose gRPC and REST APIs, and run them on Kubernetes. You will own reliability: distributed systems, backpressure, timeouts, and production monitoring with Prometheus and Grafana.
+
+Our stack: Rust, Tokio, PostgreSQL, Redis, gRPC, Kubernetes, Terraform, CI/CD with GitHub Actions. Experience with Kafka or Elixir is a plus.
+
+You will work in a small team, review code, and mentor other engineers.</textarea>
+              </div>
+
+              <div class="field">
+                <label class="label" data-i18n="cv_demo_field_mode">Matching mode</label>
+                <div class="mode-toggle" role="group">
+                  <button type="button" class="mode-btn" disabled data-i18n="cv_demo_mode_keyword">Keyword</button>
+                  <button type="button" class="mode-btn" disabled data-i18n="cv_demo_mode_embedding">Embedding</button>
+                  <button type="button" class="mode-btn active" disabled data-i18n="cv_demo_mode_hybrid">Hybrid</button>
+                </div>
+                <p class="hint" data-i18n="cv_demo_mode_hint">
+                  Hybrid blends keyword overlap with semantic similarity, which is why
+                  it wins on job descriptions that avoid the exact words on your CV.
+                </p>
+              </div>
+
+              <button type="button" class="btn btn-primary btn-full" disabled data-i18n="cv_demo_generate">Generate</button>
+              <p class="hint demo-static-hint" data-i18n="cv_demo_static_hint">
+                Buttons are disabled here — this page is a picture of a result, not the app.
+              </p>
+            </div>
+          </div>
+
+          <!-- ── Right pane: the result ─────────────────────────────────── -->
+          <div class="tailor-output">
+            <div class="score-banner">
+              <div class="score-left">
+                <div class="score-circle" style="border-color:#16a34a">
+                  <span class="score-number" style="color:#16a34a">78%</span>
+                  <span class="score-label" data-i18n="cv_demo_score_label">Match</span>
+                </div>
+              </div>
+              <div class="score-right">
+                <div class="kw-section">
+                  <div class="kw-label kw-ok" data-i18n="cv_demo_matched">Matched keywords</div>
+                  <div class="kw-cloud">
+                    <span class="tag tag-matched">rust</span>
+                    <span class="tag tag-matched">async</span>
+                    <span class="tag tag-matched">tokio</span>
+                    <span class="tag tag-matched">grpc</span>
+                    <span class="tag tag-matched">kubernetes</span>
+                    <span class="tag tag-matched">terraform</span>
+                    <span class="tag tag-matched">postgresql</span>
+                    <span class="tag tag-matched">distributed systems</span>
+                    <span class="tag tag-matched">monitoring</span>
+                    <span class="tag tag-matched">ci/cd</span>
+                    <span class="tag tag-matched">backpressure</span>
+                    <span class="tag tag-matched">api</span>
+                  </div>
+                </div>
+                <div class="kw-section">
+                  <div class="kw-label kw-miss" data-i18n="cv_demo_missing">Missing keywords</div>
+                  <div class="kw-cloud">
+                    <span class="tag tag-missing">kafka</span>
+                    <span class="tag tag-missing">elixir</span>
+                    <span class="tag tag-missing">graphql</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="output-actions">
+              <span class="tag tag-small" data-i18n="cv_demo_kept">7 of 12 experiences kept</span>
+            </div>
+
+            <p class="manual-selection-title" data-i18n="cv_demo_kept_title">Experiences the scorer kept</p>
+            <p class="manual-selection-count" data-i18n="cv_demo_kept_sub">
+              Ranked by relevance. Each one is scored against the job description
+              before it is kept — anything below the cut-off is dropped.
+            </p>
+
+            <div class="item-list">
+              <div class="item-card">
+                <div class="item-card-body">
+                  <div class="item-title">Payments Ledger — Senior Backend Engineer</div>
+                  <div class="item-sub">Kleber &amp; Co · 2022 — present</div>
+                </div>
+                <span class="demo-score" style="color:#16a34a">91%</span>
+              </div>
+              <div class="item-card">
+                <div class="item-card-body">
+                  <div class="item-title">Order Platform — Backend Engineer</div>
+                  <div class="item-sub">Northwind Labs · 2020 — 2022</div>
+                </div>
+                <span class="demo-score" style="color:#16a34a">84%</span>
+              </div>
+              <div class="item-card">
+                <div class="item-card-body">
+                  <div class="item-title">Realtime Sync — Software Engineer</div>
+                  <div class="item-sub">Freelance · 2019 — 2020</div>
+                </div>
+                <span class="demo-score" style="color:#d97706">67%</span>
+              </div>
+              <div class="item-card">
+                <div class="item-card-body">
+                  <div class="item-title">Internal Tooling — Junior Developer</div>
+                  <div class="item-sub">Northwind Labs · 2018 — 2019</div>
+                </div>
+                <span class="demo-score" style="color:#dc2626">31%</span>
+              </div>
+            </div>
+
+            <div class="manual-selection-panel demo-selection">
+              <p class="manual-selection-title" data-i18n="cv_demo_manual_title">Your picks are kept</p>
+              <p class="manual-selection-count" data-i18n="cv_demo_manual_sub">
+                Anything the scorer drops is still there to re-add by hand. Untick a
+                project to hide it, or add one back, and the selection survives
+                regenerating, reloading, and switching language.
+              </p>
+              <div class="manual-selection-actions">
+                <span class="tag tag-small tag-matched" data-i18n="cv_demo_manual_kept">Kept by you</span>
+                <span class="tag tag-small tag-missing" data-i18n="cv_demo_manual_dropped">Dropped by you</span>
+              </div>
+            </div>
+
+            <p class="manual-selection-title" data-i18n="cv_demo_skills_title">Skills it surfaced</p>
+            <div class="demo-skills">
+              <div class="demo-skill">
+                <span class="demo-skill-name">Rust</span>
+                <span class="demo-skill-bar"><span class="demo-skill-fill" style="width:95%"></span></span>
+              </div>
+              <div class="demo-skill">
+                <span class="demo-skill-name">Tokio</span>
+                <span class="demo-skill-bar"><span class="demo-skill-fill" style="width:88%"></span></span>
+              </div>
+              <div class="demo-skill">
+                <span class="demo-skill-name">gRPC</span>
+                <span class="demo-skill-bar"><span class="demo-skill-fill" style="width:74%"></span></span>
+              </div>
+              <div class="demo-skill">
+                <span class="demo-skill-name">Kubernetes</span>
+                <span class="demo-skill-bar"><span class="demo-skill-fill" style="width:61%"></span></span>
+              </div>
+              <div class="demo-skill">
+                <span class="demo-skill-name">Terraform</span>
+                <span class="demo-skill-bar"><span class="demo-skill-fill" style="width:43%"></span></span>
+              </div>
+            </div>
+
+            <div class="demo-output">
+              <button type="button" class="btn btn-primary" disabled data-i18n="cv_demo_preview">Preview &amp; download PDF</button>
+              <p class="hint" data-i18n="cv_demo_preview_hint">
+                The real app renders the tailored CV to a clean, single-page, ATS-friendly
+                PDF you can print straight to disk.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-cta">
+          <h2 data-i18n="cv_demo_cta_title">Now do it with your own CV</h2>
+          <p data-i18n="cv_demo_cta_sub">
+            The app runs entirely in your browser. Your CV never leaves your device —
+            there is no account and no upload.
+          </p>
+          <div class="demo-cta-buttons">
+            <a class="btn btn-primary btn-lg" href="../app/tailor" data-i18n="cv_demo_cta_tailor">Tailor your CV →</a>
+            <a class="btn btn-outline btn-lg" href="../app/cv/edit" data-i18n="cv_demo_cta_edit">Build a CV from scratch</a>
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+    <footer class="demo-footer">
+      <a href="../" data-i18n="cv_demo_footer_back">← Back to the overview</a>
+    </footer>
+  </div>
+
+  <script src="../js/demo.js"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+/* Demo page — layered on top of assets/main.css.
+ *
+ * assets/main.css is include_str!'d by the Rust build, so editing it would
+ * change the shipped app's UI. Everything the demo needs on top of it lives
+ * here instead. Only new selectors belong in this file; reusing the app's
+ * existing classes (.score-banner, .item-card, .tag, .mode-toggle, …) is
+ * deliberate — the point is that the widgets on this page are the real ones.
+ */
+
+.demo-page { max-width: 1120px; }
+
+/* ── Mock-data notice ──────────────────────────────────────────────────────── */
+.demo-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--amber-bg, rgba(217, 119, 6, 0.12));
+  border: 1px solid var(--amber, #d97706);
+  border-radius: var(--radius-lg, 12px);
+  padding: 14px 16px;
+  margin-bottom: 28px;
+}
+.demo-notice p { font-size: 0.88rem; line-height: 1.65; color: var(--text-2); }
+.demo-notice-badge {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--amber, #d97706);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 9px;
+  margin-top: 1px;
+}
+
+/* ── Result pane extras ────────────────────────────────────────────────────── */
+.demo-score {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+  padding-left: 12px;
+}
+
+.demo-selection { margin-top: 20px; }
+.demo-static-hint { margin-top: 10px; margin-bottom: 0; font-size: 0.82rem; }
+
+/* ── Skill bars ────────────────────────────────────────────────────────────── */
+.demo-skills { margin-top: 4px; }
+.demo-skill {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.demo-skill-name { font-size: 0.85rem; color: var(--text-2); }
+.demo-skill-bar {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.demo-skill-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.demo-output { margin-top: 26px; }
+.demo-output .hint { margin-top: 12px; margin-bottom: 0; }
+
+/* ── Closing CTA ───────────────────────────────────────────────────────────── */
+.demo-cta {
+  margin-top: 56px;
+  padding: 32px;
+  text-align: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl, 16px);
+}
+.demo-cta h2 { font-size: 1.4rem; margin-bottom: 8px; }
+.demo-cta p { color: var(--text-2); font-size: 0.92rem; max-width: 460px; margin: 0 auto 22px; line-height: 1.7; }
+.demo-cta-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+.demo-footer {
+  border-top: 1px solid var(--border);
+  padding: 20px;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+/* ── Responsive: mirror the app's own breakpoints ──────────────────────────── */
+@media (max-width: 900px) {
+  .tailor-layout { grid-template-columns: 1fr; }
+  .tailor-input { position: static; }
+}
+@media (max-width: 600px) {
+  .demo-cta { padding: 24px 18px; }
+  .demo-cta-buttons .btn { width: 100%; }
+  .demo-skill { grid-template-columns: 90px 1fr; }
+}

@@ -551,6 +551,11 @@ section { scroll-margin-top: 5rem; }
     padding-top: 3rem;
   }
 
+  /* The link row has no min-width of its own, so once the viewport is narrow
+     enough it would push past the logo and the toggles and overflow the page
+     horizontally. Let it wrap onto a second line instead of clipping. */
+  .nav-links { flex-wrap: wrap; row-gap: .5rem; min-width: 0; }
+
   .hero-grid-bg { inset: 0 0 55% 0; transform: none; }
   .person-card-preview { max-width: 26rem; }
 }

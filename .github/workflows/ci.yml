@@ -483,9 +483,20 @@ jobs:
           # index.html, not landing.html: GitHub Pages serves index.html for a
           # directory, so with any other name the bare domain URL 404s.
           cp landing.html public/index.html
-          mkdir -p public/css public/js
+          # The demo page is authored as demo/index.html so that its relative
+          # paths already match the published layout — copying the directory
+          # gives it the clean /CVGenerator/demo URL with no path rewriting.
+          cp -r demo public/demo
+          mkdir -p public/css public/js public/assets
           cp css/landing.css public/css/landing.css
+          cp css/demo.css public/css/demo.css
           cp js/landing.js public/js/landing.js
+          cp js/demo.js public/js/demo.js
+          # The demo borrows the app's stylesheet so its widgets are the real
+          # ones. The Rust build inlines this file into the wasm, so the wasm
+          # build never copies it out — publish it for the demo page by hand.
+          cp assets/main.css public/assets/main.css
+          cp assets/cv-generator-icon.svg public/assets/cv-generator-icon.svg
       - name: Add SPA fallback and cache-control for GitHub Pages
         run: |
           # Pages serves the root 404.html for any path it cannot resolve,
@@ -507,6 +518,8 @@ jobs:
           /CVGenerator/css/*
             Cache-Control: public, max-age=3600
           /CVGenerator/js/*
+            Cache-Control: public, max-age=3600
+          /CVGenerator/assets/*
             Cache-Control: public, max-age=3600
           EOF
       - name: Setup Pages
