@@ -46,6 +46,13 @@ pub(crate) fn get_files_dir() -> Option<&'static std::path::Path> {
     FILES_DIR.get().map(|p| p.as_path())
 }
 
+/// Returns the stored JVM handle, available once `nativeInit()` runs at
+/// app startup. Other android-gated modules (e.g. `android_pdf`) reuse it
+/// to make their own JNI calls instead of re-storing a second handle.
+pub(crate) fn jvm() -> Option<&'static jni::JavaVM> {
+    JVM.get()
+}
+
 /// Called from Kotlin `GoogleDriveHelper.nativeInit()` to store the JVM
 /// reference and files dir.
 #[no_mangle]

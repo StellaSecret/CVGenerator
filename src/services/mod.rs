@@ -1,5 +1,7 @@
 #[cfg(target_os = "android")]
 pub mod android_auth;
+#[cfg(target_os = "android")]
+pub mod android_pdf;
 pub mod auth;
 pub mod cv_date;
 pub mod drive;

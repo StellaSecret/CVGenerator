@@ -33,7 +33,7 @@ enum TailorView {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn download_pdf(iframe_id: &str, filename: &str) {
+fn download_pdf(_html: &str, iframe_id: &str, filename: &str) {
     let _ = js_sys::eval(&super::download_pdf_js(iframe_id, filename));
 }
 
@@ -45,8 +45,16 @@ fn resize_iframe(iframe_id: &str) {
 #[cfg(not(target_arch = "wasm32"))]
 fn resize_iframe(_iframe_id: &str) {}
 
-#[cfg(not(target_arch = "wasm32"))]
-fn download_pdf(_iframe_id: &str, _filename: &str) {}
+// Android's WebView has no window.print(), so there the CV's already-rendered
+// HTML goes to the system print dialog ("Save as PDF") instead of the JS
+// probe — see services/android_pdf.rs.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "android"))]
+fn download_pdf(html: &str, _iframe_id: &str, filename: &str) {
+    cv_generator::services::android_pdf::export_pdf(html, filename);
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn download_pdf(_html: &str, _iframe_id: &str, _filename: &str) {}
 
 fn score_color(score: u32) -> &'static str {
     if score >= 60 {
@@ -2191,7 +2199,10 @@ pub fn Tailor() -> Element {
                                     div { class: "output-actions",
                                         button {
                                             class: "btn btn-primary",
-                                            onclick: move |_| { download_pdf("cv-tailor-frame", "tailored-cv.pdf"); },
+                                            onclick: move |_| {
+                                                let html = result_html.read().clone();
+                                                download_pdf(&html, "cv-tailor-frame", "tailored-cv.pdf");
+                                            },
                                             "{t_dl}"
                                         }
                                     }

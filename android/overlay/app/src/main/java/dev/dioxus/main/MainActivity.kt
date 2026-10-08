@@ -6,6 +6,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import com.stellasecret.cvgenerator.GoogleDriveHelper
+import com.stellasecret.cvgenerator.PdfExporter
 
 // Dioxus's generated Logger.kt (package dev.dioxus.main) refers to
 // `BuildConfig` unqualified, expecting it in its own package. Our Gradle
@@ -30,5 +31,6 @@ class MainActivity : WryActivity() {
             }
         super.onCreate(savedInstanceState)
         GoogleDriveHelper.init(this, signInLauncher)
+        PdfExporter.init(this)
     }
 }

@@ -5,12 +5,20 @@ use cv_generator::services::renderer::render_lifetime_cv;
 use dioxus::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
-fn download_pdf(iframe_id: &str, filename: &str) {
+fn download_pdf(_html: &str, iframe_id: &str, filename: &str) {
     let _ = js_sys::eval(&super::download_pdf_js(iframe_id, filename));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn download_pdf(_iframe_id: &str, _filename: &str) {}
+// Android's WebView has no window.print(), so there the CV's already-rendered
+// HTML goes to the system print dialog ("Save as PDF") instead of the JS
+// probe — see services/android_pdf.rs.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "android"))]
+fn download_pdf(html: &str, _iframe_id: &str, filename: &str) {
+    cv_generator::services::android_pdf::export_pdf(html, filename);
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn download_pdf(_html: &str, _iframe_id: &str, _filename: &str) {}
 
 #[cfg(target_arch = "wasm32")]
 fn resize_iframe(iframe_id: &str) {
@@ -39,6 +47,10 @@ pub fn CvPreview() -> Element {
     let t_empty = i18n::tr("pv_empty", l);
     let t_fill = i18n::tr("pv_fill_first", l);
 
+    // Clone for the download handler: the closure below is `move` and the
+    // original `html` still feeds `srcdoc` later in this rsx tree.
+    let html_for_pdf = html.clone();
+
     rsx! {
         div { class: "page",
             div { class: "page-back-row",
@@ -60,7 +72,7 @@ pub fn CvPreview() -> Element {
                                 } else {
                                     format!("{}-cv.pdf", name.to_lowercase().replace(' ', "-"))
                                 };
-                                download_pdf("cv-preview-frame", &fname);
+                                download_pdf(&html_for_pdf, "cv-preview-frame", &fname);
                             },
                             "{t_download}"
                         }
