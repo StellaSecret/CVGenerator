@@ -247,6 +247,14 @@ jobs:
         run: cargo clean -p cv-generator
       - name: Build Android APK (aarch64) — first pass (generates project)
         run: dx build --release --platform android --package cv-generator --target aarch64-linux-android
+      - name: Build Android APK (armv7) — 32-bit devices
+        # `dx build` compiles exactly one --target per invocation, so the
+        # aarch64 build above only ever produced lib/arm64-v8a. Play then
+        # lists the app as "device isn't compatible" on 32-bit-only phones
+        # (e.g. Redmi 23129RN51X running a 32-bit Android 16 userspace,
+        # abi = armeabi-v7a). Build the 32-bit ABI too so the same Gradle
+        # project ends up with both jniLibs/arm64-v8a and jniLibs/armeabi-v7a.
+        run: dx build --release --platform android --package cv-generator --target armv7-linux-androideabi
       - name: Remove first-pass APK (no overlays)
         run: find target/dx -name "*.apk" -delete 2>/dev/null || true
       - name: Overlay custom Android resources (icons, OAuth strings)
@@ -332,6 +340,26 @@ jobs:
             sed -i 's/ android:extractNativeLibs="true"//' "$MANIFEST"
             echo "Stripped android:extractNativeLibs from $MANIFEST"
           fi
+      - name: Ensure both ABIs are in jniLibs
+        # Safety net: if the second `dx build` replaced rather than added to
+        # jniLibs (or vice versa), copy the cargo outputs in ourselves using
+        # whatever .so filename dx chose for the ABI that did survive.
+        run: |
+          GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
+          JNI="$GRADLE_DIR/app/src/main/jniLibs"
+          mkdir -p "$JNI/arm64-v8a" "$JNI/armeabi-v7a"
+          NAME=$(basename "$(find "$JNI" -name '*.so' | head -1)")
+          [ -n "$NAME" ] || NAME="libdioxusmain.so"
+          echo "Native lib name: $NAME"
+          for pair in "arm64-v8a:aarch64-linux-android" "armeabi-v7a:armv7-linux-androideabi"; do
+            ABI="${pair%%:*}"; TRIPLE="${pair##*:}"
+            if [ -z "$(find "$JNI/$ABI" -name '*.so' | head -1)" ]; then
+              SRC="target/$TRIPLE/release/libcv_generator.so"
+              [ -f "$SRC" ] || { echo "ERROR: $SRC missing — cannot provide $ABI"; exit 1; }
+              cp -v "$SRC" "$JNI/$ABI/$NAME"
+            fi
+          done
+          find "$JNI" -name '*.so' -print
       - name: Assemble release APK via Gradle
         run: |
           GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
@@ -436,16 +464,27 @@ jobs:
             echo "WARNING: No APK or AAB found. Listing target/dx tree..."
             find target/dx -name "*.apk" -o -name "*.aab" 2>/dev/null || true
           fi
+      - name: Verify AAB contains both ABIs
+        run: |
+          [ -f dist/cv-generator.aab ] || { echo "No AAB — skipping"; exit 0; }
+          LIST=$(unzip -l dist/cv-generator.aab)
+          for abi in arm64-v8a armeabi-v7a; do
+            echo "$LIST" | grep -q "lib/$abi/" || { echo "ERROR: AAB is missing lib/$abi/"; exit 1; }
+          done
+          echo "AAB contains arm64-v8a and armeabi-v7a native libs"
       - name: Package native debug symbols
         run: |
-          mkdir -p dist/symbols/arm64-v8a
-          SO="target/aarch64-linux-android/release/libcv_generator.so"
-          if [ -f "$SO" ]; then
-            cp "$SO" dist/symbols/arm64-v8a/
+          mkdir -p dist/symbols/arm64-v8a dist/symbols/armeabi-v7a
+          FOUND=0
+          for pair in "arm64-v8a:aarch64-linux-android" "armeabi-v7a:armv7-linux-androideabi"; do
+            ABI="${pair%%:*}"; TRIPLE="${pair##*:}"
+            SO="target/$TRIPLE/release/libcv_generator.so"
+            if [ -f "$SO" ]; then cp "$SO" "dist/symbols/$ABI/"; FOUND=1
+            else echo "WARNING: $SO not found"; fi
+          done
+          if [ "$FOUND" = 1 ]; then
             cd dist && zip -r symbols.zip symbols/ && rm -rf symbols/
             echo "Created symbols.zip ($(stat -c%s symbols.zip) bytes)"
-          else
-            echo "WARNING: $SO not found — skipping debug symbols"
           fi
       - name: Upload APK Artifact
         if: github.event_name != 'pull_request'

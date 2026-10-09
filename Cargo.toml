@@ -152,3 +152,9 @@ wasm-bindgen-test = "0.3"
 [dev-dependencies]
 mutants = "0.0.3"
 
+# manganis 0.7.9 refuses to compile for 32-bit Android (compile_error! in
+# src/android/callback.rs), which blocks the armeabi-v7a build that
+# 32-bit-only phones need. Use a locally patched copy until upstream lifts
+# that restriction. See vendor/README.md.
+[patch.crates-io]
+manganis = { path = "vendor/manganis" }
