@@ -2,9 +2,18 @@ package dev.dioxus.main
 
 import android.content.Intent
 import android.os.Bundle
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.stellasecret.cvgenerator.GoogleDriveHelper
 import com.stellasecret.cvgenerator.PdfExporter
 
@@ -22,7 +31,13 @@ class MainActivity : WryActivity() {
     private lateinit var signInLauncher: ActivityResultLauncher<Intent>
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        // Force light (white) system-bar icons: the app's nav is always
+        // blue and its page background dark, regardless of the phone's own
+        // light/dark setting (which the default auto style follows).
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         signInLauncher =
             registerForActivityResult(
                 ActivityResultContracts.StartActivityForResult(),
@@ -30,6 +45,36 @@ class MainActivity : WryActivity() {
                 GoogleDriveHelper.handleSignInResult(result.data)
             }
         super.onCreate(savedInstanceState)
+
+        // Edge-to-edge is mandatory on targetSdk 35+, so the WebView would
+        // otherwise be drawn underneath the status bar / navigation bar /
+        // camera cutout (the sticky nav's top-left was hidden behind the
+        // clock). Pad the content root by those insets, plus the keyboard,
+        // so the whole web UI sits inside the visible area.
+        // Window background = app dark background (shows behind the gesture
+        // bar); a blue strip matching the nav sits behind the status bar.
+        window.setBackgroundDrawable(ColorDrawable(0xFF0F1117.toInt()))
+        val statusStrip = View(this).apply { setBackgroundColor(0xFF2563EB.toInt()) }
+        (window.decorView as ViewGroup).addView(
+            statusStrip,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, Gravity.TOP),
+        )
+        val content = findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout() or
+                    WindowInsetsCompat.Type.ime(),
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val top = insets.getInsets(
+                WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout(),
+            ).top
+            statusStrip.layoutParams = statusStrip.layoutParams.apply { height = top }
+            WindowInsetsCompat.CONSUMED
+        }
+        ViewCompat.requestApplyInsets(content)
+
         GoogleDriveHelper.init(this, signInLauncher)
         PdfExporter.init(this)
     }
