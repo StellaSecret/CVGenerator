@@ -119,7 +119,7 @@ unsafe extern "C" fn rust_callback<'a>(
 ) {
     // Reconstruct the pointer from the two i64 halves.
     //
-    // LOCAL PATCH (see vendor/README.md): upstream manganis 0.7.9 hard-fails
+    // LOCAL PATCH (see vendor/README.md): upstream manganis 0.7.10 hard-fails
     // with `compile_error!` on any non-64-bit Android target, which makes it
     // impossible to ship an armeabi-v7a build. A 32-bit pointer fits entirely
     // in the low half, so on 32-bit targets use just that (truncated to u32,

@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "manganis"
-version = "0.7.9"
+version = "0.7.10"
 authors = ["Evan Almloff"]
 build = false
 autolib = false
@@ -43,10 +43,10 @@ version = "=0.7.2"
 package = "const-serialize"
 
 [dependencies.manganis-core]
-version = "0.7.9"
+version = "0.7.10"
 
 [dependencies.manganis-macro]
-version = "0.7.9"
+version = "0.7.10"
 
 [dependencies.thiserror]
 version = "2.0.12"

@@ -1,8 +1,8 @@
 # vendor/
 
-## manganis (0.7.9, locally patched)
+## manganis (0.7.10, locally patched)
 
-Upstream `manganis` 0.7.9 contains `compile_error!("Only 64-bit Android targets
+Upstream `manganis` 0.7.10 contains `compile_error!("Only 64-bit Android targets
 are supported")` in `src/android/callback.rs`, which makes
 `--target armv7-linux-androideabi` impossible to build. Google Play then marks
 the app incompatible with 32-bit-only phones.
