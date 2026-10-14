@@ -150,7 +150,7 @@ wasm-bindgen-test = "0.3"
 # compile under the native `cargo test --lib` the native shards run, not
 # just the wasm32 test build.
 [dev-dependencies]
-mutants = "0.0.3"
+mutants = "0.0.4"
 
 # manganis 0.7.9 refuses to compile for 32-bit Android (compile_error! in
 # src/android/callback.rs), which blocks the armeabi-v7a build that
