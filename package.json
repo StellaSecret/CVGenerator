@@ -12,7 +12,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "^1.64.0",
     "husky": "^9.1.6",
     "pdf-lib": "^1.17.1",
     "serve": "^14.2.6"
