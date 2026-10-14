@@ -122,7 +122,7 @@ reqwest = { version = "0.12", features = ["json"] }
 # call back into Kotlin to launch native Google Sign-In, since Google
 # disallows running its OAuth consent screen inside an embedded WebView
 # (which is how this app renders on Android otherwise).
-jni = { version = "0.21", default-features = false }
+jni = { version = "0.22", default-features = false }
 # Backs the `sleep` in views::sync's Android token-poll loop. dioxus's own
 # spawn() already runs within a tokio runtime on this platform (via
 # dioxus_desktop), so this just needs to be present as a directly-callable
