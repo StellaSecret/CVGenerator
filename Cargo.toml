@@ -64,7 +64,7 @@ lopdf = { version = "0.42", default-features = false, features = ["wasm_js"] }
 # regenerate Cargo.lock (the 0.34->0.42 dependency set changed) and
 # `cargo test --lib` (exercises pdf_import's test suite, including the
 # mutation-kill tests in services/pdf_import/tests.rs) before merging.
-tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"] }
+tokenizers = { version = "0.23", default-features = false, features = ["unstable_wasm"] }
 # ^ Bumped from 0.21 to match what candle-core 0.11 already forces
 # transitively; before this, Cargo.lock carried two full copies of
 # tokenizers (0.21.4 direct + 0.22.2 via candle-core) since our pin was
