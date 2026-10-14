@@ -28,6 +28,7 @@
 //! rest of `services`, and its public items are reachable from the bin
 //! crate's `views::sync` as `cv_generator::services::android_auth::...`).
 
+use jni::{jni_sig, jni_str};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -56,24 +57,26 @@ pub(crate) fn jvm() -> Option<&'static jni::JavaVM> {
 /// Called from Kotlin `GoogleDriveHelper.nativeInit()` to store the JVM
 /// reference and files dir.
 #[no_mangle]
-pub extern "system" fn Java_com_stellasecret_cvgenerator_GoogleDriveHelper_nativeInit(
-    mut env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    files_dir: jni::objects::JString,
+pub extern "system" fn Java_com_stellasecret_cvgenerator_GoogleDriveHelper_nativeInit<'caller>(
+    mut unowned_env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    files_dir: jni::objects::JString<'caller>,
 ) {
-    if let Ok(jvm) = env.get_java_vm() {
-        JVM.set(jvm).ok();
-        eprintln!("[android_auth] JVM stored");
-    } else {
-        eprintln!("[android_auth] FAILED to get JVM from env");
-    }
-    if let Ok(path) = env.get_string(&files_dir) {
-        let path_str: String = path.into();
-        FILES_DIR.set(PathBuf::from(path_str.clone())).ok();
-        eprintln!("[android_auth] filesDir: {path_str}");
-    } else {
-        eprintln!("[android_auth] FAILED to get filesDir string");
-    }
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            match env.get_java_vm() {
+                Ok(jvm) => {
+                    JVM.set(jvm).ok();
+                    eprintln!("[android_auth] JVM stored");
+                }
+                Err(e) => eprintln!("[android_auth] FAILED to get JVM from env: {e:?}"),
+            }
+            let path_str = files_dir.to_string();
+            FILES_DIR.set(PathBuf::from(path_str.clone())).ok();
+            eprintln!("[android_auth] filesDir: {path_str}");
+            Ok(())
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
 }
 
 /// Called from Kotlin `GoogleDriveHelper.nativeOnTokenSaved()` after the
@@ -81,7 +84,7 @@ pub extern "system" fn Java_com_stellasecret_cvgenerator_GoogleDriveHelper_nativ
 /// change on its next poll.
 #[no_mangle]
 pub extern "system" fn Java_com_stellasecret_cvgenerator_GoogleDriveHelper_nativeOnTokenSaved(
-    _env: jni::JNIEnv,
+    _env: jni::EnvUnowned,
     _class: jni::objects::JClass,
 ) {
     eprintln!("[android_auth] token saved callback received");
@@ -91,31 +94,28 @@ pub extern "system" fn Java_com_stellasecret_cvgenerator_GoogleDriveHelper_nativ
 /// Called from `auth::start_oauth()` to trigger native Google Sign-In.
 pub fn start_sign_in() {
     eprintln!("[android_auth] start_sign_in called");
-    match JVM.get() {
-        Some(jvm) => {
-            eprintln!("[android_auth] JVM found, attaching thread");
-            match jvm.attach_current_thread() {
-                Ok(mut env) => {
-                    eprintln!(
-                        "[android_auth] thread attached, calling GoogleDriveHelper.startSignIn"
-                    );
-                    match env.call_static_method(
-                        "com/stellasecret/cvgenerator/GoogleDriveHelper",
-                        "startSignIn",
-                        "()V",
-                        &[],
-                    ) {
-                        Ok(_) => eprintln!("[android_auth] startSignIn JNI call succeeded"),
-                        Err(e) => {
-                            // Clear pending Java exception so next JNI call doesn't crash
-                            let _ = env.exception_clear();
-                            eprintln!("[android_auth] startSignIn JNI call FAILED: {e:?}");
-                        }
-                    }
-                }
-                Err(e) => eprintln!("[android_auth] FAILED to attach thread: {e:?}"),
+    let Some(jvm) = JVM.get() else {
+        eprintln!("[android_auth] JVM not initialized — was nativeInit() called?");
+        return;
+    };
+    eprintln!("[android_auth] JVM found, attaching thread");
+    let res = jvm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        eprintln!("[android_auth] thread attached, calling GoogleDriveHelper.startSignIn");
+        match env.call_static_method(
+            jni_str!("com/stellasecret/cvgenerator/GoogleDriveHelper"),
+            jni_str!("startSignIn"),
+            jni_sig!("()V"),
+            &[],
+        ) {
+            Ok(_) => eprintln!("[android_auth] startSignIn JNI call succeeded"),
+            Err(e) => {
+                env.exception_clear();
+                eprintln!("[android_auth] startSignIn JNI call FAILED: {e:?}");
             }
         }
-        None => eprintln!("[android_auth] JVM not initialized — was nativeInit() called?"),
+        Ok(())
+    });
+    if let Err(e) = res {
+        eprintln!("[android_auth] FAILED to attach thread: {e:?}");
     }
 }

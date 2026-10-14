@@ -13,6 +13,7 @@
 //! `GoogleDriveHelper.nativeInit()`.
 
 use jni::objects::{JObject, JValue};
+use jni::{jni_sig, jni_str};
 
 /// Asks the Kotlin `PdfExporter` to print the given CV HTML. `filename`
 /// suggests the printed document's name (the "Save as PDF" destination
@@ -22,34 +23,36 @@ pub fn export_pdf(html: &str, filename: &str) {
         eprintln!("[android_pdf] JVM not initialized — was nativeInit() called?");
         return;
     };
-    let Ok(mut env) = jvm.attach_current_thread() else {
-        eprintln!("[android_pdf] FAILED to attach thread");
-        return;
-    };
-    let html_obj = match env.new_string(html).map(JObject::from) {
-        Ok(obj) => obj,
-        Err(e) => {
-            eprintln!("[android_pdf] failed to allocate html string: {e:?}");
-            return;
+    let res = jvm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let html_obj = match env.new_string(html).map(JObject::from) {
+            Ok(obj) => obj,
+            Err(e) => {
+                eprintln!("[android_pdf] failed to allocate html string: {e:?}");
+                return Ok(());
+            }
+        };
+        let name_obj = match env.new_string(filename).map(JObject::from) {
+            Ok(obj) => obj,
+            Err(e) => {
+                eprintln!("[android_pdf] failed to allocate filename string: {e:?}");
+                return Ok(());
+            }
+        };
+        if let Err(e) = env.call_static_method(
+            jni_str!("com/stellasecret/cvgenerator/PdfExporter"),
+            jni_str!("exportPdf"),
+            jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(&html_obj), JValue::Object(&name_obj)],
+        ) {
+            // Clear the pending Java exception so the next JNI call doesn't crash.
+            env.exception_clear();
+            eprintln!("[android_pdf] exportPdf JNI call FAILED: {e:?}");
+        } else {
+            eprintln!("[android_pdf] exportPdf JNI call succeeded");
         }
-    };
-    let name_obj = match env.new_string(filename).map(JObject::from) {
-        Ok(obj) => obj,
-        Err(e) => {
-            eprintln!("[android_pdf] failed to allocate filename string: {e:?}");
-            return;
-        }
-    };
-    if let Err(e) = env.call_static_method(
-        "com/stellasecret/cvgenerator/PdfExporter",
-        "exportPdf",
-        "(Ljava/lang/String;Ljava/lang/String;)V",
-        &[JValue::Object(&html_obj), JValue::Object(&name_obj)],
-    ) {
-        // Clear the pending Java exception so the next JNI call doesn't crash.
-        let _ = env.exception_clear();
-        eprintln!("[android_pdf] exportPdf JNI call FAILED: {e:?}");
-    } else {
-        eprintln!("[android_pdf] exportPdf JNI call succeeded");
+        Ok(())
+    });
+    if let Err(e) = res {
+        eprintln!("[android_pdf] FAILED to attach thread: {e:?}");
     }
 }
