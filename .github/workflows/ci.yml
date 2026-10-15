@@ -84,7 +84,7 @@ jobs:
       # (DioxusLabs/dioxus#5766 — first bad nightly 2026-08-06 is the LLVM 23
       # upgrade). 1.97.1 builds this project successfully and predates it.
       # Move this forward once the upstream wasm-bindgen fix lands.
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@1.120.0
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
