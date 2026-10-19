@@ -44,17 +44,19 @@ ignore = [
     # bumped past 0.11 in case the graph has moved off `paste` by then.
     "RUSTSEC-2024-0436",
 
-    # RUSTSEC-2026-0192: `ttf-parser` is unmaintained upstream (author
-    # statement, no further fixes), "no safe upgrade available" per the
-    # advisory -- the suggested replacement (`skrifa`) is a different API,
-    # not a drop-in. Pulled in transitively by lopdf 0.42 itself (font
-    # embedding/widths support added in the 0.35-0.42 range), not
-    # something we depend on or call directly, so there's no code on our
-    # side to migrate. Revisit this ignore whenever lopdf is bumped past
-    # 0.42 -- lopdf's own maintainers will need to move off `ttf-parser`
-    # (or onto a maintained fork) at some point, at which point this
-    # advisory should just stop appearing.
-    "RUSTSEC-2026-0192",
+    # RUSTSEC-2026-0367 / -0368 / -0369: `zip` 8.6.0 mishandles privileged
+    # Unix bits and symlink/permission handling -- but only within
+    # `ZipArchive::extract()` / `ZipStreamReader::extract()`. candle-core is
+    # the only path to `zip` in this graph, and it never calls `extract()`:
+    # it only opens an archive and reads named entries into memory
+    # (`ZipArchive::new` + `by_name`, see candle-core's pickle.rs/npy.rs),
+    # so the vulnerable API surface is unreachable from our code. The
+    # advised fix is `zip >= 9.0.0`, but candle-core 0.11.0 (latest) pins
+    # `zip = "8.6.0"` (^8), so there is no compatible upgrade until upstream
+    # widens that requirement. Revisit when candle-core bumps its `zip` dep.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]
 
 [licenses]
