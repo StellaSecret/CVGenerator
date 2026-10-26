@@ -29,7 +29,7 @@ uuid = { version = "1", features = ["v4", "js"] }
 # ^ "js" wires up getrandom 0.3.x's wasm_js backend feature for wasm32
 # builds (see the longer note on the lopdf dependency below for why a
 # second, separate getrandom major version needs its own feature flip too).
-lopdf = { version = "0.45", default-features = false, features = ["wasm_js"] }
+lopdf = { version = "0.46", default-features = false, features = ["wasm_js"] }
 # ^ RUSTSEC-2026-0187: lopdf <0.42.0 parses nested PDF arrays/dicts with
 # unbounded recursion, so a ~21 KB crafted PDF (deeply nested array in the
 # Catalog) aborts the process via stack-overflow SIGABRT -- not catchable
