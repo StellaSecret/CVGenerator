@@ -365,6 +365,8 @@ jobs:
             files: src/services/auth/auth_wasm.rs src/services/drive/drive_wasm.rs src/services/skill_duration/skill_duration_wasm.rs src/services/worker/worker_wasm.rs
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.wasm && 'wasm32-unknown-unknown' || '' }}
