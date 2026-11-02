@@ -44,8 +44,10 @@ ignore = [
     # bumped past 0.11 in case the graph has moved off `paste` by then.
     "RUSTSEC-2024-0436",
 
-    # RUSTSEC-2026-0367 / -0368 / -0369: `zip` 8.6.0 mishandles privileged
-    # Unix bits and symlink/permission handling -- but only within
+    # RUSTSEC-2026-0367 / -0368 / -0369 / -0429: `zip` 8.6.0 mishandles
+    # privileged Unix bits and symlink/permission handling (and -0429
+    # additionally aborts the process on a symlink entry with a huge
+    # declared size) -- but only within
     # `ZipArchive::extract()` / `ZipStreamReader::extract()`. candle-core is
     # the only path to `zip` in this graph, and it never calls `extract()`:
     # it only opens an archive and reads named entries into memory
@@ -57,6 +59,7 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
 ]
 
 [licenses]
