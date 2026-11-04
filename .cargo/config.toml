@@ -1,3 +1,19 @@
+# Android 15+ devices may use 16 KB memory pages, and Google Play rejects
+# 64-bit builds whose native ELF LOAD segments are only 4 KB aligned.
+# NDK r28+ does this by default; the explicit flags also cover older NDKs.
+# dx merges these target-level rustflags into its own Android link args.
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]
+
+[target.x86_64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]
+
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
 # Lets `cargo test --target wasm32-unknown-unknown` (and `cargo mutants

@@ -367,6 +367,27 @@ jobs:
             fi
           done
           find "$JNI" -name '*.so' -print
+      - name: Verify 16 KB ELF alignment
+        # Google Play requires 64-bit native libs to be 16 KB page aligned.
+        # NDK r28+ does this by default; the flags in .cargo/config.toml
+        # cover older NDKs. Fail here instead of at Play review time.
+        run: |
+          SO=$(find target/dx -type f -path "*/jniLibs/arm64-v8a/*.so" | head -1)
+          if [ -z "$SO" ]; then
+            echo "ERROR: no arm64-v8a .so found under target/dx"
+            find target/dx -name '*.so' -print 2>/dev/null || true
+            exit 1
+          fi
+          echo "Checking $SO"
+          bad=0
+          while read -r align; do
+            if (( align < 16384 )); then
+              echo "ERROR: $SO LOAD segment aligned at $align (< 16384)"
+              bad=1
+            fi
+          done < <(readelf -lW "$SO" | awk '$1 == "LOAD" { print $NF }')
+          [ "$bad" -eq 0 ] || exit 1
+          echo "OK: $SO LOAD segments are 16 KB aligned"
       - name: Assemble release APK via Gradle
         run: |
           GRADLE_DIR=$(find target/dx -name "gradlew" -exec dirname {} \; 2>/dev/null | head -1)
