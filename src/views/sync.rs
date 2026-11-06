@@ -102,7 +102,12 @@ pub fn Sync() -> Element {
 
     let signed_in = !token.read().is_empty();
     let has_cv = !cv.read().personal.name.is_empty();
-    let has_cid = BUILD_TIME_CLIENT_ID.filter(|s| !s.is_empty()).is_some();
+    // Android signs in natively via Play Services (the client ID comes from
+    // strings.xml, not from this compile-time env var), so it must not be
+    // gated on BUILD_TIME_CLIENT_ID — the Android `dx build` steps in CI
+    // never set it, which made this button silently bail out.
+    let has_cid =
+        cfg!(target_os = "android") || BUILD_TIME_CLIENT_ID.filter(|s| !s.is_empty()).is_some();
     let busy = *loading.read();
     let status_txt = status.read().clone();
 
@@ -182,6 +187,14 @@ pub fn Sync() -> Element {
                     }
                     if signed_in {
                         span { class: "sync-cid-masked", "{auth::mask_token(&token.read())}" }
+                    }
+                }
+
+                if !status_txt.is_empty() {
+                    div {
+                        class: if status_txt.starts_with("✅") { "sync-status sync-status-ok" }
+                               else { "sync-status sync-status-err" },
+                        "{status_txt}"
                     }
                 }
 
@@ -269,13 +282,6 @@ pub fn Sync() -> Element {
                 }
             }
 
-            if !status_txt.is_empty() {
-                div {
-                    class: if status_txt.starts_with("✅") { "sync-status sync-status-ok" }
-                           else { "sync-status sync-status-err" },
-                    "{status_txt}"
-                }
-            }
         }
     }
 }

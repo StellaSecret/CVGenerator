@@ -50,8 +50,20 @@ object GoogleDriveHelper {
     @JvmStatic
     fun startSignIn() {
         Log.d(TAG, "startSignIn: launcher=${launcher != null}, client=${client != null}")
-        launcher?.let { l ->
-            client?.let { c ->
+        // Called over JNI from Rust's thread, not the Android UI thread;
+        // launching an Activity result contract must happen on the UI thread.
+        val act = activity
+        if (act == null) {
+            Log.e(TAG, "startSignIn: activity is null")
+            return
+        }
+        act.runOnUiThread {
+            val l = launcher
+            val c = client
+            if (l == null || c == null) {
+                Log.e(TAG, "startSignIn: not initialised (launcher=$l, client=$c)")
+                saveError("Sign-in not initialised")
+            } else {
                 Log.d(TAG, "startSignIn: launching sign-in intent")
                 l.launch(c.signInIntent)
             }
