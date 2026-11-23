@@ -43,23 +43,6 @@ ignore = [
     # isn't an active risk; revisit this ignore whenever candle-core is
     # bumped past 0.11 in case the graph has moved off `paste` by then.
     "RUSTSEC-2024-0436",
-
-    # RUSTSEC-2026-0367 / -0368 / -0369 / -0429: `zip` 8.6.0 mishandles
-    # privileged Unix bits and symlink/permission handling (and -0429
-    # additionally aborts the process on a symlink entry with a huge
-    # declared size) -- but only within
-    # `ZipArchive::extract()` / `ZipStreamReader::extract()`. candle-core is
-    # the only path to `zip` in this graph, and it never calls `extract()`:
-    # it only opens an archive and reads named entries into memory
-    # (`ZipArchive::new` + `by_name`, see candle-core's pickle.rs/npy.rs),
-    # so the vulnerable API surface is unreachable from our code. The
-    # advised fix is `zip >= 9.0.0`, but candle-core 0.11.0 (latest) pins
-    # `zip = "8.6.0"` (^8), so there is no compatible upgrade until upstream
-    # widens that requirement. Revisit when candle-core bumps its `zip` dep.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    "RUSTSEC-2026-0429",
 ]
 
 [licenses]
